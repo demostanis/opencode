@@ -1,3 +1,26 @@
+import path from "path"
+import os from "os"
+import { existsSync, mkdirSync } from "fs"
+
+// Ensure standard node_modules directories exist at startup so Bun's resolver
+// includes them in its search paths and doesn't cache their absence.
+const home = os.homedir()
+const searchPaths = [
+  path.join(home, ".config", "opencode", "node_modules"),
+  path.join(home, ".cache", "opencode", "node_modules"),
+  path.join(process.cwd(), ".opencode", "node_modules"),
+]
+for (const p of searchPaths) {
+  if (!existsSync(p)) {
+    try {
+      mkdirSync(p, { recursive: true })
+    } catch (e) {}
+  }
+}
+
+// Prepend these to NODE_PATH at the very beginning of the process
+process.env.NODE_PATH = [...searchPaths, process.env.NODE_PATH].filter(Boolean).join(path.delimiter)
+
 import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
@@ -27,7 +50,6 @@ import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
-import path from "path"
 import { Global } from "./global"
 import { JsonMigration } from "./storage/json-migration"
 import { Database } from "./storage/db"

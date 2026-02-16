@@ -247,13 +247,22 @@ export namespace Config {
   })
 
   export async function waitForDependencies() {
-    const deps = await state().then((x) => x.deps)
+    const { deps, directories } = await state()
     await Promise.all(deps)
+    const paths = unique([...directories, Global.Path.cache])
+    for (const dir of paths) {
+      const nm = path.join(dir, "node_modules")
+      if (existsSync(nm)) {
+        process.env.NODE_PATH = unique([nm, ...(process.env.NODE_PATH?.split(path.delimiter) ?? [])])
+          .filter(Boolean)
+          .join(path.delimiter)
+      }
+    }
   }
 
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
-    const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
+    const targetVersion = Installation.isLocal() || Installation.VERSION.includes("-dev") ? "*" : Installation.VERSION
 
     const json = await Bun.file(pkg)
       .json()
@@ -263,7 +272,6 @@ export namespace Config {
       "@opencode-ai/plugin": targetVersion,
     }
     await Bun.write(pkg, JSON.stringify(json, null, 2))
-    await new Promise((resolve) => setTimeout(resolve, 3000))
 
     const gitignore = path.join(dir, ".gitignore")
     const hasGitIgnore = await Bun.file(gitignore).exists()
