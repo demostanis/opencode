@@ -239,6 +239,7 @@ export namespace Pty {
       session.bufferCursor += excess
     })
     ptyProcess.onExit(({ exitCode }) => {
+      if (session.info.status === "exited") return
       log.info("session exited", { id, exitCode })
       const wasKilled = session.info.status === "killed"
       if (!wasKilled) {
@@ -271,15 +272,8 @@ export namespace Pty {
         Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
       }
 
-      for (const [key, ws] of session.subscribers.entries()) {
-        try {
-          if (ws.data === key) ws.close()
-        } catch {
-          // ignore
-        }
-      }
-      session.subscribers.clear()
       Bus.publish(Event.Exited, { id, exitCode })
+      remove(id)
     })
     Bus.publish(Event.Created, { info })
     return info
@@ -460,6 +454,7 @@ export namespace Pty {
       session.bufferCursor += excess
     })
     ptyProcess.onExit(({ exitCode }) => {
+      if (session.info.status === "exited") return
       log.info("session exited after restart", { id, exitCode })
       const wasKilled = session.info.status === "killed"
       if (!wasKilled) {
@@ -492,21 +487,15 @@ export namespace Pty {
         Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
       }
 
-      for (const [key, ws] of session.subscribers.entries()) {
-        try {
-          if (ws.data === key) ws.close()
-        } catch {
-          // ignore
-        }
-      }
-      session.subscribers.clear()
       Bus.publish(Event.Exited, { id, exitCode })
+      remove(id)
     })
   }
 
   export async function remove(id: string) {
     const session = state().get(id)
     if (!session) return
+    state().delete(id)
     log.info("removing session", { id })
     try {
       session.process.kill()
@@ -519,7 +508,6 @@ export namespace Pty {
       }
     }
     session.subscribers.clear()
-    state().delete(id)
     Bus.publish(Event.Deleted, { id })
   }
 
