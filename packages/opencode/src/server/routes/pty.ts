@@ -149,7 +149,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: PtyID.zod })),
       async (c) => {
         await Pty.kill(c.req.valid("param").ptyID)
         return c.json(true)
@@ -174,7 +174,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: PtyID.zod })),
       async (c) => {
         const id = c.req.valid("param").ptyID
         if (!Pty.get(id)) {
@@ -203,7 +203,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: PtyID.zod })),
       async (c) => {
         const result = Pty.read(c.req.valid("param").ptyID)
         if (result === undefined) {
@@ -230,7 +230,7 @@ export const PtyRoutes = lazy(() =>
           ...errors(404),
         },
       }),
-      validator("param", z.object({ ptyID: z.string() })),
+      validator("param", z.object({ ptyID: PtyID.zod })),
       validator("json", z.object({ data: z.string() })),
       async (c) => {
         const { ptyID } = c.req.valid("param")

@@ -1,6 +1,7 @@
 import z from "zod"
 import { Tool } from "./tool"
 import { Pty } from "../pty"
+import { PtyID } from "../pty/schema"
 import { Instance } from "../project/instance"
 
 export const PTYSpawnTool = Tool.define("pty_spawn", async () => {
@@ -47,11 +48,12 @@ export const PTYReadTool = Tool.define("pty_read", async () => {
       id: z.string().describe("The ID of the background process (from 'pty_spawn')"),
     }),
     async execute(params, ctx) {
-      const info = Pty.get(params.id)
+      const ptyId = params.id as PtyID
+      const info = Pty.get(ptyId)
       if (!info) throw new Error(`Background process not found: ${params.id}`)
 
       const { Pty: PtyInternal } = await import("../pty")
-      const result = PtyInternal.read(params.id)
+      const result = PtyInternal.read(ptyId)
       if (result === undefined) throw new Error(`Background process not found: ${params.id}`)
 
       return {
@@ -74,7 +76,8 @@ export const PTYWriteTool = Tool.define("pty_write", async () => {
         .describe("The text or keys to send. Newlines are sent as \\r. Special keys like {UP} are supported."),
     }),
     async execute(params, ctx) {
-      const info = Pty.get(params.id)
+      const ptyId = params.id as PtyID
+      const info = Pty.get(ptyId)
       if (!info) throw new Error(`Background process not found: ${params.id}`)
 
       let raw = params.input
@@ -96,7 +99,7 @@ export const PTYWriteTool = Tool.define("pty_write", async () => {
       // Translate \n to \r as most TUIs expect CR for Enter
       raw = raw.replace(/\n/g, "\r")
 
-      Pty.write(params.id, raw)
+      Pty.write(ptyId, raw)
 
       return {
         title: `Sent input to background process: ${info.title}`,
@@ -114,10 +117,11 @@ export const PTYKillTool = Tool.define("pty_kill", async () => {
       id: z.string().describe("The ID of the background process"),
     }),
     async execute(params, ctx) {
-      const info = Pty.get(params.id)
+      const ptyId = params.id as PtyID
+      const info = Pty.get(ptyId)
       if (!info) throw new Error(`Background process not found: ${params.id}`)
 
-      await Pty.kill(params.id)
+      await Pty.kill(ptyId)
 
       return {
         title: `Killed background process: ${info.title}`,

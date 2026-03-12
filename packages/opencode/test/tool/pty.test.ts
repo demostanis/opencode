@@ -5,7 +5,7 @@ import { Pty } from "../../src/pty"
 import { tmpdir } from "../fixture/fixture"
 import { setTimeout as sleep } from "node:timers/promises"
 
-const ctx = {
+const ctx: any = {
   sessionID: "test-session",
   messageID: "test-message",
   callID: "test-call",
