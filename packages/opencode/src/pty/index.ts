@@ -205,50 +205,9 @@ export namespace Pty {
       subscribers: new Map(),
     }
     state().set(id, session)
-    ptyProcess.onData((chunk) => {
-      session.cursor += chunk.length
-      session.info.cursor = session.cursor
-
-      for (const [key, ws] of session.subscribers.entries()) {
-        if (ws.readyState !== 1) {
-          session.subscribers.delete(key)
-          continue
-        }
-
-        if (ws.data !== key) {
-          session.subscribers.delete(key)
-          continue
-        }
-
-        try {
-          ws.send(chunk)
-        } catch {
-          session.subscribers.delete(key)
-        }
-      }
-
-      Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
-
-      session.buffer += chunk
-      if (session.buffer.length <= BUFFER_LIMIT) return
-      const excess = session.buffer.length - BUFFER_LIMIT
-      session.buffer = session.buffer.slice(excess)
-      session.bufferCursor += excess
-    })
-    ptyProcess.onExit(({ exitCode }) => {
-      if (session.info.status === "exited") return
-      log.info("session exited", { id, exitCode })
-      const wasKilled = session.info.status === "killed"
-      if (!wasKilled) {
-        session.info.status = "exited"
-      }
-      session.info.exitCode = exitCode
-
-      const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
-
-      if (msg) {
-        session.buffer += msg
-        session.cursor += msg.length
+    ptyProcess.onData(
+      Instance.bind((chunk) => {
+        session.cursor += chunk.length
         session.info.cursor = session.cursor
 
         for (const [key, ws] of session.subscribers.entries()) {
@@ -256,22 +215,67 @@ export namespace Pty {
             session.subscribers.delete(key)
             continue
           }
+
           if (ws.data !== key) {
             session.subscribers.delete(key)
             continue
           }
+
           try {
-            ws.send(msg)
+            ws.send(chunk)
           } catch {
             session.subscribers.delete(key)
           }
         }
-        Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
-      }
 
-      Bus.publish(Event.Exited, { id, exitCode })
-      remove(id)
-    })
+        Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
+
+        session.buffer += chunk
+        if (session.buffer.length <= BUFFER_LIMIT) return
+        const excess = session.buffer.length - BUFFER_LIMIT
+        session.buffer = session.buffer.slice(excess)
+        session.bufferCursor += excess
+      }),
+    )
+    ptyProcess.onExit(
+      Instance.bind(({ exitCode }) => {
+        if (session.info.status === "exited") return
+        log.info("session exited", { id, exitCode })
+        const wasKilled = session.info.status === "killed"
+        if (!wasKilled) {
+          session.info.status = "exited"
+        }
+        session.info.exitCode = exitCode
+
+        const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+
+        if (msg) {
+          session.buffer += msg
+          session.cursor += msg.length
+          session.info.cursor = session.cursor
+
+          for (const [key, ws] of session.subscribers.entries()) {
+            if (ws.readyState !== 1) {
+              session.subscribers.delete(key)
+              continue
+            }
+            if (ws.data !== key) {
+              session.subscribers.delete(key)
+              continue
+            }
+            try {
+              ws.send(msg)
+            } catch {
+              session.subscribers.delete(key)
+            }
+          }
+          Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+        }
+
+        Bus.publish(Event.Exited, { id, exitCode })
+        remove(id)
+      }),
+    )
     Bus.publish(Event.Created, { info })
     return info
   }
@@ -422,48 +426,9 @@ export namespace Pty {
     Bus.publish(Event.Updated, { info: session.info })
 
     // Set up new data/exit handlers
-    ptyProcess.onData((chunk) => {
-      session.cursor += chunk.length
-      session.info.cursor = session.cursor
-
-      for (const [key, ws] of session.subscribers.entries()) {
-        if (ws.readyState !== 1) {
-          session.subscribers.delete(key)
-          continue
-        }
-        if (ws.data !== key) {
-          session.subscribers.delete(key)
-          continue
-        }
-        try {
-          ws.send(chunk)
-        } catch {
-          session.subscribers.delete(key)
-        }
-      }
-
-      Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
-
-      session.buffer += chunk
-      if (session.buffer.length <= BUFFER_LIMIT) return
-      const excess = session.buffer.length - BUFFER_LIMIT
-      session.buffer = session.buffer.slice(excess)
-      session.bufferCursor += excess
-    })
-    ptyProcess.onExit(({ exitCode }) => {
-      if (session.info.status === "exited") return
-      log.info("session exited after restart", { id, exitCode })
-      const wasKilled = session.info.status === "killed"
-      if (!wasKilled) {
-        session.info.status = "exited"
-      }
-      session.info.exitCode = exitCode
-
-      const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
-
-      if (msg) {
-        session.buffer += msg
-        session.cursor += msg.length
+    ptyProcess.onData(
+      Instance.bind((chunk) => {
+        session.cursor += chunk.length
         session.info.cursor = session.cursor
 
         for (const [key, ws] of session.subscribers.entries()) {
@@ -476,17 +441,60 @@ export namespace Pty {
             continue
           }
           try {
-            ws.send(msg)
+            ws.send(chunk)
           } catch {
             session.subscribers.delete(key)
           }
         }
-        Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
-      }
 
-      Bus.publish(Event.Exited, { id, exitCode })
-      remove(id)
-    })
+        Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
+
+        session.buffer += chunk
+        if (session.buffer.length <= BUFFER_LIMIT) return
+        const excess = session.buffer.length - BUFFER_LIMIT
+        session.buffer = session.buffer.slice(excess)
+        session.bufferCursor += excess
+      }),
+    )
+    ptyProcess.onExit(
+      Instance.bind(({ exitCode }) => {
+        if (session.info.status === "exited") return
+        log.info("session exited after restart", { id, exitCode })
+        const wasKilled = session.info.status === "killed"
+        if (!wasKilled) {
+          session.info.status = "exited"
+        }
+        session.info.exitCode = exitCode
+
+        const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+
+        if (msg) {
+          session.buffer += msg
+          session.cursor += msg.length
+          session.info.cursor = session.cursor
+
+          for (const [key, ws] of session.subscribers.entries()) {
+            if (ws.readyState !== 1) {
+              session.subscribers.delete(key)
+              continue
+            }
+            if (ws.data !== key) {
+              session.subscribers.delete(key)
+              continue
+            }
+            try {
+              ws.send(msg)
+            } catch {
+              session.subscribers.delete(key)
+            }
+          }
+          Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+        }
+
+        Bus.publish(Event.Exited, { id, exitCode })
+        remove(id)
+      }),
+    )
   }
 
   export async function remove(id: PtyID) {
