@@ -59,11 +59,7 @@ export namespace TruncateEffect {
         }
       })
 
-      const output = Effect.fn("Truncate.output")(function* (
-        text: string,
-        options: Options = {},
-        agent?: Agent.Info,
-      ) {
+      const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
         const clean = stripAnsi(text)
         const maxLines = options.maxLines ?? MAX_LINES
         const maxBytes = options.maxBytes ?? MAX_BYTES
