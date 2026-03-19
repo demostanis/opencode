@@ -1,4 +1,5 @@
 import { MessageV2 } from "./message-v2"
+import stripAnsi from "strip-ansi"
 import { Log } from "@/util/log"
 import { Identifier } from "@/id/id"
 import { Session } from "."
@@ -180,12 +181,13 @@ export namespace SessionProcessor {
                 case "tool-result": {
                   const match = toolcalls[value.toolCallId]
                   if (match && match.state.status === "running") {
+                    const output = value.output?.output ? stripAnsi(value.output.output) : ""
                     await Session.updatePart({
                       ...match,
                       state: {
                         status: "completed",
                         input: value.input ?? match.state.input,
-                        output: value.output.output,
+                        output,
                         metadata: value.output.metadata,
                         title: value.output.title,
                         time: {
@@ -204,12 +206,13 @@ export namespace SessionProcessor {
                 case "tool-error": {
                   const match = toolcalls[value.toolCallId]
                   if (match && match.state.status === "running") {
+                    const error = value.error ? stripAnsi(String(value.error)) : ""
                     await Session.updatePart({
                       ...match,
                       state: {
                         status: "error",
                         input: value.input ?? match.state.input,
-                        error: (value.error as any).toString(),
+                        error,
                         time: {
                           start: match.state.time.start,
                           end: Date.now(),
