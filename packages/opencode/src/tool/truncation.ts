@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import stripAnsi from "strip-ansi"
 import path from "path"
 import { Global } from "../global"
 import { Identifier } from "../id/id"
@@ -49,14 +50,15 @@ export namespace Truncate {
   }
 
   export async function output(text: string, options: Options = {}, agent?: Agent.Info): Promise<Result> {
+    const clean = stripAnsi(text)
     const maxLines = options.maxLines ?? MAX_LINES
     const maxBytes = options.maxBytes ?? MAX_BYTES
     const direction = options.direction ?? "head"
-    const lines = text.split("\n")
-    const totalBytes = Buffer.byteLength(text, "utf-8")
+    const lines = clean.split("\n")
+    const totalBytes = Buffer.byteLength(clean, "utf-8")
 
     if (lines.length <= maxLines && totalBytes <= maxBytes) {
-      return { content: text, truncated: false }
+      return { content: clean, truncated: false }
     }
 
     const out: string[] = []
