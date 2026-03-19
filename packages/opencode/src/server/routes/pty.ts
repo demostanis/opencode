@@ -130,6 +130,87 @@ export const PtyRoutes = lazy(() =>
         return c.json(true)
       },
     )
+    .post(
+      "/:ptyID/kill",
+      describeRoute({
+        summary: "Kill PTY session",
+        description: "Terminate a specific pseudo-terminal (PTY) session without removing it.",
+        operationId: "pty.kill",
+        responses: {
+          200: {
+            description: "Session killed",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ ptyID: z.string() })),
+      async (c) => {
+        await Pty.kill(c.req.valid("param").ptyID)
+        return c.json(true)
+      },
+    )
+    .get(
+      "/:ptyID/read",
+      describeRoute({
+        summary: "Read PTY output",
+        description: "Retrieve the current output buffer of a pseudo-terminal (PTY) session.",
+        operationId: "pty.read",
+        responses: {
+          200: {
+            description: "Current buffer",
+            content: {
+              "application/json": {
+                schema: resolver(z.string()),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ ptyID: z.string() })),
+      async (c) => {
+        const result = Pty.read(c.req.valid("param").ptyID)
+        if (result === undefined) {
+          throw new NotFoundError({ message: "Session not found" })
+        }
+        return c.json(result)
+      },
+    )
+    .post(
+      "/:ptyID/write",
+      describeRoute({
+        summary: "Write to PTY session",
+        description: "Send input data to a specific pseudo-terminal (PTY) session.",
+        operationId: "pty.write",
+        responses: {
+          200: {
+            description: "Data sent successfully",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ ptyID: z.string() })),
+      validator("json", z.object({ data: z.string() })),
+      async (c) => {
+        const { ptyID } = c.req.valid("param")
+        const { data } = c.req.valid("json")
+        if (!Pty.get(ptyID)) {
+          throw new NotFoundError({ message: "Session not found" })
+        }
+        Pty.write(ptyID, data)
+        return c.json(true)
+      },
+    )
     .get(
       "/:ptyID/connect",
       describeRoute({

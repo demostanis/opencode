@@ -28,6 +28,7 @@ import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 
 import { ApplyPatchTool } from "./apply_patch"
+import { PTYSpawnTool, PTYReadTool, PTYWriteTool, PTYKillTool, PTYListTool } from "./pty"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 
@@ -118,6 +119,11 @@ export namespace ToolRegistry {
       CodeSearchTool,
       SkillTool,
       ApplyPatchTool,
+      PTYSpawnTool,
+      PTYReadTool,
+      PTYWriteTool,
+      PTYKillTool,
+      PTYListTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
