@@ -45,8 +45,11 @@ export namespace Pty {
       command: z.string(),
       args: z.array(z.string()),
       cwd: z.string(),
-      status: z.enum(["running", "exited"]),
+      status: z.enum(["running", "exited", "killed"]),
       pid: z.number(),
+      exitCode: z.number().optional(),
+      cursor: z.number().optional(),
+      parentSessionID: z.string().optional(),
     })
     .meta({ ref: "Pty" })
 
@@ -54,10 +57,10 @@ export namespace Pty {
 
   export const CreateInput = z.object({
     command: z.string().optional(),
-    args: z.array(z.string()).optional(),
     cwd: z.string().optional(),
     title: z.string().optional(),
     env: z.record(z.string(), z.string()).optional(),
+    parentSessionID: z.string().optional(),
   })
 
   export type CreateInput = z.infer<typeof CreateInput>
@@ -79,6 +82,10 @@ export namespace Pty {
     Updated: BusEvent.define("pty.updated", z.object({ info: Info })),
     Exited: BusEvent.define("pty.exited", z.object({ id: Identifier.schema("pty"), exitCode: z.number() })),
     Deleted: BusEvent.define("pty.deleted", z.object({ id: Identifier.schema("pty") })),
+    Output: BusEvent.define(
+      "pty.output",
+      z.object({ id: Identifier.schema("pty"), chunk: z.string(), cursor: z.number() }),
+    ),
   }
 
   interface ActiveSession {
@@ -120,7 +127,7 @@ export namespace Pty {
   export async function create(input: CreateInput) {
     const id = Identifier.create("pty", false)
     const command = input.command || Shell.preferred()
-    const args = input.args || []
+    const args: string[] = []
     if (command.endsWith("sh")) {
       args.push("-l")
     }
@@ -141,13 +148,50 @@ export namespace Pty {
       env.LANG = "C.UTF-8"
     }
     log.info("creating session", { id, cmd: command, args, cwd })
-
     const spawn = await pty()
-    const ptyProcess = spawn(command, args, {
-      name: "xterm-256color",
-      cwd,
-      env,
-    })
+    let ptyProcess: IPty
+    try {
+      const shellPath = await Shell.acceptable()
+      const fullCommand = args.length > 0 ? `${command} ${args.join(" ")}` : command
+      ptyProcess = spawn(shellPath, ["-c", fullCommand], {
+        name: "xterm-256color",
+        cwd,
+        env,
+      })
+    } catch (e) {
+      log.error("session spawn failed", { id, cmd: command, error: String(e) })
+      const info = {
+        id,
+        title: input.title || `Terminal ${id.slice(-4)}`,
+        command,
+        args,
+        cwd,
+        status: "exited",
+        pid: -1,
+        exitCode: -1,
+        cursor: 0,
+        parentSessionID: input.parentSessionID,
+      } as const
+      const session: ActiveSession = {
+        info,
+        process: {
+          pid: -1,
+          onData: () => {},
+          onExit: () => {},
+          kill: () => {},
+          resize: () => {},
+          write: () => {},
+        } as unknown as IPty,
+        buffer: `Error: Background process spawn failed: ${e instanceof Error ? e.message : String(e)}\n`,
+        bufferCursor: 0,
+        cursor: 0,
+        subscribers: new Map(),
+      }
+      state().set(id, session)
+      Bus.publish(Event.Created, { info })
+      Bus.publish(Event.Exited, { id, exitCode: -1 })
+      return info
+    }
 
     const info = {
       id,
@@ -157,6 +201,8 @@ export namespace Pty {
       cwd,
       status: "running",
       pid: ptyProcess.pid,
+      cursor: 0,
+      parentSessionID: input.parentSessionID,
     } as const
     const session: ActiveSession = {
       info,
@@ -169,6 +215,7 @@ export namespace Pty {
     state().set(id, session)
     ptyProcess.onData((chunk) => {
       session.cursor += chunk.length
+      session.info.cursor = session.cursor
 
       for (const [key, ws] of session.subscribers.entries()) {
         if (ws.readyState !== 1) {
@@ -188,6 +235,8 @@ export namespace Pty {
         }
       }
 
+      Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
+
       session.buffer += chunk
       if (session.buffer.length <= BUFFER_LIMIT) return
       const excess = session.buffer.length - BUFFER_LIMIT
@@ -196,7 +245,10 @@ export namespace Pty {
     })
     ptyProcess.onExit(({ exitCode }) => {
       log.info("session exited", { id, exitCode })
-      session.info.status = "exited"
+      if (session.info.status !== "killed") {
+        session.info.status = "exited"
+      }
+      session.info.exitCode = exitCode
       for (const [key, ws] of session.subscribers.entries()) {
         try {
           if (ws.data === key) ws.close()
@@ -206,10 +258,21 @@ export namespace Pty {
       }
       session.subscribers.clear()
       Bus.publish(Event.Exited, { id, exitCode })
-      state().delete(id)
     })
     Bus.publish(Event.Created, { info })
     return info
+  }
+
+  export function cleanup(parentSessionID: string) {
+    for (const [id, session] of state()) {
+      if (session.info.parentSessionID === parentSessionID) {
+        remove(id)
+      }
+    }
+  }
+
+  export function read(id: string) {
+    return state().get(id)?.buffer
   }
 
   export async function update(id: string, input: UpdateInput) {
@@ -223,6 +286,17 @@ export namespace Pty {
     }
     Bus.publish(Event.Updated, { info: session.info })
     return session.info
+  }
+
+  export async function kill(id: string) {
+    const session = state().get(id)
+    if (!session) return
+    log.info("killing session", { id })
+    try {
+      session.process.kill()
+    } catch {}
+    session.info.status = "killed"
+    Bus.publish(Event.Updated, { info: session.info })
   }
 
   export async function remove(id: string) {

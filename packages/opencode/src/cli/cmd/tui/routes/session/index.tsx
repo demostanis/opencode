@@ -42,6 +42,7 @@ import { BashTool } from "@/tool/bash"
 import type { GlobTool } from "@/tool/glob"
 import { TodoWriteTool } from "@/tool/todo"
 import type { GrepTool } from "@/tool/grep"
+import { PTYSpawnTool, PTYReadTool, PTYWriteTool, PTYKillTool, PTYListTool } from "@/tool/pty"
 import type { ListTool } from "@/tool/ls"
 import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
@@ -1342,13 +1343,40 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const ctx = use()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
 
-  const thinkingPhrases = ['Installing demolinux', 'Cooking pancakes', 'Solving world issues', 'Detonating', 'Installing The Hurd', 'Compiling Gentoo', 'Hacking NASA', 'Stealing cookies', 'Landing a spaceship', 'Selling drugs with your ID', 'Delegating task to indians', 'Thinking about life', 'Philosophing', 'Thinking', 'Gooning', 'Pspspsing at cats', 'Meowing', 'Meeting Polish girls', 'Doing politics', 'Vibecoding']
-  const [currentPhrase, setCurrentPhrase] = createSignal(thinkingPhrases[Math.floor(Math.random() * thinkingPhrases.length)])
+  const thinkingPhrases = [
+    "Installing demolinux",
+    "Cooking pancakes",
+    "Solving world issues",
+    "Detonating",
+    "Installing The Hurd",
+    "Compiling Gentoo",
+    "Hacking NASA",
+    "Stealing cookies",
+    "Landing a spaceship",
+    "Selling drugs with your ID",
+    "Delegating task to indians",
+    "Thinking about life",
+    "Philosophing",
+    "Thinking",
+    "Gooning",
+    "Pspspsing at cats",
+    "Meowing",
+    "Meeting Polish girls",
+    "Doing politics",
+    "Vibecoding",
+  ]
+  const [currentPhrase, setCurrentPhrase] = createSignal(
+    thinkingPhrases[Math.floor(Math.random() * thinkingPhrases.length)],
+  )
   const [dots, setDots] = createSignal(1)
   const [waveOffset, setWaveOffset] = createSignal(0)
-  
+
   const isThinking = createMemo(() => {
-    return props.parts.some((p) => p.type === "reasoning" && p.time && !p.time.end) && !props.message.error && !props.message.finish
+    return (
+      props.parts.some((p) => p.type === "reasoning" && p.time && !p.time.end) &&
+      !props.message.error &&
+      !props.message.finish
+    )
   })
 
   createEffect(() => {
@@ -1403,11 +1431,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       <Show when={props.last && isThinking() && !ctx.showThinking()}>
         <box paddingLeft={3} marginTop={1} flexDirection="row" gap={1}>
           <Show when={kv.get("animations_enabled", true)} fallback={<LoadingText text="· ..." offset={0} />}>
-            <spinner
-              frames={["◦", "○", "◎", "◉", "●", "◉", "◎", "○", "◦"]}
-              interval={80}
-              color={theme.textMuted}
-            />
+            <spinner frames={["◦", "○", "◎", "◉", "●", "◉", "◎", "○", "◦"]} interval={80} color={theme.textMuted} />
             <LoadingText text={currentPhrase() + ".".repeat(dots())} offset={waveOffset()} />
           </Show>
         </box>
@@ -1574,6 +1598,21 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   return (
     <Show when={!shouldHide()}>
       <Switch>
+        <Match when={props.part.tool === "pty_spawn"}>
+          <PtySpawn {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "pty_read"}>
+          <PtyRead {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "pty_write"}>
+          <PtyWrite {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "pty_kill"}>
+          <PtyKill {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "pty_list"}>
+          <PtyList {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "bash"}>
           <Bash {...toolprops} />
         </Match>
@@ -1653,12 +1692,12 @@ function GenericTool(props: ToolProps<any>) {
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
         <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
+          {Locale.titlecase(props.tool)} {input(props.input)}
         </InlineTool>
       }
     >
       <BlockTool
-        title={`# ${props.tool} ${input(props.input)}`}
+        title={`# ${Locale.titlecase(props.tool)} ${input(props.input)}`}
         part={props.part}
         onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
       >
@@ -2273,6 +2312,129 @@ function Skill(props: ToolProps<typeof SkillTool>) {
   return (
     <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
       Skill "{props.input.name}"
+    </InlineTool>
+  )
+}
+
+function PtySpawn(props: ToolProps<typeof PTYSpawnTool>) {
+  const { navigate } = useRoute()
+  const ctx = use()
+  const sync = useSync()
+  const theme = useTheme()
+  const exists = createMemo(() => sync.data.pty.some((p) => p.id === props.metadata.id))
+
+  return (
+    <InlineTool
+      icon="⚙"
+      pending="Spawning background process..."
+      complete={props.part.state.status === "completed"}
+      part={props.part}
+      onClick={
+        exists()
+          ? () => {
+              if (props.metadata.id) {
+                navigate({ type: "pty", ptyID: props.metadata.id, sessionID: ctx.sessionID })
+              }
+            }
+          : undefined
+      }
+    >
+      Spawned background process: {props.input.title || props.input.command}
+      <Show when={!exists()}>
+        <span style={{ fg: theme.theme.textMuted }}> (expired)</span>
+      </Show>
+      <Show when={props.input.command}>
+        {"\n"}
+        <span style={{ fg: theme.theme.textMuted }}>{props.input.command}</span>
+      </Show>
+    </InlineTool>
+  )
+}
+
+function PtyRead(props: ToolProps<typeof PTYReadTool>) {
+  const { navigate } = useRoute()
+  const ctx = use()
+  const sync = useSync()
+  const theme = useTheme()
+  const exists = createMemo(() => sync.data.pty.some((p) => p.id === props.input.id))
+
+  return (
+    <InlineTool
+      icon="→"
+      pending="Reading background process output..."
+      complete={props.part.state.status === "completed"}
+      part={props.part}
+      onClick={
+        exists()
+          ? () => {
+              if (props.input.id) {
+                navigate({ type: "pty", ptyID: props.input.id, sessionID: ctx.sessionID })
+              }
+            }
+          : undefined
+      }
+    >
+      Read output from background process: {props.metadata.title || props.input.id?.slice(-4)}
+      <Show when={!exists()}>
+        <span style={{ fg: theme.theme.textMuted }}> (expired)</span>
+      </Show>
+    </InlineTool>
+  )
+}
+
+function PtyWrite(props: ToolProps<typeof PTYWriteTool>) {
+  const { navigate } = useRoute()
+  const ctx = use()
+  const sync = useSync()
+  const theme = useTheme()
+  const exists = createMemo(() => sync.data.pty.some((p) => p.id === props.input.id))
+
+  return (
+    <InlineTool
+      icon="→"
+      pending="Writing to background process..."
+      complete={props.part.state.status === "completed"}
+      part={props.part}
+      onClick={
+        exists()
+          ? () => {
+              if (props.input.id) {
+                navigate({ type: "pty", ptyID: props.input.id, sessionID: ctx.sessionID })
+              }
+            }
+          : undefined
+      }
+    >
+      Sent input to background process: {props.metadata.title || props.input.id?.slice(-4)}
+      <Show when={!exists()}>
+        <span style={{ fg: theme.theme.textMuted }}> (expired)</span>
+      </Show>
+    </InlineTool>
+  )
+}
+
+function PtyKill(props: ToolProps<typeof PTYKillTool>) {
+  return (
+    <InlineTool
+      icon="✕"
+      pending="Killing background process..."
+      complete={props.part.state.status === "completed"}
+      part={props.part}
+    >
+      Killed background process: {props.metadata.title || props.input.id?.slice(-4)}
+    </InlineTool>
+  )
+}
+
+function PtyList(props: ToolProps<any>) {
+  return (
+    <InlineTool
+      icon="•"
+      pending="Listing background processes..."
+      complete={props.part.state.status === "completed"}
+      part={props.part}
+    >
+      Listed {props.metadata.processes?.length ?? 0} background processes
     </InlineTool>
   )
 }

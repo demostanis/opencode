@@ -28,6 +28,7 @@ import { useArgs } from "./args"
 import { batch, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
+import { Pty } from "@/pty"
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -73,6 +74,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       formatter: FormatterStatus[]
       vcs: VcsInfo | undefined
       path: Path
+      pty: Pty.Info[]
+      ptyOutput: Record<string, { buffer: string; cursor: number }>
     }>({
       provider_next: {
         all: [],
@@ -100,6 +103,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       formatter: [],
       vcs: undefined,
       path: { state: "", config: "", worktree: "", directory: "" },
+      pty: [],
+      ptyOutput: {},
     })
 
     const sdk = useSDK()
@@ -340,6 +345,40 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           setStore("vcs", { branch: event.properties.branch })
           break
         }
+        case "pty.created": {
+          const info = event.properties.info as Pty.Info
+          setStore("pty", (prev) => [...prev, info])
+          break
+        }
+        case "pty.updated": {
+          const info = event.properties.info as Pty.Info
+          setStore("pty", (p) => p.id === info.id, reconcile(info))
+          break
+        }
+        case "pty.exited": {
+          const id = event.properties.id
+          const exitCode = event.properties.exitCode
+          setStore("pty", (p) => p.id === id, "status", "exited")
+          setStore("pty", (p) => p.id === id, "exitCode", exitCode)
+          break
+        }
+        case "pty.deleted": {
+          const id = event.properties.id
+          setStore("pty", (prev) => prev.filter((p) => p.id !== id))
+          setStore("ptyOutput", id, undefined!)
+          break
+        }
+        case "pty.output": {
+          const { id, chunk, cursor } = event.properties
+          setStore("ptyOutput", id, (prev) => {
+            const current = prev || { buffer: "", cursor: 0 }
+            if (cursor <= current.cursor) return current // Ignore duplicates
+            let next = current.buffer + chunk
+            if (next.length > 1024 * 1024) next = next.slice(-1024 * 1024)
+            return { buffer: next, cursor }
+          })
+          break
+        }
       }
     })
 
@@ -413,6 +452,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.provider.auth().then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
             sdk.client.vcs.get().then((x) => setStore("vcs", reconcile(x.data))),
             sdk.client.path.get().then((x) => setStore("path", reconcile(x.data!))),
+            sdk.client.pty.list().then((x) => setStore("pty", reconcile(x.data!))),
           ]).then(() => {
             setStore("status", "complete")
           })
