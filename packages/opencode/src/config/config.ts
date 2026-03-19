@@ -24,7 +24,7 @@ import { LSPServer } from "../lsp/server"
 import { BunProc } from "@/bun"
 import { Installation } from "@/installation"
 import { ConfigMarkdown } from "./markdown"
-import { constants, existsSync } from "fs"
+import { constants, existsSync, readFileSync } from "fs"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
@@ -241,13 +241,78 @@ export namespace Config {
   })
 
   export async function waitForDependencies() {
-    const deps = await state().then((x) => x.deps)
+    const { deps, directories } = await state()
     await Promise.all(deps)
+    const paths = unique([...directories, Global.Path.cache])
+    for (const dir of paths) {
+      const nm = path.join(dir, "node_modules")
+      if (existsSync(nm)) {
+        for (const sub of ["tool", "tools"]) {
+          const toolDir = path.join(dir, sub)
+          if (existsSync(toolDir)) {
+            const target = path.join(toolDir, "node_modules")
+            if (!existsSync(target)) {
+              try {
+                await fs.symlink(nm, target, "dir")
+              } catch {
+                // ignore if symlink already exists or fails
+              }
+            }
+          }
+        }
+
+        process.env.NODE_PATH = unique([nm, ...(process.env.NODE_PATH?.split(path.delimiter) ?? [])])
+          .filter(Boolean)
+          .join(path.delimiter)
+      }
+    }
+  }
+
+  // Build a tool/plugin file using Bun.build() to bundle all dependencies.
+  // This is needed because compiled Bun binaries can't resolve transitive
+  // dependencies (e.g. zod from @opencode-ai/plugin) at runtime.
+  export async function build(file: string) {
+    const outdir = path.join(Global.Path.cache, "tool-builds")
+    const { directories } = await state()
+    const nmPaths = unique([...directories, Global.Path.cache])
+      .map((dir) => path.join(dir, "node_modules"))
+      .filter(existsSync)
+    const result = await Bun.build({
+      entrypoints: [file],
+      outdir,
+      target: "bun",
+      naming: "[name]-[hash].[ext]",
+      plugins: nmPaths.length
+        ? [
+            {
+              name: "opencode-resolve",
+              setup(builder) {
+                builder.onResolve({ filter: /.*/ }, (args) => {
+                  if (args.path.startsWith(".") || args.path.startsWith("/")) return
+                  for (const nm of nmPaths) {
+                    try {
+                      const req = createRequire(path.join(nm, "index.js"))
+                      const resolved = req.resolve(args.path)
+                      return { path: resolved }
+                    } catch {}
+                  }
+                })
+              },
+            },
+          ]
+        : [],
+    })
+    if (!result.success) {
+      throw new Error(`Failed to build ${file}: ${result.logs.map(String).join("\n")}`)
+    }
+    return result.outputs[0].path
   }
 
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
-    const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
+    const isDev =
+      Installation.VERSION.includes("-dev") || Installation.VERSION.startsWith("0.0.0") || Installation.isLocal()
+    const targetVersion = isDev ? "latest" : Installation.VERSION
 
     const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
       dependencies: {},
@@ -307,8 +372,11 @@ export namespace Config {
     const depVersion = dependencies["@opencode-ai/plugin"]
     if (!depVersion) return true
 
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    const isDev =
+      Installation.VERSION.includes("-dev") || Installation.VERSION.startsWith("0.0.0") || Installation.isLocal()
+    const targetVersion = isDev ? "latest" : Installation.VERSION
     if (targetVersion === "latest") {
+      if (depVersion === "latest") return true
       const isOutdated = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
       if (!isOutdated) return false
       log.info("Cached version is outdated, proceeding with install", {
