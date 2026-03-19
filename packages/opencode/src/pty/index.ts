@@ -142,11 +142,6 @@ export namespace Pty {
       OPENCODE_TERMINAL: "1",
     } as Record<string, string>
 
-    if (process.platform === "win32") {
-      env.LC_ALL = "C.UTF-8"
-      env.LC_CTYPE = "C.UTF-8"
-      env.LANG = "C.UTF-8"
-    }
     log.info("creating session", { id, cmd: command, args, cwd })
     const spawn = await pty()
     let ptyProcess: IPty
@@ -182,7 +177,7 @@ export namespace Pty {
           resize: () => {},
           write: () => {},
         } as unknown as IPty,
-        buffer: `Error: Background process spawn failed: ${e instanceof Error ? e.message : String(e)}\n`,
+        buffer: `\r\n\x1b[90mError: Background process spawn failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`,
         bufferCursor: 0,
         cursor: 0,
         subscribers: new Map(),
@@ -245,10 +240,37 @@ export namespace Pty {
     })
     ptyProcess.onExit(({ exitCode }) => {
       log.info("session exited", { id, exitCode })
-      if (session.info.status !== "killed") {
+      const wasKilled = session.info.status === "killed"
+      if (!wasKilled) {
         session.info.status = "exited"
       }
       session.info.exitCode = exitCode
+
+      const msg = wasKilled ? "" : `\r\n\x1b[90mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+
+      if (msg) {
+        session.buffer += msg
+        session.cursor += msg.length
+        session.info.cursor = session.cursor
+
+        for (const [key, ws] of session.subscribers.entries()) {
+          if (ws.readyState !== 1) {
+            session.subscribers.delete(key)
+            continue
+          }
+          if (ws.data !== key) {
+            session.subscribers.delete(key)
+            continue
+          }
+          try {
+            ws.send(msg)
+          } catch {
+            session.subscribers.delete(key)
+          }
+        }
+        Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+      }
+
       for (const [key, ws] of session.subscribers.entries()) {
         try {
           if (ws.data === key) ws.close()
@@ -296,7 +318,190 @@ export namespace Pty {
       session.process.kill()
     } catch {}
     session.info.status = "killed"
+
+    const msg = "\r\n\x1b[90mProcess was killed.\x1b[0m\r\n"
+    session.buffer += msg
+    session.cursor += msg.length
+    session.info.cursor = session.cursor
+
+    for (const [key, ws] of session.subscribers.entries()) {
+      if (ws.readyState !== 1) {
+        session.subscribers.delete(key)
+        continue
+      }
+      if (ws.data !== key) {
+        session.subscribers.delete(key)
+        continue
+      }
+      try {
+        ws.send(msg)
+      } catch {
+        session.subscribers.delete(key)
+      }
+    }
+
+    Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
     Bus.publish(Event.Updated, { info: session.info })
+  }
+
+  export async function restart(id: string) {
+    const session = state().get(id)
+    if (!session) return
+    log.info("restarting session", { id })
+
+    // Kill old process if running
+    if (session.info.status === "running") {
+      try {
+        session.process.kill()
+      } catch {}
+    }
+
+    // Preserve old buffer
+    const oldBuffer = session.buffer
+    const oldBufferCursor = session.bufferCursor
+    const oldCursor = session.cursor
+
+    // Spawn new process
+    const spawn = await pty()
+    const shellPath = await Shell.acceptable()
+    const fullCommand =
+      session.info.args.length > 0 ? `${session.info.command} ${session.info.args.join(" ")}` : session.info.command
+    const env = {
+      ...process.env,
+      TERM: "xterm-256color",
+      OPENCODE_TERMINAL: "1",
+    } as Record<string, string>
+
+    if (process.platform === "win32") {
+      env.LC_ALL = "C.UTF-8"
+      env.LC_CTYPE = "C.UTF-8"
+      env.LANG = "C.UTF-8"
+    }
+
+    let ptyProcess: IPty
+    try {
+      ptyProcess = spawn(shellPath, ["-c", fullCommand], {
+        name: "xterm-256color",
+        cwd: session.info.cwd,
+        env,
+      })
+    } catch (e) {
+      log.error("restart spawn failed", { id, error: String(e) })
+      session.info.status = "exited"
+      session.info.exitCode = -1
+      const msg = `\r\n\x1b[90mError: Restart failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`
+      session.buffer += msg
+      session.cursor += msg.length
+      session.info.cursor = session.cursor
+      Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+      Bus.publish(Event.Exited, { id, exitCode: -1 })
+      return
+    }
+
+    // Update session with new process
+    session.process = ptyProcess
+    session.info.status = "running"
+    session.info.pid = ptyProcess.pid
+    session.info.exitCode = undefined
+
+    // Append restart message to buffer
+    const msg = "\r\n\x1b[90mProcess was restarted.\x1b[0m\r\n\r\n"
+    session.buffer += msg
+    session.cursor += msg.length
+    session.info.cursor = session.cursor
+
+    // Notify subscribers about restart message
+    for (const [key, ws] of session.subscribers.entries()) {
+      if (ws.readyState !== 1) {
+        session.subscribers.delete(key)
+        continue
+      }
+      if (ws.data !== key) {
+        session.subscribers.delete(key)
+        continue
+      }
+      try {
+        ws.send(msg)
+      } catch {
+        session.subscribers.delete(key)
+      }
+    }
+
+    Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+    Bus.publish(Event.Updated, { info: session.info })
+
+    // Set up new data/exit handlers
+    ptyProcess.onData((chunk) => {
+      session.cursor += chunk.length
+      session.info.cursor = session.cursor
+
+      for (const [key, ws] of session.subscribers.entries()) {
+        if (ws.readyState !== 1) {
+          session.subscribers.delete(key)
+          continue
+        }
+        if (ws.data !== key) {
+          session.subscribers.delete(key)
+          continue
+        }
+        try {
+          ws.send(chunk)
+        } catch {
+          session.subscribers.delete(key)
+        }
+      }
+
+      Bus.publish(Event.Output, { id, chunk, cursor: session.cursor })
+
+      session.buffer += chunk
+      if (session.buffer.length <= BUFFER_LIMIT) return
+      const excess = session.buffer.length - BUFFER_LIMIT
+      session.buffer = session.buffer.slice(excess)
+      session.bufferCursor += excess
+    })
+    ptyProcess.onExit(({ exitCode }) => {
+      log.info("session exited after restart", { id, exitCode })
+      const wasKilled = session.info.status === "killed"
+      if (!wasKilled) {
+        session.info.status = "exited"
+      }
+      session.info.exitCode = exitCode
+
+      const msg = wasKilled ? "" : `\r\n\x1b[90mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+
+      if (msg) {
+        session.buffer += msg
+        session.cursor += msg.length
+        session.info.cursor = session.cursor
+
+        for (const [key, ws] of session.subscribers.entries()) {
+          if (ws.readyState !== 1) {
+            session.subscribers.delete(key)
+            continue
+          }
+          if (ws.data !== key) {
+            session.subscribers.delete(key)
+            continue
+          }
+          try {
+            ws.send(msg)
+          } catch {
+            session.subscribers.delete(key)
+          }
+        }
+        Bus.publish(Event.Output, { id, chunk: msg, cursor: session.cursor })
+      }
+
+      for (const [key, ws] of session.subscribers.entries()) {
+        try {
+          if (ws.data === key) ws.close()
+        } catch {
+          // ignore
+        }
+      }
+      session.subscribers.clear()
+      Bus.publish(Event.Exited, { id, exitCode })
+    })
   }
 
   export async function remove(id: string) {

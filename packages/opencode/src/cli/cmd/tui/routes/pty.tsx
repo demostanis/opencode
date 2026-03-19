@@ -1,13 +1,69 @@
-import { createEffect, createMemo, createSignal, Show, onMount, For } from "solid-js"
+import { createEffect, createMemo, createSignal, Show, onMount, onCleanup, For } from "solid-js"
 import { useRoute, useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { useSDK } from "@tui/context/sdk"
-import { useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { Sidebar } from "./session/sidebar"
 import { useKV } from "../context/kv"
-import { ScrollBoxRenderable, TextAttributes } from "@opentui/core"
-import stripAnsi from "strip-ansi"
+import { ScrollBoxRenderable, TextAttributes, RGBA } from "@opentui/core"
+import { createVirtual, type StyledLine } from "./pty-terminal"
+
+function hexToRGBA(hex: string | undefined): RGBA | undefined {
+  if (!hex) return undefined
+  return RGBA.fromHex(hex)
+}
+
+function keyToSequence(evt: { name: string; ctrl: boolean; shift: boolean; sequence?: string }): string | undefined {
+  const ctrl = evt.ctrl
+  const name = evt.name
+
+  // Use sequence for printable characters (handles shift correctly)
+  if (evt.sequence && evt.sequence.length === 1 && evt.sequence !== "\x1b") {
+    // Handle ctrl+letter via sequence
+    if (ctrl && evt.sequence >= "a" && evt.sequence <= "z") {
+      return String.fromCharCode(evt.sequence.charCodeAt(0) - 96)
+    }
+    if (ctrl && evt.sequence >= "A" && evt.sequence <= "Z") {
+      return String.fromCharCode(evt.sequence.charCodeAt(0) - 64)
+    }
+    return evt.sequence
+  }
+
+  // Special keys
+  const specialKeys: Record<string, string> = {
+    space: " ",
+    return: "\r",
+    enter: "\r",
+    tab: "\t",
+    backspace: "\x7f",
+    delete: "\x1b[3~",
+    escape: "\x1b",
+    left: "\x1b[D",
+    right: "\x1b[C",
+    up: "\x1b[A",
+    down: "\x1b[B",
+    home: "\x1b[H",
+    end: "\x1b[F",
+    pageup: "\x1b[5~",
+    pagedown: "\x1b[6~",
+    insert: "\x1b[2~",
+    f1: "\x1bOP",
+    f2: "\x1bOQ",
+    f3: "\x1bOR",
+    f4: "\x1bOS",
+    f5: "\x1b[15~",
+    f6: "\x1b[17~",
+    f7: "\x1b[18~",
+    f8: "\x1b[19~",
+    f9: "\x1b[20~",
+    f10: "\x1b[21~",
+    f11: "\x1b[23~",
+    f12: "\x1b[24~",
+  }
+
+  return specialKeys[name]
+}
 
 export function PtyView() {
   const route = useRouteData("pty")
@@ -20,29 +76,86 @@ export function PtyView() {
 
   const pty = createMemo(() => sync.data.pty.find((p) => p.id === route.ptyID))
 
-  // Local signal for the initial buffer state (fetched from server)
-  const [initialBuffer, setInitialBuffer] = createSignal({ buffer: "", cursor: 0 })
+  const ptyOutput = createMemo(() => sync.data.ptyOutput[route.ptyID])
 
-  const outputLines = createMemo(() => {
-    const initial = initialBuffer()
-    const realTime = sync.data.ptyOutput[route.ptyID] || { buffer: "", cursor: 0 }
+  const [lines, setLines] = createSignal<StyledLine[]>([])
+  const [termReady, setTermReady] = createSignal(false)
+  const [lastCursor, setLastCursor] = createSignal(0)
 
-    let raw = initial.buffer
-    if (realTime.cursor > initial.cursor) {
-      const deltaSize = realTime.cursor - initial.cursor
-      raw += realTime.buffer.slice(-deltaSize)
-    }
+  const cols = createMemo(() => Math.max(20, dimensions().width - 8))
+  const rows = createMemo(() => Math.max(5, dimensions().height - 8))
 
-    // Fix literal \n if they got escaped, and normalize terminal newlines
-    const normalized = raw.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-
-    return stripAnsi(normalized).split("\n")
-  })
-
+  let term: ReturnType<typeof createVirtual> | undefined
   let scroll: ScrollBoxRenderable
 
+  onMount(async () => {
+    term = createVirtual(cols(), rows())
+
+    // Load initial buffer
+    try {
+      // @ts-ignore
+      const res = await sdk.client.pty.read({ ptyID: route.ptyID })
+      if (res.data) {
+        // The buffer is already raw data, don't escape it
+        await term.write(res.data)
+        const info = pty()
+        setLastCursor(info?.cursor ?? 0)
+      }
+    } catch (e) {
+      console.error("Failed to read PTY buffer:", e)
+    }
+
+    setTermReady(true)
+    setLines(term.getBuffer())
+
+    setTimeout(() => {
+      if (scroll && !scroll.isDestroyed) {
+        scroll.scrollTo(scroll.scrollHeight)
+      }
+    }, 10)
+  })
+
+  onCleanup(() => {
+    term?.dispose()
+  })
+
+  // Process new output from sync
+  createEffect(() => {
+    if (!term || !termReady()) return
+
+    const output = ptyOutput()
+    const prevCursor = lastCursor()
+    if (!output || output.cursor <= prevCursor) return
+
+    const deltaSize = output.cursor - prevCursor
+    const chunk = output.buffer.slice(-deltaSize)
+
+    // Async write to ensure xterm has processed the data
+    void (async () => {
+      await term!.write(chunk)
+      setLastCursor(output.cursor)
+      setLines(term!.getBuffer())
+
+      setTimeout(() => {
+        if (scroll && !scroll.isDestroyed) {
+          scroll.scrollTo(scroll.scrollHeight)
+        }
+      }, 10)
+    })()
+  })
+
+  // Resize terminal when dimensions change
+  createEffect(() => {
+    const c = cols()
+    const r = rows()
+    if (term && termReady()) {
+      term.resize(c, r)
+      setLines(term.getBuffer())
+    }
+  })
+
   const handleBack = () => {
-    const sid = route.sessionID || pty()?.parentSessionID
+    const sid = pty()?.parentSessionID
     if (sid) {
       navigate({ type: "session", sessionID: sid })
     } else {
@@ -53,29 +166,52 @@ export function PtyView() {
   const handleKill = async () => {
     if (pty()?.status === "running") {
       try {
-        await sdk.client.pty.remove({ ptyID: route.ptyID })
+        await sdk.client.pty.kill({ ptyID: route.ptyID })
       } catch (e) {
         // ignore
       }
     }
   }
 
-  onMount(async () => {
+  const handleRestart = async () => {
     try {
-      // @ts-ignore
-      const res = await sdk.client.pty.read({ ptyID: route.ptyID })
-      if (res.data) {
-        const info = pty()
-        setInitialBuffer({ buffer: res.data, cursor: info?.cursor ?? 0 })
-
-        setTimeout(() => {
-          if (scroll && !scroll.isDestroyed) {
-            scroll.scrollTo(scroll.scrollHeight)
-          }
-        }, 10)
-      }
+      await sdk.client.pty.restart({ ptyID: route.ptyID })
     } catch (e) {
       // ignore
+    }
+  }
+
+  const handleWrite = async (data: string) => {
+    if (pty()?.status !== "running") return
+    try {
+      await sdk.client.pty.write({ ptyID: route.ptyID, data })
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  useKeyboard((evt) => {
+    // When process has exited, Enter goes back
+    if (pty()?.status !== "running") {
+      if (evt.name === "return" || evt.name === "enter") {
+        handleBack()
+        evt.preventDefault()
+        evt.stopPropagation()
+      }
+      return
+    }
+
+    const seq = keyToSequence({
+      name: evt.name,
+      ctrl: evt.ctrl,
+      shift: evt.shift,
+      sequence: (evt as any).sequence,
+    })
+
+    if (seq) {
+      handleWrite(seq)
+      evt.preventDefault()
+      evt.stopPropagation()
     }
   })
 
@@ -125,6 +261,16 @@ export function PtyView() {
               >
                 <text fg={theme.text}>{pty()?.status === "running" ? "Kill" : "Killed"}</text>
               </box>
+              <box
+                onMouseUp={handleRestart}
+                backgroundColor={theme.primary}
+                paddingLeft={1}
+                paddingRight={1}
+                width={10}
+                justifyContent="center"
+              >
+                <text fg={theme.text}>Restart</text>
+              </box>
             </box>
           </box>
           <Show when={pty()}>
@@ -140,18 +286,58 @@ export function PtyView() {
         </box>
 
         <scrollbox ref={(r) => (scroll = r)} flexGrow={1} stickyScroll={true} stickyStart="bottom">
-          <For each={outputLines()} fallback={<text fg={theme.textMuted}>Waiting for output...</text>}>
-            {(line: string) => <text fg={theme.text}>{line}</text>}
+          <For each={lines()} fallback={<text fg={theme.textMuted}>Waiting for output...</text>}>
+            {(line: StyledLine) => (
+              <text>
+                <For each={line.segments}>
+                  {(seg) => {
+                    // Cursor segment: render with swapped colors
+                    if (seg.style.cursor) {
+                      const cursorBg = hexToRGBA(seg.style.fg) ?? theme.text
+                      const cursorFg = hexToRGBA(seg.style.bg) ?? theme.background
+                      return (
+                        <span
+                          style={{
+                            fg: cursorFg,
+                            bg: cursorBg,
+                            bold: seg.style.bold,
+                            italic: seg.style.italic,
+                            dim: seg.style.dim,
+                            underline: seg.style.underline,
+                            strikethrough: seg.style.strikethrough,
+                          }}
+                        >
+                          {seg.text}
+                        </span>
+                      )
+                    }
+                    const fg = hexToRGBA(seg.style.fg)
+                    const bg = hexToRGBA(seg.style.bg)
+                    return (
+                      <span
+                        style={{
+                          fg: fg ?? theme.text,
+                          bg: bg,
+                          bold: seg.style.bold,
+                          italic: seg.style.italic,
+                          dim: seg.style.dim,
+                          underline: seg.style.underline,
+                          strikethrough: seg.style.strikethrough,
+                          inverse: seg.style.inverse,
+                        }}
+                      >
+                        {seg.text}
+                      </span>
+                    )
+                  }}
+                </For>
+              </text>
+            )}
           </For>
-          <Show when={pty()?.status === "killed"}>
-            <text fg={theme.error} attributes={TextAttributes.BOLD}>
-              Process was killed.
-            </text>
-          </Show>
         </scrollbox>
       </box>
       <Show when={sidebarVisible()}>
-        <Sidebar sessionID={route.sessionID || pty()?.parentSessionID || ""} />
+        <Sidebar sessionID={pty()?.parentSessionID || ""} />
       </Show>
     </box>
   )

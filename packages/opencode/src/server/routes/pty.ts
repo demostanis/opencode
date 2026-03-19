@@ -154,6 +154,36 @@ export const PtyRoutes = lazy(() =>
         return c.json(true)
       },
     )
+    .post(
+      "/:ptyID/restart",
+      describeRoute({
+        summary: "Restart PTY session",
+        description:
+          "Restart a pseudo-terminal (PTY) session by spawning a new process with the same command. Preserves existing output.",
+        operationId: "pty.restart",
+        responses: {
+          200: {
+            description: "Session restarted",
+            content: {
+              "application/json": {
+                schema: resolver(Pty.Info),
+              },
+            },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ ptyID: z.string() })),
+      async (c) => {
+        const id = c.req.valid("param").ptyID
+        if (!Pty.get(id)) {
+          throw new NotFoundError({ message: "Session not found" })
+        }
+        await Pty.restart(id)
+        const info = Pty.get(id)
+        return c.json(info)
+      },
+    )
     .get(
       "/:ptyID/read",
       describeRoute({

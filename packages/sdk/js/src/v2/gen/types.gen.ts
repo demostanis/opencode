@@ -942,6 +942,15 @@ export type EventPtyDeleted = {
   }
 }
 
+export type EventPtyOutput = {
+  type: "pty.output"
+  properties: {
+    id: string
+    chunk: string
+    cursor: number
+  }
+}
+
 export type EventWorktreeReady = {
   type: "worktree.ready"
   properties: {
@@ -1001,6 +1010,7 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
+  | EventPtyOutput
   | EventWorktreeReady
   | EventWorktreeFailed
 
@@ -2314,6 +2324,98 @@ export type PtyConnectResponses = {
 }
 
 export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
+
+export type PtyKillData = {
+  body?: never
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/pty/{ptyID}/kill"
+}
+
+export type PtyKillErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyKillError = PtyKillErrors[keyof PtyKillErrors]
+
+export type PtyKillResponses = {
+  /**
+   * Session killed
+   */
+  200: boolean
+}
+
+export type PtyKillResponse = PtyKillResponses[keyof PtyKillResponses]
+
+export type PtyRestartData = {
+  body?: never
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/pty/{ptyID}/restart"
+}
+
+export type PtyRestartErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyRestartError = PtyRestartErrors[keyof PtyRestartErrors]
+
+export type PtyRestartResponses = {
+  /**
+   * Session restarted
+   */
+  200: Pty
+}
+
+export type PtyRestartResponse = PtyRestartResponses[keyof PtyRestartResponses]
+
+export type PtyWriteData = {
+  body: {
+    data: string
+  }
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/pty/{ptyID}/write"
+}
+
+export type PtyWriteErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyWriteError = PtyWriteErrors[keyof PtyWriteErrors]
+
+export type PtyWriteResponses = {
+  /**
+   * Data sent successfully
+   */
+  200: boolean
+}
+
+export type PtyWriteResponse = PtyWriteResponses[keyof PtyWriteResponses]
 
 export type ConfigGetData = {
   body?: never

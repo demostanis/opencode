@@ -92,11 +92,17 @@ import type {
   PtyCreateResponses,
   PtyGetErrors,
   PtyGetResponses,
+  PtyKillErrors,
+  PtyKillResponses,
   PtyListResponses,
   PtyRemoveErrors,
   PtyRemoveResponses,
+  PtyRestartErrors,
+  PtyRestartResponses,
   PtyUpdateErrors,
   PtyUpdateResponses,
+  PtyWriteErrors,
+  PtyWriteResponses,
   QuestionAnswer,
   QuestionListResponses,
   QuestionRejectErrors,
@@ -693,6 +699,109 @@ export class Pty extends HeyApiClient {
       url: "/pty/{ptyID}/connect",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Kill PTY session
+   *
+   * Terminate a specific pseudo-terminal (PTY) session without removing it.
+   */
+  public kill<ThrowOnError extends boolean = false>(
+    parameters: {
+      ptyID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ptyID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PtyKillResponses, PtyKillErrors, ThrowOnError>({
+      url: "/pty/{ptyID}/kill",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Restart PTY session
+   *
+   * Restart a pseudo-terminal (PTY) session by spawning a new process with the same command. Preserves existing output.
+   */
+  public restart<ThrowOnError extends boolean = false>(
+    parameters: {
+      ptyID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ptyID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PtyRestartResponses, PtyRestartErrors, ThrowOnError>({
+      url: "/pty/{ptyID}/restart",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Write to PTY session
+   *
+   * Send input data to a specific pseudo-terminal (PTY) session.
+   */
+  public write<ThrowOnError extends boolean = false>(
+    parameters: {
+      ptyID: string
+      directory?: string
+      workspace?: string
+      data: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ptyID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "data" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PtyWriteResponses, PtyWriteErrors, ThrowOnError>({
+      url: "/pty/{ptyID}/write",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }
