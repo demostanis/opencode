@@ -207,7 +207,7 @@ export namespace SessionProcessor {
                 case "tool-error": {
                   const match = toolcalls[value.toolCallId]
                   if (match && match.state.status === "running") {
-                    const error = value.error ? stripAnsi(String(value.error)) : ""
+                    const error = stripAnsi(value.error instanceof Error ? value.error.message : String(value.error))
                     await Session.updatePart({
                       ...match,
                       state: {
