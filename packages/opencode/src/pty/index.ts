@@ -113,8 +113,12 @@ export namespace Pty {
     },
   )
 
-  export function list() {
-    return Array.from(state().values()).map((s) => s.info)
+  export function list(parentSessionID?: string) {
+    const all = Array.from(state().values()).map((s) => s.info)
+    if (parentSessionID) {
+      return all.filter((info) => info.parentSessionID === parentSessionID)
+    }
+    return all
   }
 
   export function get(id: PtyID) {
@@ -174,7 +178,7 @@ export namespace Pty {
           resize: () => {},
           write: () => {},
         } as unknown as IPty,
-        buffer: `\r\n\x1b[1m\x1b[31mError: Background process spawn failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`,
+        buffer: `\r\n\x1b[2mError: Background process spawn failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`,
         bufferCursor: 0,
         cursor: 0,
         subscribers: new Map(),
@@ -239,6 +243,7 @@ export namespace Pty {
     )
     ptyProcess.onExit(
       Instance.bind(({ exitCode }) => {
+        if (session.process !== ptyProcess) return
         if (session.info.status === "exited") return
         log.info("session exited", { id, exitCode })
         const wasKilled = session.info.status === "killed"
@@ -247,7 +252,7 @@ export namespace Pty {
         }
         session.info.exitCode = exitCode
 
-        const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+        const msg = wasKilled ? "" : `\r\n\x1b[2mProcess exited with code ${exitCode}.\x1b[0m\r\n`
 
         if (msg) {
           session.buffer += msg
@@ -273,7 +278,6 @@ export namespace Pty {
         }
 
         Bus.publish(Event.Exited, { id, exitCode })
-        remove(id)
       }),
     )
     Bus.publish(Event.Created, { info })
@@ -314,7 +318,7 @@ export namespace Pty {
     } catch {}
     session.info.status = "killed"
 
-    const msg = "\r\n\x1b[1m\x1b[31mProcess was killed.\x1b[0m\r\n"
+    const msg = "\r\n\x1b[2mProcess was killed.\x1b[0m\r\n"
     session.buffer += msg
     session.cursor += msg.length
     session.info.cursor = session.cursor
@@ -384,7 +388,7 @@ export namespace Pty {
       log.error("restart spawn failed", { id, error: String(e) })
       session.info.status = "exited"
       session.info.exitCode = -1
-      const msg = `\r\n\x1b[1m\x1b[31mError: Restart failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`
+      const msg = `\r\n\x1b[2mError: Restart failed: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`
       session.buffer += msg
       session.cursor += msg.length
       session.info.cursor = session.cursor
@@ -400,7 +404,7 @@ export namespace Pty {
     session.info.exitCode = undefined
 
     // Append restart message to buffer
-    const msg = "\r\n\x1b[1m\x1b[33mProcess was restarted.\x1b[0m\r\n\r\n"
+    const msg = "\r\n\x1b[2mProcess was restarted.\x1b[0m\r\n\r\n"
     session.buffer += msg
     session.cursor += msg.length
     session.info.cursor = session.cursor
@@ -458,6 +462,7 @@ export namespace Pty {
     )
     ptyProcess.onExit(
       Instance.bind(({ exitCode }) => {
+        if (session.process !== ptyProcess) return
         if (session.info.status === "exited") return
         log.info("session exited after restart", { id, exitCode })
         const wasKilled = session.info.status === "killed"
@@ -466,7 +471,7 @@ export namespace Pty {
         }
         session.info.exitCode = exitCode
 
-        const msg = wasKilled ? "" : `\r\n\x1b[1m\x1b[33mProcess exited with code ${exitCode}.\x1b[0m\r\n`
+        const msg = wasKilled ? "" : `\r\n\x1b[2mProcess exited with code ${exitCode}.\x1b[0m\r\n`
 
         if (msg) {
           session.buffer += msg
@@ -492,7 +497,6 @@ export namespace Pty {
         }
 
         Bus.publish(Event.Exited, { id, exitCode })
-        remove(id)
       }),
     )
   }
