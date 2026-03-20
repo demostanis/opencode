@@ -2349,7 +2349,7 @@ function PtySpawn(props: ToolProps<typeof PTYSpawnTool>) {
         exists()
           ? () => {
               if (props.metadata.id) {
-                navigate({ type: "pty", ptyID: props.metadata.id, sessionID: ctx.sessionID })
+                navigate({ type: "pty", ptyID: props.metadata.id, sessionID: props.part.sessionID })
               }
             }
           : undefined
@@ -2369,7 +2369,6 @@ function PtySpawn(props: ToolProps<typeof PTYSpawnTool>) {
 
 function PtyRead(props: ToolProps<typeof PTYReadTool>) {
   const { navigate } = useRoute()
-  const ctx = use()
   const sync = useSync()
   const theme = useTheme()
   const exists = createMemo(() => sync.data.pty.some((p) => p.id === props.input.id))
@@ -2384,7 +2383,7 @@ function PtyRead(props: ToolProps<typeof PTYReadTool>) {
         exists()
           ? () => {
               if (props.input.id) {
-                navigate({ type: "pty", ptyID: props.input.id, sessionID: ctx.sessionID })
+                navigate({ type: "pty", ptyID: props.input.id, sessionID: props.part.sessionID })
               }
             }
           : undefined
@@ -2400,7 +2399,6 @@ function PtyRead(props: ToolProps<typeof PTYReadTool>) {
 
 function PtyWrite(props: ToolProps<typeof PTYWriteTool>) {
   const { navigate } = useRoute()
-  const ctx = use()
   const sync = useSync()
   const theme = useTheme()
   const exists = createMemo(() => sync.data.pty.some((p) => p.id === props.input.id))
@@ -2415,7 +2413,7 @@ function PtyWrite(props: ToolProps<typeof PTYWriteTool>) {
         exists()
           ? () => {
               if (props.input.id) {
-                navigate({ type: "pty", ptyID: props.input.id, sessionID: ctx.sessionID })
+                navigate({ type: "pty", ptyID: props.input.id, sessionID: props.part.sessionID })
               }
             }
           : undefined

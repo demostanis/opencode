@@ -74,7 +74,11 @@ export function PtyView() {
   const dimensions = useTerminalDimensions()
   const kv = useKV()
 
-  const pty = createMemo(() => sync.data.pty.find((p) => p.id === route.ptyID))
+  const pty = createMemo(() => {
+    const p = sync.data.pty.find((p) => p.id === route.ptyID)
+    if (p && route.sessionID && p.parentSessionID !== route.sessionID) return undefined
+    return p
+  })
 
   const ptyOutput = createMemo(() => sync.data.ptyOutput[route.ptyID])
 
@@ -155,7 +159,7 @@ export function PtyView() {
   })
 
   const handleBack = () => {
-    const sid = pty()?.parentSessionID
+    const sid = pty()?.parentSessionID || route.sessionID
     if (sid) {
       navigate({ type: "session", sessionID: sid })
     } else {
@@ -227,117 +231,142 @@ export function PtyView() {
   return (
     <box flexDirection="row" width="100%" height="100%">
       <box flexGrow={1} paddingBottom={1} paddingTop={1} paddingLeft={2} paddingRight={2} gap={1}>
-        <box flexDirection="column" flexShrink={0} gap={1}>
-          <box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <box flexDirection="row" gap={1}>
-              <text fg={theme.primary} attributes={TextAttributes.BOLD}>
-                Background Process
+        <Show
+          when={pty()}
+          fallback={
+            <box flexGrow={1} justifyContent="center" alignItems="center" gap={1}>
+              <text fg={theme.error} attributes={TextAttributes.BOLD}>
+                Access Denied or Process Not Found
               </text>
-              <text fg={theme.text}>{pty()?.title ?? route.ptyID}</text>
               <text fg={theme.textMuted}>
-                ({pty()?.status}
-                {pty()?.exitCode !== undefined ? ` - exit ${pty()?.exitCode}` : ""})
+                You don't have permission to access this background process or it has expired.
               </text>
-            </box>
-            <box flexDirection="row" gap={1}>
               <box
                 onMouseUp={handleBack}
                 backgroundColor={theme.backgroundElement}
-                paddingLeft={1}
-                paddingRight={1}
-                width={8}
-                justifyContent="center"
+                paddingLeft={2}
+                paddingRight={2}
+                paddingTop={1}
+                paddingBottom={1}
+                marginTop={1}
               >
-                <text fg={theme.text}>Back</text>
-              </box>
-              <box
-                onMouseUp={handleKill}
-                backgroundColor={pty()?.status === "running" ? theme.error : theme.backgroundElement}
-                paddingLeft={1}
-                paddingRight={1}
-                width={8}
-                justifyContent="center"
-                style={{ opacity: pty()?.status === "running" ? 1 : 0.5 }}
-              >
-                <text fg={theme.text}>{pty()?.status === "running" ? "Kill" : "Killed"}</text>
-              </box>
-              <box
-                onMouseUp={handleRestart}
-                backgroundColor={theme.primary}
-                paddingLeft={1}
-                paddingRight={1}
-                width={10}
-                justifyContent="center"
-              >
-                <text fg={theme.text}>Restart</text>
+                <text fg={theme.text}>Go Back</text>
               </box>
             </box>
+          }
+        >
+          <box flexDirection="column" flexShrink={0} gap={1}>
+            <box flexDirection="row" justifyContent="space-between" alignItems="center">
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.primary} attributes={TextAttributes.BOLD}>
+                  Background Process
+                </text>
+                <text fg={theme.text}>{pty()?.title ?? route.ptyID}</text>
+                <text fg={theme.textMuted}>
+                  ({pty()?.status}
+                  {pty()?.exitCode !== undefined ? ` - exit ${pty()?.exitCode}` : ""})
+                </text>
+              </box>
+              <box flexDirection="row" gap={1}>
+                <box
+                  onMouseUp={handleBack}
+                  backgroundColor={theme.backgroundElement}
+                  paddingLeft={1}
+                  paddingRight={1}
+                  width={8}
+                  justifyContent="center"
+                >
+                  <text fg={theme.text}>Back</text>
+                </box>
+                <box
+                  onMouseUp={handleKill}
+                  backgroundColor={pty()?.status === "running" ? theme.error : theme.backgroundElement}
+                  paddingLeft={1}
+                  paddingRight={1}
+                  width={8}
+                  justifyContent="center"
+                  style={{ opacity: pty()?.status === "running" ? 1 : 0.5 }}
+                >
+                  <text fg={theme.text}>{pty()?.status === "running" ? "Kill" : "Killed"}</text>
+                </box>
+                <box
+                  onMouseUp={handleRestart}
+                  backgroundColor={theme.primary}
+                  paddingLeft={1}
+                  paddingRight={1}
+                  width={10}
+                  justifyContent="center"
+                >
+                  <text fg={theme.text}>Restart</text>
+                </box>
+              </box>
+            </box>
+            <Show when={pty()}>
+              <box paddingLeft={2}>
+                <text fg={theme.textMuted} wrapMode="word">
+                  <b>Command:</b> {pty()!.command} {(pty()!.args || []).join(" ")}
+                </text>
+                <text fg={theme.textMuted}>
+                  <b>CWD:</b> {pty()!.cwd}
+                </text>
+              </box>
+            </Show>
           </box>
-          <Show when={pty()}>
-            <box paddingLeft={2}>
-              <text fg={theme.textMuted} wrapMode="word">
-                <b>Command:</b> {pty()!.command} {(pty()!.args || []).join(" ")}
-              </text>
-              <text fg={theme.textMuted}>
-                <b>CWD:</b> {pty()!.cwd}
-              </text>
-            </box>
-          </Show>
-        </box>
 
-        <scrollbox ref={(r) => (scroll = r)} flexGrow={1} stickyScroll={true} stickyStart="bottom">
-          <For each={lines()} fallback={<text fg={theme.textMuted}>Waiting for output...</text>}>
-            {(line: StyledLine) => (
-              <text>
-                <For each={line.segments}>
-                  {(seg) => {
-                    // Cursor segment: render with swapped colors
-                    if (seg.style.cursor) {
-                      const cursorBg = hexToRGBA(seg.style.fg) ?? theme.text
-                      const cursorFg = hexToRGBA(seg.style.bg) ?? theme.background
+          <scrollbox ref={(r) => (scroll = r)} flexGrow={1} stickyScroll={true} stickyStart="bottom">
+            <For each={lines()} fallback={<text fg={theme.textMuted}>Waiting for output...</text>}>
+              {(line: StyledLine) => (
+                <text>
+                  <For each={line.segments}>
+                    {(seg) => {
+                      // Cursor segment: render with swapped colors
+                      if (seg.style.cursor) {
+                        const cursorBg = hexToRGBA(seg.style.fg) ?? theme.text
+                        const cursorFg = hexToRGBA(seg.style.bg) ?? theme.background
+                        return (
+                          <span
+                            style={{
+                              fg: cursorFg,
+                              bg: cursorBg,
+                              bold: seg.style.bold,
+                              italic: seg.style.italic,
+                              dim: seg.style.dim,
+                              underline: seg.style.underline,
+                              strikethrough: seg.style.strikethrough,
+                            }}
+                          >
+                            {seg.text}
+                          </span>
+                        )
+                      }
+                      const fg = hexToRGBA(seg.style.fg)
+                      const bg = hexToRGBA(seg.style.bg)
                       return (
                         <span
                           style={{
-                            fg: cursorFg,
-                            bg: cursorBg,
+                            fg: fg ?? (seg.style.dim ? theme.textMuted : theme.text),
+                            bg: bg,
                             bold: seg.style.bold,
                             italic: seg.style.italic,
                             dim: seg.style.dim,
                             underline: seg.style.underline,
                             strikethrough: seg.style.strikethrough,
+                            inverse: seg.style.inverse,
                           }}
                         >
                           {seg.text}
                         </span>
                       )
-                    }
-                    const fg = hexToRGBA(seg.style.fg)
-                    const bg = hexToRGBA(seg.style.bg)
-                    return (
-                      <span
-                        style={{
-                          fg: fg ?? theme.text,
-                          bg: bg,
-                          bold: seg.style.bold,
-                          italic: seg.style.italic,
-                          dim: seg.style.dim,
-                          underline: seg.style.underline,
-                          strikethrough: seg.style.strikethrough,
-                          inverse: seg.style.inverse,
-                        }}
-                      >
-                        {seg.text}
-                      </span>
-                    )
-                  }}
-                </For>
-              </text>
-            )}
-          </For>
-        </scrollbox>
+                    }}
+                  </For>
+                </text>
+              )}
+            </For>
+          </scrollbox>
+        </Show>
       </box>
       <Show when={sidebarVisible()}>
-        <Sidebar sessionID={pty()?.parentSessionID || ""} />
+        <Sidebar sessionID={pty()?.parentSessionID || route.sessionID || ""} />
       </Show>
     </box>
   )

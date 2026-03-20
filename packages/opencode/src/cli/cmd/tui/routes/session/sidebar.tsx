@@ -18,7 +18,9 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
   const messages = createMemo(() => sync.data.message[props.sessionID] ?? [])
-  const pty = createMemo(() => sync.data.pty.filter((p) => p.status === "running"))
+  const pty = createMemo(() =>
+    sync.data.pty.filter((p) => p.parentSessionID === props.sessionID && p.status === "running"),
+  )
 
   const [expanded, setExpanded] = createStore({
     mcp: true,
@@ -128,7 +130,9 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <For each={pty()}>
                   {(p) => (
                     <box
-                      onMouseUp={() => navigate({ type: "pty", ptyID: p.id, sessionID: props.sessionID })}
+                      onMouseUp={() => {
+                        navigate({ type: "pty", ptyID: p.id, sessionID: props.sessionID })
+                      }}
                       flexDirection="row"
                       gap={1}
                     >
