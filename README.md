@@ -8,6 +8,7 @@
   </a>
 </p>
 <p align="center">The open source AI coding agent.</p>
+<p align="center"><b>This fork adds <a href="https://github.com/anomalyco/opencode/compare/dev...demostanis:opencode:dev">background process management, integrated terminal UI, and enhanced agent interaction styling.</a></b> Do note that it was highly vibecoded, and thus is shit</p>
 <p align="center">
   <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
   <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
