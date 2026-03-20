@@ -50,7 +50,9 @@ export const PTYReadTool = Tool.define("pty_read", async () => {
     async execute(params, ctx) {
       const ptyId = params.id as PtyID
       const info = Pty.get(ptyId)
-      if (!info) throw new Error(`Background process not found: ${params.id}`)
+      if (!info || info.parentSessionID !== ctx.sessionID) {
+        throw new Error(`Background process not found: ${params.id}`)
+      }
 
       const { Pty: PtyInternal } = await import("../pty")
       const result = PtyInternal.read(ptyId)
@@ -78,7 +80,9 @@ export const PTYWriteTool = Tool.define("pty_write", async () => {
     async execute(params, ctx) {
       const ptyId = params.id as PtyID
       const info = Pty.get(ptyId)
-      if (!info) throw new Error(`Background process not found: ${params.id}`)
+      if (!info || info.parentSessionID !== ctx.sessionID) {
+        throw new Error(`Background process not found: ${params.id}`)
+      }
 
       let raw = params.input
       const KEY_MAP: Record<string, string> = {
@@ -119,7 +123,9 @@ export const PTYKillTool = Tool.define("pty_kill", async () => {
     async execute(params, ctx) {
       const ptyId = params.id as PtyID
       const info = Pty.get(ptyId)
-      if (!info) throw new Error(`Background process not found: ${params.id}`)
+      if (!info || info.parentSessionID !== ctx.sessionID) {
+        throw new Error(`Background process not found: ${params.id}`)
+      }
 
       await Pty.kill(ptyId)
 
@@ -137,10 +143,10 @@ export const PTYListTool = Tool.define("pty_list", async () => {
     description: "Lists all active background processes and their statuses.",
     parameters: z.object({}),
     async execute(params, ctx) {
-      const processes = Pty.list()
+      const processes = Pty.list(ctx.sessionID)
       const output =
         processes.length === 0
-          ? "No background processes running."
+          ? "No background processes running in this session."
           : processes.map((p) => `[${p.id}] ${p.status}: ${p.title} (PID: ${p.pid})`).join("\n")
 
       return {
