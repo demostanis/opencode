@@ -48,7 +48,7 @@ export namespace ToolRegistry {
     for (const match of matches) {
       const namespace = path.basename(match, path.extname(match))
       const built = await Config.build(match)
-      const mod = await import(pathToFileURL(built).href)
+      const mod = await import(process.platform === "win32" ? built : pathToFileURL(built).href)
       for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
         custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
       }
