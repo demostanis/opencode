@@ -287,6 +287,7 @@ function App() {
   onMount(() => {
     batch(() => {
       if (args.agent) local.agent.set(args.agent)
+      if (args.autoaccept) kv.set("permission_auto_accept", args.autoaccept)
       if (args.model) {
         const { providerID, modelID } = Provider.parseModel(args.model)
         if (!providerID || !modelID)

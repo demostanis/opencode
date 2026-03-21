@@ -31,6 +31,7 @@ import { createColors, createFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
+import { DialogSelect } from "../../ui/dialog-select"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
@@ -177,26 +178,32 @@ export function Prompt(props: PromptProps) {
   command.register(() => {
     return [
       {
-        title:
-          autoaccept() === "none"
-            ? "Enable autoedit"
-            : autoaccept() === "edit"
-              ? "Enable yolo"
-              : autoaccept() === "yolo"
-                ? "Enable autoreject"
-                : "Disable auto-accept",
-        value: "permission.auto_accept.toggle",
-        search: "toggle permissions",
+        title: "Auto-accept",
+        value: "permission.auto_accept.list",
+        search: "auto-accept",
         keybind: "permission_auto_accept_toggle",
         category: "Agent",
         onSelect: (dialog) => {
-          setAutoaccept(() => {
-            if (autoaccept() === "none") return "edit"
-            if (autoaccept() === "edit") return "yolo"
-            if (autoaccept() === "yolo") return "autoreject"
-            return "none"
-          })
-          dialog.clear()
+          dialog.replace(() => (
+            <DialogSelect
+              title="Auto-accept"
+              current={autoaccept()}
+              options={[
+                { title: "Disabled", value: "none", description: "Prompt for all permissions" },
+                { title: "Autoedit", value: "edit", description: "Auto-accept all permissions in current directory" },
+                {
+                  title: "Yolo",
+                  value: "yolo",
+                  description: "Auto-accept all permissions in any directory",
+                },
+                { title: "Autoreject", value: "autoreject", description: "Auto-reject all permissions" },
+              ]}
+              onSelect={(option) => {
+                setAutoaccept(option.value)
+                dialog.clear()
+              }}
+            />
+          ))
         },
       },
       {

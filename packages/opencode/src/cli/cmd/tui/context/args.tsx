@@ -7,6 +7,7 @@ export interface Args {
   continue?: boolean
   sessionID?: string
   fork?: boolean
+  autoaccept?: "none" | "edit" | "yolo" | "autoreject"
 }
 
 export const { use: useArgs, provider: ArgsProvider } = createSimpleContext({

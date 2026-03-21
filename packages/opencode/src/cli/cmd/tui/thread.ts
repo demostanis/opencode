@@ -97,6 +97,27 @@ export const TuiThreadCommand = cmd({
       .option("agent", {
         type: "string",
         describe: "agent to use",
+      })
+      .option("none", {
+        type: "boolean",
+        describe: "set auto-accept to none",
+      })
+      .option("edit", {
+        type: "boolean",
+        describe: "set auto-accept to edit",
+      })
+      .option("yolo", {
+        type: "boolean",
+        describe: "set auto-accept to yolo",
+      })
+      .option("autoreject", {
+        type: "boolean",
+        describe: "set auto-accept to autoreject",
+      })
+      .option("autoaccept", {
+        type: "string",
+        describe: "set auto-accept mode",
+        choices: ["none", "edit", "yolo", "autoreject"] as const,
       }),
   handler: async (args) => {
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
@@ -212,6 +233,14 @@ export const TuiThreadCommand = cmd({
             model: args.model,
             prompt,
             fork: args.fork,
+            autoaccept: (() => {
+              if (args.none) return "none"
+              if (args.edit) return "edit"
+              if (args.yolo) return "yolo"
+              if (args.autoreject) return "autoreject"
+              if (args.autoaccept) return args.autoaccept as any
+              return undefined
+            })(),
           },
         })
       } finally {
