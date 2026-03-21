@@ -108,7 +108,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const sdk = useSDK()
     const kv = useKV()
-    const [autoaccept] = kv.signal<"none" | "edit">("permission_auto_accept", "edit")
+    const [autoaccept] = kv.signal<"none" | "edit" | "yolo" | "autoreject">("permission_auto_accept", "edit")
 
     async function syncWorkspaces() {
       const result = await sdk.client.experimental.workspace.list().catch(() => undefined)
@@ -139,10 +139,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "permission.asked": {
           const request = event.properties
-          if (autoaccept() === "edit" && request.permission === "edit") {
+          if (autoaccept() !== "none" && request.permission === "edit") {
             sdk.client.permission.reply({
               reply: "once",
               requestID: request.id,
+            })
+            break
+          }
+          if (autoaccept() === "yolo" && request.permission === "external_directory") {
+            sdk.client.permission.reply({
+              reply: "once",
+              requestID: request.id,
+            })
+            break
+          }
+          if (autoaccept() === "autoreject" && request.permission === "external_directory") {
+            sdk.client.permission.reply({
+              reply: "reject",
+              requestID: request.id,
+              message: "Access to another directory was rejected.",
             })
             break
           }

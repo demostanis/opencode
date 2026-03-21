@@ -79,7 +79,10 @@ export function Prompt(props: PromptProps) {
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
-  const [autoaccept, setAutoaccept] = kv.signal<"none" | "edit">("permission_auto_accept", "edit")
+  const [autoaccept, setAutoaccept] = kv.signal<"none" | "edit" | "yolo" | "autoreject">(
+    "permission_auto_accept",
+    "edit",
+  )
 
   function promptModelWarning() {
     toast.show({
@@ -174,13 +177,25 @@ export function Prompt(props: PromptProps) {
   command.register(() => {
     return [
       {
-        title: autoaccept() === "none" ? "Enable autoedit" : "Disable autoedit",
+        title:
+          autoaccept() === "none"
+            ? "Enable autoedit"
+            : autoaccept() === "edit"
+              ? "Enable yolo"
+              : autoaccept() === "yolo"
+                ? "Enable autoreject"
+                : "Disable auto-accept",
         value: "permission.auto_accept.toggle",
         search: "toggle permissions",
         keybind: "permission_auto_accept_toggle",
         category: "Agent",
         onSelect: (dialog) => {
-          setAutoaccept(() => (autoaccept() === "none" ? "edit" : "none"))
+          setAutoaccept(() => {
+            if (autoaccept() === "none") return "edit"
+            if (autoaccept() === "edit") return "yolo"
+            if (autoaccept() === "yolo") return "autoreject"
+            return "none"
+          })
           dialog.clear()
         },
       },
@@ -1042,9 +1057,9 @@ export function Prompt(props: PromptProps) {
                   </box>
                 </Show>
               </box>
-              <Show when={autoaccept() === "edit"}>
+              <Show when={autoaccept() !== "none"}>
                 <text>
-                  <span style={{ fg: theme.warning }}>autoedit</span>
+                  <span style={{ fg: theme.warning }}>{autoaccept() === "edit" ? "autoedit" : autoaccept()}</span>
                 </text>
               </Show>
             </box>
