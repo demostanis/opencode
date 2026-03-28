@@ -189,11 +189,11 @@ export const PtyRoutes = lazy(() =>
       "/:ptyID/read",
       describeRoute({
         summary: "Read PTY output",
-        description: "Retrieve the current output buffer of a pseudo-terminal (PTY) session.",
+        description: "Retrieve PTY output, either incremental or full history.",
         operationId: "pty.read",
         responses: {
           200: {
-            description: "Current buffer",
+            description: "PTY output",
             content: {
               "application/json": {
                 schema: resolver(z.string()),
@@ -204,8 +204,18 @@ export const PtyRoutes = lazy(() =>
         },
       }),
       validator("param", z.object({ ptyID: PtyID.zod })),
+      validator(
+        "query",
+        z.object({
+          include_history: z.coerce.boolean().optional().meta({
+            description: "Return the full PTY buffer instead of only unread output.",
+          }),
+        }),
+      ),
       async (c) => {
-        const result = Pty.read(c.req.valid("param").ptyID)
+        const param = c.req.valid("param")
+        const query = c.req.valid("query")
+        const result = query.include_history ? Pty.read(param.ptyID) : Pty.readFrom(param.ptyID)
         if (result === undefined) {
           throw new NotFoundError({ message: "Session not found" })
         }

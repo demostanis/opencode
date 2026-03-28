@@ -4,6 +4,8 @@ import { Pty } from "../pty"
 import { PtyID } from "../pty/schema"
 import { Instance } from "../project/instance"
 
+const seen = Instance.state(() => new Map<string, number>())
+
 export const PTYSpawnTool = Tool.define("pty_spawn", async () => {
   return {
     description:
@@ -46,6 +48,7 @@ export const PTYReadTool = Tool.define("pty_read", async () => {
     description: "Reads the output of a background process.",
     parameters: z.object({
       id: z.string().describe("The ID of the background process (from 'pty_spawn')"),
+      include_history: z.boolean().optional().describe("Return the full PTY buffer instead of only unread output."),
     }),
     async execute(params, ctx) {
       const ptyId = params.id as PtyID
@@ -55,11 +58,13 @@ export const PTYReadTool = Tool.define("pty_read", async () => {
       }
 
       const { Pty: PtyInternal } = await import("../pty")
-      const result = PtyInternal.read(ptyId)
+      const key = `${ctx.sessionID}:${ptyId}`
+      const result = params.include_history ? PtyInternal.read(ptyId) : PtyInternal.readFrom(ptyId, seen().get(key))
       if (result === undefined) throw new Error(`Background process not found: ${params.id}`)
+      seen().set(key, info.cursor ?? 0)
 
       return {
-        title: `Read output from background process: ${info.title}`,
+        title: `${params.include_history ? "Read entire output from background process" : "Read output from background process"}: ${info.title}`,
         metadata: { id: params.id, title: info.title },
         output: result,
       }

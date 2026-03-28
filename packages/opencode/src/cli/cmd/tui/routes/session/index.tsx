@@ -2395,7 +2395,10 @@ function PtyRead(props: ToolProps<typeof PTYReadTool>) {
           : undefined
       }
     >
-      Read output from background process: {props.metadata.title || props.input.id?.slice(-4)}
+      {props.input.include_history
+        ? "Read entire output from background process"
+        : "Read output from background process"}
+      : {props.metadata.title || props.input.id?.slice(-4)}
       <Show when={!exists()}>
         <span style={{ fg: theme.theme.textMuted }}> (expired)</span>
       </Show>

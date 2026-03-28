@@ -90,6 +90,45 @@ describe("tool.pty", () => {
     })
   })
 
+  test("read only returns unread output", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const spawn = await PTYSpawnTool.init()
+        const write = await PTYWriteTool.init()
+        const read = await PTYReadTool.init()
+
+        const result = await spawn.execute({ command: "cat", title: "Unread Cat" }, ctx)
+        const id = result.metadata.id
+
+        await write.execute({ id, input: "one\n" }, ctx)
+        await sleep(200)
+
+        const first = await read.execute({ id }, ctx)
+        expect(first.output).toContain("one")
+
+        const second = await read.execute({ id }, ctx)
+        expect(second.output).toBe("")
+
+        const history = await read.execute({ id, include_history: true }, ctx)
+        expect(history.output).toContain("one")
+
+        await write.execute({ id, input: "two\n" }, ctx)
+        await sleep(200)
+
+        const third = await read.execute({ id }, ctx)
+        expect(third.output).toContain("two")
+        expect(third.output).not.toContain("one")
+
+        expect(Pty.read(id)).toContain("one")
+        expect(Pty.read(id)).toContain("two")
+
+        await Pty.remove(id)
+      },
+    })
+  })
+
   test("kill process", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

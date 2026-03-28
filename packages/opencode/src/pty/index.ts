@@ -293,7 +293,24 @@ export namespace Pty {
   }
 
   export function read(id: PtyID) {
-    return state().get(id)?.buffer
+    return readFrom(id)
+  }
+
+  export function readFrom(id: PtyID, cursor?: number) {
+    const session = state().get(id)
+    if (!session) return
+
+    const start = session.bufferCursor
+    const end = session.cursor
+    const from =
+      cursor === -1 ? end : typeof cursor === "number" && Number.isSafeInteger(cursor) ? Math.max(0, cursor) : start
+
+    if (!session.buffer) return ""
+    if (from >= end) return ""
+
+    const offset = Math.max(0, from - start)
+    if (offset >= session.buffer.length) return ""
+    return session.buffer.slice(offset)
   }
 
   export async function update(id: PtyID, input: UpdateInput) {
@@ -554,19 +571,7 @@ export namespace Pty {
       session.subscribers.delete(connectionKey)
     }
 
-    const start = session.bufferCursor
-    const end = session.cursor
-
-    const from =
-      cursor === -1 ? end : typeof cursor === "number" && Number.isSafeInteger(cursor) ? Math.max(0, cursor) : 0
-
-    const data = (() => {
-      if (!session.buffer) return ""
-      if (from >= end) return ""
-      const offset = Math.max(0, from - start)
-      if (offset >= session.buffer.length) return ""
-      return session.buffer.slice(offset)
-    })()
+    const data = readFrom(id, cursor)
 
     if (data) {
       try {
@@ -581,7 +586,7 @@ export namespace Pty {
     }
 
     try {
-      ws.send(meta(end))
+      ws.send(meta(session.cursor))
     } catch {
       cleanup()
       ws.close()

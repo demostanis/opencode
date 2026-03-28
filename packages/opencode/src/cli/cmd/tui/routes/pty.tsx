@@ -98,7 +98,7 @@ export function PtyView() {
     // Load initial buffer
     try {
       // @ts-ignore
-      const res = await sdk.client.pty.read({ ptyID: route.ptyID })
+      const res = await sdk.client.pty.read({ ptyID: route.ptyID, include_history: true })
       if (res.data) {
         // The buffer is already raw data, don't escape it
         await term.write(res.data)
