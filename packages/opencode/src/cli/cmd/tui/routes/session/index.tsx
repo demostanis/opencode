@@ -89,13 +89,20 @@ import { useTuiConfig } from "../../context/tui-config"
 addDefaultParsers(parsers.parsers)
 
 class CustomSpeedScroll implements ScrollAcceleration {
+  private last = 0
+
   constructor(private speed: number) {}
 
-  tick(_now?: number): number {
+  tick(now = Date.now()): number {
+    const dt = this.last ? now - this.last : Infinity
+    this.last = now
+    if (dt > 150) return 1
     return this.speed
   }
 
-  reset(): void {}
+  reset(): void {
+    this.last = 0
+  }
 }
 
 const context = createContext<{
@@ -183,7 +190,7 @@ export function Session() {
       return new CustomSpeedScroll(tui.scroll_speed)
     }
 
-    return new CustomSpeedScroll(3)
+    return new MacOSScrollAccel()
   })
 
   createEffect(() => {
