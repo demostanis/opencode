@@ -1386,6 +1386,18 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     "Meeting Polish girls",
     "Doing politics",
     "Vibecoding",
+    "Parsing HTML with r̵̲̓è̵͇g̵̹͂e̵͋ͅx̶̜̏e̴̲͂s̷̘͛",
+    "Installing backdoor",
+    "Mining Monero",
+    "Sigma grinding",
+    "Doomscrolling",
+    "Asking for help on stackoverflow",
+    "Asking for help from brr brr patapim",
+    "Running shred /*",
+    "Taking a pause",
+    "Eating a tacos with gloves",
+    "Slopping",
+    "Barking"
   ]
   const [currentPhrase, setCurrentPhrase] = createSignal(
     thinkingPhrases[Math.floor(Math.random() * thinkingPhrases.length)],
