@@ -164,6 +164,7 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
+      const start = Date.now()
       const proc = spawn(params.command, {
         shell,
         cwd,
@@ -243,6 +244,7 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const resultMetadata: string[] = []
+      const elapsed = (Date.now() - start) / 1000
 
       if (timedOut) {
         resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
@@ -250,6 +252,13 @@ export const BashTool = Tool.define("bash", async () => {
 
       if (aborted) {
         resultMetadata.push("User aborted the command")
+      }
+
+      if (elapsed > 30) {
+        const mins = Math.round(elapsed / 60)
+        resultMetadata.push(
+          `Command took ${mins} minutes to complete. Consider using the pty tool for long-running interactive commands, or optimizing this step to reduce execution time.`,
+        )
       }
 
       if (resultMetadata.length > 0) {
