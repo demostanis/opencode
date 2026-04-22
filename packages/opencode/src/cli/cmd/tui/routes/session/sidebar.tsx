@@ -9,6 +9,7 @@ import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 import { useRoute } from "../../context/route"
+import { Editor } from "../../util/editor"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -297,7 +298,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <Show when={diff().length <= 2 || expanded.diff}>
                 <For each={diff() || []}>
                   {(item) => (
-                    <box flexDirection="row" gap={1} justifyContent="space-between">
+                    <box
+                      flexDirection="row"
+                      gap={1}
+                      justifyContent="space-between"
+                      onMouseUp={() => Editor.openFile(item.file)}
+                    >
                       <text fg={theme.textMuted} wrapMode="none">
                         {item.file}
                       </text>

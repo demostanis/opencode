@@ -34,4 +34,14 @@ export namespace Editor {
       opts.renderer.requestRender()
     }
   }
+
+  export function openFile(filepath: string) {
+    const editor = process.env["EDITOR"] || "nvim"
+    const term = process.env["TERMINAL"] || "urxvt"
+    Process.spawn([term, "-e", editor, filepath], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+  }
 }
