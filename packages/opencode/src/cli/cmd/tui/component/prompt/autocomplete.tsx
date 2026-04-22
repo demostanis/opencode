@@ -1,4 +1,10 @@
-import type { BoxRenderable, TextareaRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core"
+import {
+  TextAttributes,
+  type BoxRenderable,
+  type TextareaRenderable,
+  type KeyEvent,
+  type ScrollBoxRenderable,
+} from "@opentui/core"
 import { pathToFileURL } from "bun"
 import fuzzysort from "fuzzysort"
 import { firstBy } from "remeda"
@@ -49,7 +55,7 @@ function extractLineRange(input: string) {
 export type AutocompleteRef = {
   onInput: (value: string) => void
   onKeyDown: (e: KeyEvent) => void
-  visible: false | "@" | "/"
+  visible: false | "@" | "/" | "$"
 }
 
 export type AutocompleteOption = {
@@ -73,6 +79,7 @@ export function Autocomplete(props: {
   ref: (ref: AutocompleteRef) => void
   fileStyleId: number
   agentStyleId: number
+  skillStyleId: number
   promptPartTypeId: () => number
 }) {
   const sdk = useSDK()
@@ -148,13 +155,13 @@ export function Autocomplete(props: {
     setStore("input", "keyboard")
   })
 
-  function insertPart(text: string, part: PromptInfo["parts"][number]) {
+  function insertPart(text: string, part: PromptInfo["parts"][number], trigger = "@") {
     const input = props.input()
     const currentCursorOffset = input.cursorOffset
 
     const charAfterCursor = props.value.at(currentCursorOffset)
     const needsSpace = charAfterCursor !== " "
-    const append = "@" + text + (needsSpace ? " " : "")
+    const append = trigger + text + (needsSpace ? " " : "")
 
     input.cursorOffset = store.index
     const startCursor = input.logicalCursor
@@ -164,11 +171,18 @@ export function Autocomplete(props: {
     input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
     input.insertText(append)
 
-    const virtualText = "@" + text
+    const virtualText = trigger + text
     const extmarkStart = store.index
     const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
 
-    const styleId = part.type === "file" ? props.fileStyleId : part.type === "agent" ? props.agentStyleId : undefined
+    const styleId =
+      part.type === "file"
+        ? props.fileStyleId
+        : part.type === "agent"
+          ? props.agentStyleId
+          : part.type === "text" && trigger === "$"
+            ? props.skillStyleId
+            : undefined
 
     const extmarkId = input.extmarks.create({
       start: extmarkStart,
@@ -207,6 +221,10 @@ export function Autocomplete(props: {
         part.source.start = extmarkStart
         part.source.end = extmarkEnd
         part.source.value = virtualText
+      } else if (part.type === "text" && part.source?.text) {
+        part.source.text.start = extmarkStart
+        part.source.text.end = extmarkEnd
+        part.source.text.value = virtualText
       }
       const partIndex = draft.parts.length
       draft.parts.push(part)
@@ -353,6 +371,38 @@ export function Autocomplete(props: {
       )
   })
 
+  const [skillList] = createResource(async () => {
+    const result = await sdk.client.app.skills()
+    return result.data ?? []
+  })
+
+  const skills = createMemo(() => {
+    const list = skillList() ?? []
+    return list.map(
+      (skill): AutocompleteOption => ({
+        display: "$" + skill.name,
+        description: skill.description,
+        onSelect: () => {
+          insertPart(
+            skill.name,
+            {
+              type: "text",
+              text: "$" + skill.name,
+              source: {
+                text: {
+                  start: 0,
+                  end: 0,
+                  value: "",
+                },
+              },
+            },
+            "$",
+          )
+        },
+      }),
+    )
+  })
+
   const commands = createMemo((): AutocompleteOption[] => {
     const results: AutocompleteOption[] = [...command.slashes()]
 
@@ -388,7 +438,11 @@ export function Autocomplete(props: {
     const commandsValue = commands()
 
     const mixed: AutocompleteOption[] =
-      store.visible === "@" ? [...agentsValue, ...(filesValue || []), ...mcpResources()] : [...commandsValue]
+      store.visible === "@"
+        ? [...agentsValue, ...(filesValue || []), ...mcpResources()]
+        : store.visible === "$"
+          ? [...skills()]
+          : [...commandsValue]
 
     const searchValue = search()
 
@@ -475,7 +529,7 @@ export function Autocomplete(props: {
     setStore("selected", 0)
   }
 
-  function show(mode: "@" | "/") {
+  function show(mode: "@" | "/" | "$") {
     command.keybinds(false)
     setStore({
       visible: mode,
@@ -530,14 +584,27 @@ export function Autocomplete(props: {
 
         // Check for "@" trigger - find the nearest "@" before cursor with no whitespace between
         const text = value.slice(0, offset)
-        const idx = text.lastIndexOf("@")
-        if (idx === -1) return
+        const atIdx = text.lastIndexOf("@")
+        if (atIdx !== -1) {
+          const between = text.slice(atIdx)
+          const before = atIdx === 0 ? undefined : value[atIdx - 1]
+          if ((before === undefined || /\s/.test(before)) && !between.match(/\s/)) {
+            show("@")
+            setStore("index", atIdx)
+            return
+          }
+        }
 
-        const between = text.slice(idx)
-        const before = idx === 0 ? undefined : value[idx - 1]
-        if ((before === undefined || /\s/.test(before)) && !between.match(/\s/)) {
-          show("@")
-          setStore("index", idx)
+        // Check for "$" trigger - find the nearest "$" before cursor with no whitespace between
+        const dollarIdx = text.lastIndexOf("$")
+        if (dollarIdx !== -1) {
+          const between = text.slice(dollarIdx)
+          const before = dollarIdx === 0 ? undefined : value[dollarIdx - 1]
+          if ((before === undefined || /\s/.test(before)) && !between.match(/\s/)) {
+            show("$")
+            setStore("index", dollarIdx)
+            return
+          }
         }
       },
       onKeyDown(e: KeyEvent) {
@@ -591,6 +658,14 @@ export function Autocomplete(props: {
 
           if (e.name === "/") {
             if (props.input().cursorOffset === 0) show("/")
+          }
+
+          if (e.name === "$") {
+            const cursorOffset = props.input().cursorOffset
+            const charBeforeCursor =
+              cursorOffset === 0 ? undefined : props.input().getTextRange(cursorOffset - 1, cursorOffset)
+            const canTrigger = charBeforeCursor === undefined || charBeforeCursor === "" || /\s/.test(charBeforeCursor)
+            if (canTrigger) show("$")
           }
         }
       },
@@ -650,12 +725,22 @@ export function Autocomplete(props: {
               }}
               onMouseUp={() => select()}
             >
-              <text fg={index === store.selected ? selectedForeground(theme) : theme.text} flexShrink={0}>
+              <text
+                fg={index === store.selected ? selectedForeground(theme) : theme.text}
+                flexShrink={0}
+                attributes={
+                  option().display.startsWith("$")
+                    ? TextAttributes.BOLD
+                    : index === store.selected
+                      ? TextAttributes.BOLD
+                      : 0
+                }
+              >
                 {option().display}
               </text>
               <Show when={option().description}>
                 <text fg={index === store.selected ? selectedForeground(theme) : theme.textMuted} wrapMode="none">
-                  {option().description}
+                  {" " + option().description}
                 </text>
               </Show>
             </box>

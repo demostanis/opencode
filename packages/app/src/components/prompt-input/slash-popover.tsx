@@ -7,6 +7,11 @@ export type AtOption =
   | { type: "agent"; name: string; display: string }
   | { type: "file"; path: string; display: string; recent?: boolean }
 
+export type SkillOption = {
+  name: string
+  description: string
+}
+
 export interface SlashCommand {
   id: string
   trigger: string
@@ -18,7 +23,7 @@ export interface SlashCommand {
 }
 
 type PromptPopoverProps = {
-  popover: "at" | "slash" | null
+  popover: "at" | "slash" | "skill" | null
   setSlashPopoverRef: (el: HTMLDivElement) => void
   atFlat: AtOption[]
   atActive?: string
@@ -29,6 +34,10 @@ type PromptPopoverProps = {
   slashActive?: string
   setSlashActive: (id: string) => void
   onSlashSelect: (item: SlashCommand) => void
+  skillFlat: SkillOption[]
+  skillActive?: string
+  setSkillActive: (id: string) => void
+  onSkillSelect: (item: SkillOption) => void
   commandKeybind: (id: string) => string | undefined
   t: (key: string) => string
 }
@@ -37,6 +46,7 @@ export const PromptPopover: Component<PromptPopoverProps> = (props) => {
   return (
     <Show when={props.popover}>
       <div
+        data-component="prompt-popover"
         ref={(el) => {
           if (props.popover === "slash") props.setSlashPopoverRef(el)
         }}
@@ -127,6 +137,31 @@ export const PromptPopover: Component<PromptPopoverProps> = (props) => {
                       </Show>
                       <Show when={props.commandKeybind(cmd.id)}>
                         <span class="text-12-regular text-text-subtle">{props.commandKeybind(cmd.id)}</span>
+                      </Show>
+                    </div>
+                  </button>
+                )}
+              </For>
+            </Show>
+          </Match>
+          <Match when={props.popover === "skill"}>
+            <Show
+              when={props.skillFlat.length > 0}
+              fallback={<div class="text-text-weak px-2 py-1">{props.t("prompt.popover.emptyResults")}</div>}
+            >
+              <For each={props.skillFlat.slice(0, 10)}>
+                {(item) => (
+                  <button
+                    class="w-full flex items-start gap-x-2 rounded-md px-2 py-1"
+                    classList={{ "bg-surface-raised-base-hover": props.skillActive === item.name }}
+                    onClick={() => props.onSkillSelect(item)}
+                    onMouseEnter={() => props.setSkillActive(item.name)}
+                  >
+                    <Icon name="brain" size="small" class="text-icon-info-active shrink-0 mt-0.5" />
+                    <div class="flex flex-col items-start min-w-0 gap-y-0.5">
+                      <span class="text-14-regular text-text-strong whitespace-nowrap">${item.name}</span>
+                      <Show when={item.description}>
+                        <span class="text-12-regular text-text-weak truncate">{item.description}</span>
                       </Show>
                     </div>
                   </button>
