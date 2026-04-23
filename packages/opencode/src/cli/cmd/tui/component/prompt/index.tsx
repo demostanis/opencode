@@ -18,7 +18,7 @@ import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useCommandDialog } from "../dialog-command"
-import { useRenderer } from "@opentui/solid"
+import { useKeyboard, useRenderer } from "@opentui/solid"
 import { Editor } from "@tui/util/editor"
 import { useExit } from "../../context/exit"
 import { Clipboard } from "../../util/clipboard"
@@ -46,6 +46,8 @@ export type PromptProps = {
   ref?: (ref: PromptRef) => void
   hint?: JSX.Element
   showPlaceholder?: boolean
+  queuedMessage?: () => string | undefined
+  setQueuedMessage?: (msg: string | undefined) => void
 }
 
 export type PromptRef = {
@@ -56,6 +58,8 @@ export type PromptRef = {
   blur(): void
   focus(): void
   submit(): void
+  queuedMessage: string | undefined
+  setQueuedMessage: (msg: string | undefined) => void
 }
 
 const PLACEHOLDERS = ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"]
@@ -398,6 +402,9 @@ export function Prompt(props: PromptProps) {
     get current() {
       return store.prompt
     },
+    get queuedMessage() {
+      return props.queuedMessage?.()
+    },
     focus() {
       input.focus()
     },
@@ -422,11 +429,32 @@ export function Prompt(props: PromptProps) {
     submit() {
       submit()
     },
+    setQueuedMessage(msg) {
+      props.setQueuedMessage?.(msg)
+    },
   }
 
   createEffect(() => {
     if (props.visible !== false) input?.focus()
     if (props.visible === false) input?.blur()
+  })
+
+  // Global listener so leader combos (e.g. `<leader>return`) work even when the
+  // textarea has been blurred by the leader activation. Queues the current input
+  // and submits it after the whole session loop exits (see Session route).
+  useKeyboard((e) => {
+    if (props.visible === false || props.disabled) return
+    if (!keybind.match("input_submit_queued", e)) return
+    e.preventDefault()
+    if (!store.prompt.input) return
+    ref.setQueuedMessage(store.prompt.input)
+    input.clear()
+    input.extmarks.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
   })
 
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {

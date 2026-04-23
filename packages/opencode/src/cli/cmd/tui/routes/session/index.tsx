@@ -163,6 +163,29 @@ export function Session() {
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [animationsEnabled, setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+  const [queuedMessage, setQueuedMessage] = createSignal<string | undefined>(undefined)
+
+  const sessionStatus = createMemo(() => sync.data.session_status?.[route.sessionID])
+
+  // Submit queued messages only on a busy/retry → idle transition, i.e. when
+  // the whole session loop has exited. Distinct from the server's deferred
+  // queue (DEFERRED badge), which runs at the end of the current tool call.
+  createEffect(
+    on(
+      () => sessionStatus()?.type,
+      (type, prev) => {
+        const msg = queuedMessage()
+        if (!msg) return
+        const wasBusy = prev === "busy" || prev === "retry"
+        const isIdle = type === "idle" || type === undefined
+        if (!wasBusy || !isIdle) return
+        const prompt = promptRef.current
+        prompt?.set({ input: msg, parts: [] })
+        setQueuedMessage(undefined)
+        setTimeout(() => prompt?.submit(), 50)
+      },
+    ),
+  )
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -1176,6 +1199,35 @@ export function Session() {
               </For>
             </scrollbox>
             <box flexShrink={0}>
+              <Show when={queuedMessage()}>
+                <UserMessage
+                  index={messages().length}
+                  onMouseUp={() => {}}
+                  message={
+                    {
+                      id: "queued",
+                      sessionID: route.sessionID,
+                      role: "user",
+                      time: { created: Date.now() },
+                      agent: local.agent.current().name,
+                      model: {
+                        providerID: local.model.parsed().provider,
+                        modelID: local.model.parsed().model,
+                      },
+                    } as UserMessage
+                  }
+                  parts={[
+                    {
+                      id: "queued-text",
+                      sessionID: route.sessionID,
+                      messageID: "queued",
+                      type: "text",
+                      text: queuedMessage()!,
+                    } as TextPart,
+                  ]}
+                  queued
+                />
+              </Show>
               <Show when={permissions().length > 0}>
                 <PermissionPrompt request={permissions()[0]} />
               </Show>
@@ -1197,6 +1249,8 @@ export function Session() {
                   toBottom()
                 }}
                 sessionID={route.sessionID}
+                queuedMessage={queuedMessage}
+                setQueuedMessage={setQueuedMessage}
               />
             </box>
           </Show>
@@ -1243,6 +1297,7 @@ function UserMessage(props: {
   onMouseUp: () => void
   index: number
   pending?: string
+  queued?: boolean
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1251,10 +1306,10 @@ function UserMessage(props: {
   const sync = useSync()
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
-  const queued = createMemo(() => props.pending && props.message.id > props.pending)
+  const deferred = createMemo(() => props.pending && props.message.id > props.pending)
   const color = createMemo(() => local.agent.color(props.message.agent))
-  const queuedFg = createMemo(() => selectedForeground(theme, color()))
-  const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
+  const deferredFg = createMemo(() => selectedForeground(theme, color()))
+  const metadataVisible = createMemo(() => deferred() || props.queued || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
 
@@ -1303,7 +1358,7 @@ function UserMessage(props: {
               </box>
             </Show>
             <Show
-              when={queued()}
+              when={deferred() || props.queued}
               fallback={
                 <Show when={ctx.showTimestamps()}>
                   <text fg={theme.textMuted}>
@@ -1315,7 +1370,9 @@ function UserMessage(props: {
               }
             >
               <text fg={theme.textMuted}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
+                <span style={{ bg: color(), fg: deferredFg(), bold: true }}>
+                  {props.queued ? " DEFERRED " : " QUEUED "}
+                </span>
               </text>
             </Show>
           </box>

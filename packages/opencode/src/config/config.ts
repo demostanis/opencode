@@ -936,6 +936,11 @@ export namespace Config {
       input_clear: z.string().optional().default("ctrl+c").describe("Clear input field"),
       input_paste: z.string().optional().default("ctrl+v").describe("Paste from clipboard"),
       input_submit: z.string().optional().default("return").describe("Submit input"),
+      input_submit_queued: z
+        .string()
+        .optional()
+        .default("<leader>return")
+        .describe("Queue input and submit once the whole session loop has exited (distinct from the DEFERRED queue)"),
       input_newline: z
         .string()
         .optional()
