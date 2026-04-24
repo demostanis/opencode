@@ -19,7 +19,7 @@ describe("TUI sync auto-accept logic", () => {
     const request = event.properties
 
     // Logic from sync.tsx (latest version)
-    if (currentAutoAccept !== "none" && request.permission === "edit") {
+    if (currentAutoAccept === "yolo") {
       sdkReplyMock({
         reply: "once",
         requestID: request.id,
@@ -27,7 +27,7 @@ describe("TUI sync auto-accept logic", () => {
       return
     }
 
-    if (currentAutoAccept === "yolo" && request.permission === "external_directory") {
+    if (currentAutoAccept !== "none" && request.permission === "edit") {
       sdkReplyMock({
         reply: "once",
         requestID: request.id,
@@ -125,6 +125,37 @@ describe("TUI sync auto-accept logic", () => {
       reply: "reject",
       requestID: "perm_ext",
       message: "Access to another directory was rejected.",
+    })
+  })
+
+  test("auto-accepts reads in 'yolo' mode", () => {
+    const event = {
+      properties: {
+        id: "perm_read",
+        sessionID: "ses_1",
+        permission: "read",
+        patterns: ["/tmp/file.txt"],
+      },
+    }
+    handlePermissionAsked(event, "yolo")
+    expect(sdkReplyMock).toHaveBeenCalledWith({
+      reply: "once",
+      requestID: "perm_read",
+    })
+  })
+
+  test("auto-accepts external_directory in 'yolo' mode even without special case", () => {
+    const event = {
+      properties: {
+        id: "perm_ext_2",
+        sessionID: "ses_1",
+        permission: "external_directory",
+      },
+    }
+    handlePermissionAsked(event, "yolo")
+    expect(sdkReplyMock).toHaveBeenCalledWith({
+      reply: "once",
+      requestID: "perm_ext_2",
     })
   })
 

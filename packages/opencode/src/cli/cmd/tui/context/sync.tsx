@@ -144,14 +144,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "permission.asked": {
           const request = event.properties
-          if (autoaccept() !== "none" && request.permission === "edit") {
+          if (autoaccept() === "yolo") {
             sdk.client.permission.reply({
               reply: "once",
               requestID: request.id,
             })
             break
           }
-          if (autoaccept() === "yolo" && request.permission === "external_directory") {
+          if (autoaccept() !== "none" && request.permission === "edit") {
             sdk.client.permission.reply({
               reply: "once",
               requestID: request.id,
