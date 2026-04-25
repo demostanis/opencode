@@ -112,6 +112,7 @@ export namespace SessionPrompt {
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
+    deferred: z.boolean().optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -318,15 +319,36 @@ export namespace SessionPrompt {
         }
       }
 
+      const done = !!lastAssistant?.finish && !["tool-calls", "unknown"].includes(lastAssistant.finish)
+      const assistants = msgs.flatMap((msg) => (msg.info.role === "assistant" ? [msg.info as MessageV2.Assistant] : []))
+      const deferred = msgs.flatMap((msg) =>
+        msg.info.role === "user" && msg.info.deferred && !assistants.some((item) => item.parentID === msg.info.id)
+          ? [msg.info as MessageV2.User]
+          : [],
+      )
+      const parent = lastAssistant
+        ? (msgs.find((msg) => msg.info.id === lastAssistant.parentID)?.info as MessageV2.User | undefined)
+        : undefined
+      if (!done && parent) {
+        lastUser = parent
+      } else if (done && deferred.length) {
+        lastUser = deferred[0]
+      }
+
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
-      if (
-        lastAssistant?.finish &&
-        !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastUser.id < lastAssistant.id
-      ) {
+      if (done && lastUser.id < lastAssistant!.id && !deferred.length) {
         log.info("exiting loop", { sessionID })
         break
       }
+      const visible = lastAssistant
+        ? msgs.filter(
+            (msg) =>
+              msg.info.role !== "user" ||
+              !msg.info.deferred ||
+              msg.info.id === lastUser.id ||
+              assistants.some((item) => item.parentID === msg.info.id),
+          )
+        : msgs
 
       step++
       if (step === 1)
@@ -334,7 +356,7 @@ export namespace SessionPrompt {
           session,
           modelID: lastUser.model.modelID,
           providerID: lastUser.model.providerID,
-          history: msgs,
+          history: visible,
         })
 
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID).catch((e) => {
@@ -563,7 +585,7 @@ export namespace SessionPrompt {
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
       msgs = await insertReminders({
-        messages: msgs,
+        messages: visible,
         agent,
         session,
       })
@@ -635,6 +657,7 @@ export namespace SessionPrompt {
       if (step > 1 && lastFinished) {
         for (const msg of msgs) {
           if (msg.info.role !== "user" || msg.info.id <= lastFinished.id) continue
+          if (msg.info.deferred && msg.info.id !== lastUser.id) continue
           for (const part of msg.parts) {
             if (part.type !== "text" || part.ignored || part.synthetic) continue
             if (!part.text.trim()) continue
@@ -711,7 +734,27 @@ export namespace SessionPrompt {
         }
       }
 
-      if (result === "stop") break
+      if (result === "stop") {
+        const updated = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+        const assistant = updated.findLast((msg) => msg.info.role === "assistant")?.info as
+          | MessageV2.Assistant
+          | undefined
+        const done = !!assistant?.finish && !["tool-calls", "unknown"].includes(assistant.finish)
+        const assistants = updated.flatMap((msg) =>
+          msg.info.role === "assistant" ? [msg.info as MessageV2.Assistant] : [],
+        )
+        if (
+          done &&
+          updated.some(
+            (msg) =>
+              msg.info.role === "user" &&
+              msg.info.deferred &&
+              !assistants.some((item) => item.parentID === msg.info.id),
+          )
+        )
+          continue
+        break
+      }
       if (result === "compact") {
         await SessionCompaction.create({
           sessionID,
@@ -986,6 +1029,7 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
+      deferred: input.deferred || undefined,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 

@@ -56,6 +56,7 @@ export type PromptRef = {
   blur(): void
   focus(): void
   submit(): void
+  defer(): void
 }
 
 const PLACEHOLDERS = ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"]
@@ -422,6 +423,9 @@ export function Prompt(props: PromptProps) {
     submit() {
       submit()
     },
+    defer() {
+      submit({ deferred: true })
+    },
   }
 
   createEffect(() => {
@@ -562,7 +566,7 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
-  async function submit() {
+  async function submit(opts?: { deferred?: boolean }) {
     if (props.disabled) return
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
@@ -599,6 +603,7 @@ export function Prompt(props: PromptProps) {
 
     const messageID = MessageID.ascending()
     let inputText = store.prompt.input
+    const defer = opts?.deferred && status().type !== "idle"
 
     // Expand pasted text inline before submitting
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
@@ -681,6 +686,8 @@ export function Prompt(props: PromptProps) {
             },
             ...nonTextParts.map(assign),
           ],
+          deferred: defer || undefined,
+          noReply: defer || undefined,
         })
         .catch(() => {})
     }
