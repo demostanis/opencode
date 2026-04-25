@@ -144,6 +144,35 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return response.json()
 }
 
+export async function codexAuthHeaders(): Promise<Headers> {
+  const auth = await Auth.get("openai")
+  if (auth?.type !== "oauth") {
+    throw new Error("Image generation requires OpenAI ChatGPT Pro/Plus OAuth auth. Run /connect openai and choose a ChatGPT auth method.")
+  }
+
+  let access = auth.access
+  let accountId = auth.accountId
+
+  if (!access || auth.expires < Date.now()) {
+    log.info("refreshing codex access token")
+    const tokens = await refreshAccessToken(auth.refresh)
+    accountId = extractAccountId(tokens) || accountId
+    await Auth.set("openai", {
+      type: "oauth",
+      refresh: tokens.refresh_token,
+      access: tokens.access_token,
+      expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+      ...(accountId && { accountId }),
+    })
+    access = tokens.access_token
+  }
+
+  const headers = new Headers()
+  headers.set("authorization", `Bearer ${access}`)
+  if (accountId) headers.set("ChatGPT-Account-Id", accountId)
+  return headers
+}
+
 const HTML_SUCCESS = `<!doctype html>
 <html>
   <head>

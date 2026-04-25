@@ -44,4 +44,12 @@ export namespace Editor {
       stderr: "ignore",
     })
   }
+
+  export function openImage(filepath: string) {
+    Process.spawn(["imv", filepath], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+  }
 }

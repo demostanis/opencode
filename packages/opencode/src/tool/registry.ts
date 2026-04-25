@@ -27,6 +27,7 @@ import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
 import { LspTool } from "./lsp"
 import { Truncate } from "./truncate"
+import { ImageGenerateTool } from "./image"
 
 import { ApplyPatchTool } from "./apply_patch"
 import { PTYSpawnTool, PTYReadTool, PTYWriteTool, PTYKillTool, PTYListTool } from "./pty"
@@ -118,6 +119,7 @@ export namespace ToolRegistry {
       // TodoReadTool,
       WebSearchTool,
       CodeSearchTool,
+      ImageGenerateTool,
       SkillTool,
       ApplyPatchTool,
       PTYSpawnTool,
