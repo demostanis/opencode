@@ -27,6 +27,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     mcp: true,
     diff: true,
     todo: true,
+    images: true,
     lsp: true,
     pty: true,
   })
@@ -68,6 +69,26 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     sync.data.provider.some((x) => x.id !== "opencode" || Object.values(x.models).some((y) => y.cost?.input !== 0)),
   )
   const gettingStartedDismissed = createMemo(() => kv.get("dismissed_getting_started", false))
+  const generatedImages = createMemo(() => {
+    const seen = new Set<string>()
+    return messages().flatMap((message) =>
+      (sync.data.part[message.id] ?? []).flatMap((part) => {
+        if (part.type !== "tool" || part.tool !== "image_generate" || part.state.status !== "completed") return []
+        const files = (part.state.metadata?.files ?? []) as Array<{
+          path?: string
+          mime?: string
+          prompt?: string
+          revisedPrompt?: string
+          shortName?: string
+        }>
+        return files.flatMap((file) => {
+          if (!file.path || !file.mime?.startsWith("image/") || seen.has(file.path)) return []
+          seen.add(file.path)
+          return [file]
+        })
+      }),
+    )
+  })
 
   return (
     <box
@@ -277,6 +298,37 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </box>
               <Show when={todo().length <= 2 || expanded.todo}>
                 <For each={todo()}>{(todo) => <TodoItem status={todo.status} content={todo.content} />}</For>
+              </Show>
+            </box>
+          </Show>
+
+          <Show when={generatedImages().length > 0}>
+            <box>
+              <box
+                flexDirection="row"
+                gap={1}
+                onMouseDown={() => generatedImages().length > 2 && setExpanded("images", !expanded.images)}
+              >
+                <Show when={generatedImages().length > 2}>
+                  <text fg={theme.text}>{expanded.images ? "▼" : "▶"}</text>
+                </Show>
+                <text fg={theme.text}>
+                  <b>Generated images</b>
+                </text>
+              </box>
+              <Show when={generatedImages().length <= 2 || expanded.images}>
+                <For each={generatedImages()}>
+                  {(item) => (
+                    <box flexDirection="row" gap={1} onMouseUp={() => item.path && Editor.openImage(item.path)}>
+                      <text flexShrink={0} fg={theme.success}>
+                        •
+                      </text>
+                      <text fg={theme.textMuted} wrapMode="none">
+                        {item.shortName || item.path?.split("/").at(-1)}
+                      </text>
+                    </box>
+                  )}
+                </For>
               </Show>
             </box>
           </Show>

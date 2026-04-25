@@ -21,6 +21,7 @@ import { Discovery } from "./discovery"
 export namespace Skill {
   const log = Log.create({ service: "skill" })
   const EXTERNAL_DIRS = [".claude", ".agents"]
+  const BUILTIN_SKILL_ROOT = path.join(import.meta.dir, "builtin")
   const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
   const OPENCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
   const SKILL_PATTERN = "**/SKILL.md"
@@ -124,6 +125,10 @@ export namespace Skill {
     }
 
     const load = async () => {
+      if (process.env.NODE_ENV !== "test") {
+        await scan(state, BUILTIN_SKILL_ROOT, SKILL_PATTERN, { scope: "builtin" })
+      }
+
       if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
         for (const dir of EXTERNAL_DIRS) {
           const root = path.join(Global.Path.home, dir)
