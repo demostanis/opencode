@@ -133,6 +133,23 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const display = createMemo(() => {
+    const list = messages()
+    const deferred = list.filter((msg) => msg.role === "user" && msg.deferred)
+    if (deferred.length === 0) return list
+    const ids = new Set(deferred.map((msg) => msg.id))
+    const main = list.filter((msg) => !ids.has(msg.id))
+    for (const msg of deferred) {
+      const reply = main.findIndex((item) => item.role === "assistant" && item.parentID === msg.id)
+      if (reply !== -1) {
+        main.splice(reply, 0, msg)
+        continue
+      }
+      const last = main.findLastIndex((item) => item.role === "assistant" && item.time.completed)
+      main.splice(last + 1, 0, msg)
+    }
+    return main
+  })
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
     return children().flatMap((x) => sync.data.permission[x.id] ?? [])
@@ -1079,7 +1096,7 @@ export function Session() {
               flexGrow={1}
               scrollAcceleration={scrollAcceleration()}
             >
-              <For each={messages()}>
+              <For each={display()}>
                 {(message, index) => (
                   <Switch>
                     <Match when={message.id === revert()?.messageID}>
@@ -1252,9 +1269,16 @@ function UserMessage(props: {
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
+  const deferred = createMemo(
+    () =>
+      props.message.deferred &&
+      !(sync.data.message[props.message.sessionID] ?? []).some(
+        (msg) => msg.role === "assistant" && msg.parentID === props.message.id,
+      ),
+  )
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
-  const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
+  const metadataVisible = createMemo(() => queued() || deferred() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
 
@@ -1303,7 +1327,7 @@ function UserMessage(props: {
               </box>
             </Show>
             <Show
-              when={queued()}
+              when={queued() || deferred()}
               fallback={
                 <Show when={ctx.showTimestamps()}>
                   <text fg={theme.textMuted}>
@@ -1315,7 +1339,9 @@ function UserMessage(props: {
               }
             >
               <text fg={theme.textMuted}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
+                <span style={{ bg: color(), fg: queuedFg(), bold: true }}>
+                  {deferred() ? " DEFERRED " : " QUEUED "}
+                </span>
               </text>
             </Show>
           </box>
@@ -1397,7 +1423,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     "Taking a pause",
     "Eating a tacos with gloves",
     "Slopping",
-    "Barking"
+    "Barking",
   ]
   const [currentPhrase, setCurrentPhrase] = createSignal(
     thinkingPhrases[Math.floor(Math.random() * thinkingPhrases.length)],

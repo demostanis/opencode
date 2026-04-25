@@ -96,6 +96,8 @@ import type {
   PtyKillErrors,
   PtyKillResponses,
   PtyListResponses,
+  PtyReadErrors,
+  PtyReadResponses,
   PtyRemoveErrors,
   PtyRemoveResponses,
   PtyRestartErrors,
@@ -556,12 +558,12 @@ export class Pty extends HeyApiClient {
       directory?: string
       workspace?: string
       command?: string
-      args?: Array<string>
       cwd?: string
       title?: string
       env?: {
         [key: string]: string
       }
+      parentSessionID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -573,10 +575,10 @@ export class Pty extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "command" },
-            { in: "body", key: "args" },
             { in: "body", key: "cwd" },
             { in: "body", key: "title" },
             { in: "body", key: "env" },
+            { in: "body", key: "parentSessionID" },
           ],
         },
       ],
@@ -702,38 +704,6 @@ export class Pty extends HeyApiClient {
   }
 
   /**
-   * Connect to PTY session
-   *
-   * Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.
-   */
-  public connect<ThrowOnError extends boolean = false>(
-    parameters: {
-      ptyID: string
-      directory?: string
-      workspace?: string
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "ptyID" },
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).get<PtyConnectResponses, PtyConnectErrors, ThrowOnError>({
-      url: "/pty/{ptyID}/connect",
-      ...options,
-      ...params,
-    })
-  }
-
-  /**
    * Kill PTY session
    *
    * Terminate a specific pseudo-terminal (PTY) session without removing it.
@@ -798,6 +768,40 @@ export class Pty extends HeyApiClient {
   }
 
   /**
+   * Read PTY output
+   *
+   * Retrieve PTY output, either incremental or full history.
+   */
+  public read<ThrowOnError extends boolean = false>(
+    parameters: {
+      ptyID: string
+      directory?: string
+      workspace?: string
+      include_history?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ptyID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "include_history" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PtyReadResponses, PtyReadErrors, ThrowOnError>({
+      url: "/pty/{ptyID}/read",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Write to PTY session
    *
    * Send input data to a specific pseudo-terminal (PTY) session.
@@ -807,7 +811,7 @@ export class Pty extends HeyApiClient {
       ptyID: string
       directory?: string
       workspace?: string
-      data: string
+      data?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -833,6 +837,38 @@ export class Pty extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Connect to PTY session
+   *
+   * Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.
+   */
+  public connect<ThrowOnError extends boolean = false>(
+    parameters: {
+      ptyID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "ptyID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PtyConnectResponses, PtyConnectErrors, ThrowOnError>({
+      url: "/pty/{ptyID}/connect",
+      ...options,
+      ...params,
     })
   }
 }
@@ -1950,6 +1986,7 @@ export class Session2 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      deferred?: boolean
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -1970,6 +2007,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "deferred" },
             { in: "body", key: "parts" },
           ],
         },
@@ -2082,6 +2120,7 @@ export class Session2 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      deferred?: boolean
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -2102,6 +2141,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "deferred" },
             { in: "body", key: "parts" },
           ],
         },

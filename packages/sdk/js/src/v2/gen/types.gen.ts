@@ -253,6 +253,7 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  deferred?: boolean
 }
 
 export type ProviderAuthError = {
@@ -723,6 +724,57 @@ export type EventTodoUpdated = {
   }
 }
 
+export type Pty = {
+  id: string
+  title: string
+  command: string
+  args: Array<string>
+  cwd: string
+  status: "running" | "exited" | "killed"
+  pid: number
+  exitCode?: number
+  cursor?: number
+  parentSessionID?: string
+}
+
+export type EventPtyCreated = {
+  type: "pty.created"
+  properties: {
+    info: Pty
+  }
+}
+
+export type EventPtyUpdated = {
+  type: "pty.updated"
+  properties: {
+    info: Pty
+  }
+}
+
+export type EventPtyExited = {
+  type: "pty.exited"
+  properties: {
+    id: string
+    exitCode: number
+  }
+}
+
+export type EventPtyDeleted = {
+  type: "pty.deleted"
+  properties: {
+    id: string
+  }
+}
+
+export type EventPtyOutput = {
+  type: "pty.output"
+  properties: {
+    id: string
+    chunk: string
+    cursor: number
+  }
+}
+
 export type EventTuiPromptAppend = {
   type: "tui.prompt.append"
   properties: {
@@ -903,54 +955,6 @@ export type EventWorkspaceFailed = {
   }
 }
 
-export type Pty = {
-  id: string
-  title: string
-  command: string
-  args: Array<string>
-  cwd: string
-  status: "running" | "exited"
-  pid: number
-}
-
-export type EventPtyCreated = {
-  type: "pty.created"
-  properties: {
-    info: Pty
-  }
-}
-
-export type EventPtyUpdated = {
-  type: "pty.updated"
-  properties: {
-    info: Pty
-  }
-}
-
-export type EventPtyExited = {
-  type: "pty.exited"
-  properties: {
-    id: string
-    exitCode: number
-  }
-}
-
-export type EventPtyDeleted = {
-  type: "pty.deleted"
-  properties: {
-    id: string
-  }
-}
-
-export type EventPtyOutput = {
-  type: "pty.output"
-  properties: {
-    id: string
-    chunk: string
-    cursor: number
-  }
-}
-
 export type EventWorktreeReady = {
   type: "worktree.ready"
   properties: {
@@ -992,6 +996,11 @@ export type Event =
   | EventSessionIdle
   | EventSessionCompacted
   | EventTodoUpdated
+  | EventPtyCreated
+  | EventPtyUpdated
+  | EventPtyExited
+  | EventPtyDeleted
+  | EventPtyOutput
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
@@ -1006,11 +1015,6 @@ export type Event =
   | EventSessionError
   | EventWorkspaceReady
   | EventWorkspaceFailed
-  | EventPtyCreated
-  | EventPtyUpdated
-  | EventPtyExited
-  | EventPtyDeleted
-  | EventPtyOutput
   | EventWorktreeReady
   | EventWorktreeFailed
 
@@ -2220,12 +2224,12 @@ export type PtyListResponse = PtyListResponses[keyof PtyListResponses]
 export type PtyCreateData = {
   body?: {
     command?: string
-    args?: Array<string>
     cwd?: string
     title?: string
     env?: {
       [key: string]: string
     }
+    parentSessionID?: string
   }
   path?: never
   query?: {
@@ -2349,36 +2353,6 @@ export type PtyUpdateResponses = {
 
 export type PtyUpdateResponse = PtyUpdateResponses[keyof PtyUpdateResponses]
 
-export type PtyConnectData = {
-  body?: never
-  path: {
-    ptyID: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/pty/{ptyID}/connect"
-}
-
-export type PtyConnectErrors = {
-  /**
-   * Not found
-   */
-  404: NotFoundError
-}
-
-export type PtyConnectError = PtyConnectErrors[keyof PtyConnectErrors]
-
-export type PtyConnectResponses = {
-  /**
-   * Connected session
-   */
-  200: boolean
-}
-
-export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
-
 export type PtyKillData = {
   body?: never
   path: {
@@ -2439,8 +2413,42 @@ export type PtyRestartResponses = {
 
 export type PtyRestartResponse = PtyRestartResponses[keyof PtyRestartResponses]
 
+export type PtyReadData = {
+  body?: never
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    /**
+     * Return the full PTY buffer instead of only unread output.
+     */
+    include_history?: boolean
+  }
+  url: "/pty/{ptyID}/read"
+}
+
+export type PtyReadErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyReadError = PtyReadErrors[keyof PtyReadErrors]
+
+export type PtyReadResponses = {
+  /**
+   * PTY output
+   */
+  200: string
+}
+
+export type PtyReadResponse = PtyReadResponses[keyof PtyReadResponses]
+
 export type PtyWriteData = {
-  body: {
+  body?: {
     data: string
   }
   path: {
@@ -2470,6 +2478,36 @@ export type PtyWriteResponses = {
 }
 
 export type PtyWriteResponse = PtyWriteResponses[keyof PtyWriteResponses]
+
+export type PtyConnectData = {
+  body?: never
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/pty/{ptyID}/connect"
+}
+
+export type PtyConnectErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyConnectError = PtyConnectErrors[keyof PtyConnectErrors]
+
+export type PtyConnectResponses = {
+  /**
+   * Connected session
+   */
+  200: boolean
+}
+
+export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
 
 export type ConfigGetData = {
   body?: never
@@ -3417,6 +3455,7 @@ export type SessionPromptData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    deferred?: boolean
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -3617,6 +3656,7 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    deferred?: boolean
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {

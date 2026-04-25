@@ -546,6 +546,16 @@ function App() {
       category: "System",
     },
     {
+      title: "Defer prompt",
+      keybind: "prompt_deferred",
+      value: "prompt.deferred",
+      onSelect: (dialog) => {
+        promptRef.current?.defer()
+        dialog.clear()
+      },
+      category: "Prompt",
+    },
+    {
       title: "Switch theme",
       value: "theme.switch",
       keybind: "theme_list",
