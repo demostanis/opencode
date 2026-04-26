@@ -1,0 +1,60 @@
+diff --git a/index-0wbvecnk.js b/index-0wbvecnk.js
+index 5d06422..2c7bf86 100644
+--- a/index-0wbvecnk.js
++++ b/index-0wbvecnk.js
+@@ -6370,7 +6370,7 @@ class MouseParser {
+     };
+     let type;
+     let scrollInfo;
+-    if (isScroll && pressRelease === "M") {
++    if (isScroll && !isMotion && pressRelease === "M") {
+       type = "scroll";
+       scrollInfo = {
+         direction: scrollDirection,
+@@ -6385,13 +6385,15 @@ class MouseParser {
+       } else {
+         type = "move";
+       }
+-    } else {
++    } else if (!isScroll) {
+       type = pressRelease === "M" ? "down" : "up";
+       if (type === "down" && button !== 3) {
+         this.mouseButtonsPressed.add(button);
+       } else if (type === "up") {
+         this.mouseButtonsPressed.clear();
+       }
++    } else {
++      return null;
+     }
+     return {
+       type,
+@@ -6415,7 +6417,7 @@ class MouseParser {
+     let type;
+     let actualButton;
+     let scrollInfo;
+-    if (isScroll) {
++    if (isScroll && !isMotion) {
+       type = "scroll";
+       actualButton = 0;
+       scrollInfo = {
+@@ -6425,9 +6427,11 @@ class MouseParser {
+     } else if (isMotion) {
+       type = "move";
+       actualButton = button === 3 ? -1 : button;
+-    } else {
++    } else if (!isScroll) {
+       type = button === 3 ? "up" : "down";
+       actualButton = button === 3 ? 0 : button;
++    } else {
++      return null;
+     }
+     return {
+       type,
+@@ -17586,6 +17590,7 @@ class CliRenderer extends EventEmitter4 {
+       if (maybeRenderable) {
+         const event2 = new MouseEvent(maybeRenderable, { ...mouseEvent, isDragging: true });
+         maybeRenderable.processMouseEvent(event2);
++        mouseEvent.stopPropagation();
+       }
+       return true;
+     }
