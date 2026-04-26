@@ -22,6 +22,17 @@ function writeOsc52(text: string): void {
   process.stdout.write(sequence)
 }
 
+function pipe(proc: Process.Child, text: string, wait = true): Promise<void> {
+  if (!proc.stdin) return Promise.resolve()
+  proc.stdin.on("error", () => {})
+  proc.stdin.end(text)
+  if (wait) return proc.exited.then(() => undefined).catch(() => undefined)
+
+  proc.unref()
+  void proc.exited.catch(() => undefined)
+  return Promise.resolve()
+}
+
 export namespace Clipboard {
   export interface Content {
     data: string
@@ -107,10 +118,7 @@ export namespace Clipboard {
         console.log("clipboard: using wl-copy")
         return async (text: string) => {
           const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-          if (!proc.stdin) return
-          proc.stdin.write(text)
-          proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await pipe(proc, text)
         }
       }
       if (which("xclip")) {
@@ -121,10 +129,7 @@ export namespace Clipboard {
             stdout: "ignore",
             stderr: "ignore",
           })
-          if (!proc.stdin) return
-          proc.stdin.write(text)
-          proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await pipe(proc, text, false)
         }
       }
       if (which("xsel")) {
@@ -135,10 +140,7 @@ export namespace Clipboard {
             stdout: "ignore",
             stderr: "ignore",
           })
-          if (!proc.stdin) return
-          proc.stdin.write(text)
-          proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await pipe(proc, text, false)
         }
       }
     }
@@ -161,11 +163,7 @@ export namespace Clipboard {
             stderr: "ignore",
           },
         )
-
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+        await pipe(proc, text)
       }
     }
 
