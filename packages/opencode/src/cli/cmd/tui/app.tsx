@@ -187,6 +187,7 @@ export function tui(input: {
         useKittyKeyboard: {},
         autoFocus: false,
         openConsoleOnError: false,
+        externalOutputMode: "passthrough",
         consoleOptions: {
           keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
           onCopySelection: (text) => {
@@ -204,7 +205,6 @@ function App() {
   const route = useRoute()
   const dimensions = useTerminalDimensions()
   const renderer = useRenderer()
-  renderer.disableStdoutInterception()
   const dialog = useDialog()
   const local = useLocal()
   const kv = useKV()
