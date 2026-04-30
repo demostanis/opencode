@@ -562,6 +562,7 @@ export namespace MessageV2 {
     model: Provider.Model,
     options?: { stripMedia?: boolean },
   ): ModelMessage[] {
+    const msgs = compacted(input)
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
     // Track media from tool results that need to be injected as user messages
@@ -618,7 +619,7 @@ export namespace MessageV2 {
       return { type: "json", value: output as never }
     }
 
-    for (const msg of input) {
+    for (const msg of msgs) {
       if (msg.parts.length === 0) continue
 
       if (msg.info.role === "user") {
@@ -790,6 +791,22 @@ export namespace MessageV2 {
         tools,
       },
     )
+  }
+
+  function compacted(input: WithParts[]) {
+    const idx = input.findLastIndex((msg) => {
+      if (msg.info.role !== "assistant") return false
+      const info = msg.info as Assistant
+      if (!info.summary || !info.finish || info.error) return false
+      return input.some(
+        (item) => item.info.id === info.parentID && item.parts.some((part) => part.type === "compaction"),
+      )
+    })
+    if (idx === -1) return input
+    const msg = input[idx].info as Assistant
+    const parent = input.findIndex((item) => item.info.id === msg.parentID)
+    if (parent === -1) return input.slice(idx)
+    return input.slice(parent)
   }
 
   export const page = fn(

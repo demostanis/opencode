@@ -267,6 +267,79 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("drops history before latest completed compaction", () => {
+    const summary = assistantInfo("m-summary", "m-compact")
+    summary.summary = true
+    summary.finish = "stop"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo("m-old-user"),
+        parts: [
+          {
+            ...basePart("m-old-user", "p1"),
+            type: "text",
+            text: "old user text",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo("m-old-assistant", "m-old-user"),
+        parts: [
+          {
+            ...basePart("m-old-assistant", "p2"),
+            type: "text",
+            text: "old assistant text",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo("m-compact"),
+        parts: [
+          {
+            ...basePart("m-compact", "p3"),
+            type: "compaction",
+            auto: false,
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: summary,
+        parts: [
+          {
+            ...basePart("m-summary", "p4"),
+            type: "text",
+            text: "summary text",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo("m-new-user"),
+        parts: [
+          {
+            ...basePart("m-new-user", "p5"),
+            type: "text",
+            text: "new user text",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "What did we do so far?" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "summary text" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "new user text" }],
+      },
+    ])
+  })
+
   test("converts assistant tool completion into tool-call + tool-result messages with attachments", () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
