@@ -28,6 +28,7 @@ import { Log } from "@/util/log"
 import { LspTool } from "./lsp"
 import { Truncate } from "./truncate"
 import { ImageGenerateTool } from "./image"
+import { Auth } from "../auth"
 
 import { ApplyPatchTool } from "./apply_patch"
 import { PTYSpawnTool, PTYReadTool, PTYWriteTool, PTYKillTool, PTYListTool } from "./pty"
@@ -146,11 +147,16 @@ export namespace ToolRegistry {
     agent?: Agent.Info,
   ) {
     const tools = await all()
+    const auth = model.providerID === ProviderID.openai ? await Auth.get("openai") : undefined
     const result = await Promise.all(
       tools
         .filter((t) => {
-          // Enable websearch/codesearch for zen users OR via enable flag
-          if (t.id === "codesearch" || t.id === "websearch") {
+          if (t.id === "websearch") {
+            return model.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA || auth?.type === "oauth"
+          }
+
+          // Enable codesearch for zen users OR via enable flag
+          if (t.id === "codesearch") {
             return model.providerID === ProviderID.opencode || Flag.OPENCODE_ENABLE_EXA
           }
 

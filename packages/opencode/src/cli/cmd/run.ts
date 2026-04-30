@@ -156,14 +156,14 @@ function edit(info: ToolProps<typeof EditTool>) {
 function codesearch(info: ToolProps<typeof CodeSearchTool>) {
   inline({
     icon: "◇",
-    title: `Exa Code Search "${info.input.query}"`,
+    title: `Code Search "${info.input.query}"`,
   })
 }
 
 function websearch(info: ToolProps<typeof WebSearchTool>) {
   inline({
     icon: "◈",
-    title: `Exa Web Search "${info.input.query}"`,
+    title: `Web Search "${info.input.query}"`,
   })
 }
 

@@ -147,7 +147,9 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 export async function codexAuthHeaders(): Promise<Headers> {
   const auth = await Auth.get("openai")
   if (auth?.type !== "oauth") {
-    throw new Error("Image generation requires OpenAI ChatGPT Pro/Plus OAuth auth. Run /connect openai and choose a ChatGPT auth method.")
+    throw new Error(
+      "This Codex feature requires OpenAI ChatGPT Pro/Plus OAuth auth. Run /connect openai and choose a ChatGPT auth method.",
+    )
   }
 
   let access = auth.access
