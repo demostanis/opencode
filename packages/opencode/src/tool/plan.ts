@@ -7,6 +7,7 @@ import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider/provider"
 import { Instance } from "../project/instance"
 import { type SessionID, MessageID, PartID } from "../session/schema"
+import { Process } from "../util/process"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
 async function getLastModel(sessionID: SessionID) {
@@ -21,7 +22,13 @@ export const PlanExitTool = Tool.define("plan_exit", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
-    const plan = path.relative(Instance.worktree, Session.plan(session))
+    const file = Session.plan(session)
+    const plan = path.relative(Instance.worktree, file)
+    Process.spawn(["urxvt", "-e", "nvim", file], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
