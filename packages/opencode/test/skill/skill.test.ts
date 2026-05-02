@@ -220,6 +220,26 @@ test("returns empty array when no skills exist", async () => {
   })
 })
 
+test("includes builtin imagegen skill outside test mode", async () => {
+  await using tmp = await tmpdir({ git: true })
+
+  const env = process.env.NODE_ENV
+  process.env.NODE_ENV = "development"
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        const imagegen = skills.find((skill) => skill.name === "imagegen")
+        expect(imagegen?.description).toContain("Generate or edit raster images")
+      },
+    })
+  } finally {
+    process.env.NODE_ENV = env
+  }
+})
+
 test("discovers skills from .agents/skills/ directory", async () => {
   await using tmp = await tmpdir({
     git: true,

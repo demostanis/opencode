@@ -5,6 +5,7 @@ import { Tool } from "./tool"
 import { Skill } from "../skill"
 import { Ripgrep } from "../file/ripgrep"
 import { iife } from "@/util/iife"
+import { Filesystem } from "@/util/filesystem"
 
 export const SkillTool = Tool.define("skill", async (ctx) => {
   const list = await Skill.available(ctx?.agent)
@@ -60,6 +61,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
 
       const limit = 10
       const files = await iife(async () => {
+        if (!(await Filesystem.isDir(dir))) return []
         const arr = []
         for await (const file of Ripgrep.files({
           cwd: dir,

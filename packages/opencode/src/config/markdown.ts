@@ -68,9 +68,7 @@ export namespace ConfigMarkdown {
     return content.replace(frontmatter, () => processed)
   }
 
-  export async function parse(filePath: string) {
-    const template = await Filesystem.readText(filePath)
-
+  export function parseText(template: string, filePath: string) {
     try {
       const md = matter(template)
       return md
@@ -87,6 +85,10 @@ export namespace ConfigMarkdown {
         )
       }
     }
+  }
+
+  export async function parse(filePath: string) {
+    return parseText(await Filesystem.readText(filePath), filePath)
   }
 
   export const FrontmatterError = NamedError.create(

@@ -17,6 +17,7 @@ import { ConfigMarkdown } from "../config/markdown"
 import { Glob } from "../util/glob"
 import { Log } from "../util/log"
 import { Discovery } from "./discovery"
+import IMAGEGEN from "./builtin/imagegen/SKILL.md" with { type: "text" }
 
 export namespace Skill {
   const log = Log.create({ service: "skill" })
@@ -25,6 +26,12 @@ export namespace Skill {
   const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
   const OPENCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
   const SKILL_PATTERN = "**/SKILL.md"
+  const BUILTIN_SKILLS = [
+    {
+      path: path.join(BUILTIN_SKILL_ROOT, "imagegen", "SKILL.md"),
+      content: IMAGEGEN,
+    },
+  ]
 
   export const Info = z.object({
     name: z.string(),
@@ -81,8 +88,11 @@ export namespace Skill {
     })
 
     if (!md) return
+    addParsed(state, match, md.data, md.content)
+  }
 
-    const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+  const addParsed = (state: State, match: string, data: unknown, content: string) => {
+    const parsed = Info.pick({ name: true, description: true }).safeParse(data)
     if (!parsed.success) return
 
     if (state.skills[parsed.data.name]) {
@@ -98,7 +108,14 @@ export namespace Skill {
       name: parsed.data.name,
       description: parsed.data.description,
       location: match,
-      content: md.content,
+      content,
+    }
+  }
+
+  const builtin = (state: State) => {
+    for (const skill of BUILTIN_SKILLS) {
+      const md = ConfigMarkdown.parseText(skill.content, skill.path)
+      addParsed(state, skill.path, md.data, md.content)
     }
   }
 
@@ -126,7 +143,7 @@ export namespace Skill {
 
     const load = async () => {
       if (process.env.NODE_ENV !== "test") {
-        await scan(state, BUILTIN_SKILL_ROOT, SKILL_PATTERN, { scope: "builtin" })
+        builtin(state)
       }
 
       if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
