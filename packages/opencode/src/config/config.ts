@@ -938,6 +938,7 @@ export namespace Config {
         .default("shift+tab")
         .describe("Toggle auto-accept mode for permissions"),
       variant_cycle: z.string().optional().default("ctrl+t").describe("Cycle model variants"),
+      memory_cycle: z.string().optional().default("ctrl+y").describe("Cycle memory modes"),
       input_clear: z.string().optional().default("ctrl+c").describe("Clear input field"),
       input_paste: z.string().optional().default("ctrl+v").describe("Paste from clipboard"),
       input_submit: z.string().optional().default("return").describe("Submit input"),

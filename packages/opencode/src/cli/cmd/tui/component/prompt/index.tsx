@@ -85,6 +85,8 @@ export function Prompt(props: PromptProps) {
     "permission_auto_accept",
     "edit",
   )
+  const [memory, setMemory] = kv.signal<"none" | "remember" | "readonly" | "full">("memory_mode", "none")
+  const modes = ["none", "remember", "readonly", "full"] as const
 
   function promptModelWarning() {
     toast.show({
@@ -206,6 +208,67 @@ export function Prompt(props: PromptProps) {
               }}
             />
           ))
+        },
+      },
+      {
+        title: "Memory",
+        value: "memory.list",
+        search: "memory remember readonly full agentgraph",
+        category: "Agent",
+        onSelect: (dialog) => {
+          dialog.replace(() => (
+            <DialogSelect
+              title="Memory"
+              current={memory()}
+              options={[
+                { title: "None", value: "none", description: "Do not use agentgraph memory" },
+                { title: "Remember", value: "remember", description: "Add useful memory nodes after turns" },
+                { title: "Readonly", value: "readonly", description: "Show mode only; not implemented yet" },
+                { title: "Full", value: "full", description: "Show mode only; not implemented yet" },
+              ]}
+              onSelect={(option) => {
+                setMemory(option.value)
+                dialog.clear()
+              }}
+            />
+          ))
+        },
+      },
+      {
+        title: "Memory cycle",
+        value: "memory.cycle",
+        keybind: "memory_cycle",
+        category: "Agent",
+        hidden: true,
+        onSelect: () => {
+          setMemory(() => modes[(modes.indexOf(memory()) + 1) % modes.length])
+        },
+      },
+      {
+        title: "Memory info",
+        value: "memory.info",
+        category: "Session",
+        slash: {
+          name: "memory-info",
+        },
+        onSelect: (dialog) => {
+          const sessionID = props.sessionID
+          if (!sessionID) return
+          const entries = (sync.data.message[sessionID] ?? []).flatMap((msg) =>
+            (sync.data.part[msg.id] ?? []).flatMap((part) => {
+              if (part.type !== "text" || !part.synthetic || part.metadata?.memory !== "agentgraph") return []
+              const time = part.metadata.memoryTime ?? part.metadata.time
+              const date = typeof time === "number" ? new Date(time).toLocaleString() : "Unknown date"
+              return [
+                `${date}\n${part.text.replace(/^<agentgraph-memory>\n?/, "").replace(/\n?<\/agentgraph-memory>$/, "")}`,
+              ]
+            }),
+          )
+          DialogAlert.show(
+            dialog,
+            "Memory Info",
+            entries.length ? entries.join("\n\n---\n\n") : "No memory nodes recorded.",
+          )
         },
       },
       {
@@ -678,6 +741,7 @@ export function Prompt(props: PromptProps) {
           agent: local.agent.current().name,
           model: selectedModel,
           variant,
+          memory: memory() === "none" ? undefined : memory(),
           parts: [
             {
               id: PartID.ascending(),
@@ -1074,6 +1138,12 @@ export function Prompt(props: PromptProps) {
                         <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
                       </text>
                     </Show>
+                    <Show when={memory() !== "none"}>
+                      <text fg={theme.textMuted}>·</text>
+                      <text>
+                        <span style={{ fg: theme.info, bold: memory() === "remember" }}>{memory()}</span>
+                      </text>
+                    </Show>
                   </box>
                 </Show>
               </box>
@@ -1201,6 +1271,9 @@ export function Prompt(props: PromptProps) {
                       {keybind.print("variant_cycle")} <span style={{ fg: theme.textMuted }}>variants</span>
                     </text>
                   </Show>
+                  <text fg={theme.text}>
+                    {keybind.print("memory_cycle")} <span style={{ fg: theme.textMuted }}>memory</span>
+                  </text>
                   <text fg={theme.text}>
                     {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
                   </text>

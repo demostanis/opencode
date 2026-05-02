@@ -6,6 +6,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 
@@ -208,5 +209,112 @@ describe("session.prompt agent variant", () => {
       if (prev === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = prev
     }
+  })
+})
+
+describe("session.prompt memory", () => {
+  test("only triggers after useful activity", () => {
+    expect(SessionPrompt.shouldRemember({ events: 1, chars: 20 })).toBe(false)
+    expect(SessionPrompt.shouldRemember({ events: 2, chars: 20 })).toBe(true)
+    expect(SessionPrompt.shouldRemember({ events: 1, chars: 500 })).toBe(true)
+  })
+
+  test("counts user turns and completed tools after prior memory", () => {
+    const sessionID = SessionID.make("ses_test")
+    const first = MessageID.ascending()
+    const second = MessageID.ascending()
+    const third = MessageID.ascending()
+    const messages: MessageV2.WithParts[] = [
+      {
+        info: {
+          id: first,
+          role: "user",
+          sessionID,
+          time: { created: 1 },
+          agent: "build",
+          model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: first,
+            sessionID,
+            type: "text",
+            text: "old",
+          },
+          {
+            id: PartID.ascending(),
+            messageID: first,
+            sessionID,
+            type: "text",
+            text: "<agentgraph-memory>old node</agentgraph-memory>",
+            synthetic: true,
+            metadata: { memory: "agentgraph" },
+          },
+        ],
+      },
+      {
+        info: {
+          id: second,
+          role: "user",
+          sessionID,
+          time: { created: 2 },
+          agent: "build",
+          model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: second,
+            sessionID,
+            type: "text",
+            text: "new requirement",
+          },
+        ],
+      },
+      {
+        info: {
+          id: third,
+          role: "assistant",
+          parentID: second,
+          sessionID,
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ModelID.make("kimi-k2.5-free"),
+          providerID: ProviderID.make("opencode"),
+          time: { created: 3 },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: third,
+            sessionID,
+            type: "tool",
+            tool: "bash",
+            callID: "call_test",
+            state: {
+              status: "completed",
+              input: {},
+              output: "done",
+              title: "Bash",
+              metadata: {},
+              time: { start: 3, end: 4 },
+            },
+          },
+        ],
+      },
+    ]
+
+    expect(SessionPrompt.memoryActivity({ messages, last: first })).toEqual({ events: 2, chars: 15 })
+  })
+
+  test("builds prompt with prior nodes and skill path", () => {
+    const text = SessionPrompt.memoryPrompt({ messages: [], added: ["Node: project uses Bun"] })
+    expect(text).toContain("agentgraph")
+    expect(text).toContain("/data/programming/personal/agentgraph/.agents/skills")
+    expect(text).toContain("Node: project uses Bun")
   })
 })

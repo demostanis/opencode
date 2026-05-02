@@ -253,6 +253,7 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  memory?: "remember" | "readonly" | "full"
   deferred?: boolean
 }
 
@@ -3455,6 +3456,7 @@ export type SessionPromptData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    memory?: "remember" | "readonly" | "full"
     deferred?: boolean
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -3656,6 +3658,7 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    memory?: "remember" | "readonly" | "full"
     deferred?: boolean
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }

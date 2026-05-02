@@ -112,6 +112,7 @@ export namespace SessionPrompt {
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
+    memory: z.enum(["remember", "readonly", "full"]).optional(),
     deferred: z.boolean().optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
@@ -186,8 +187,127 @@ export namespace SessionPrompt {
       return message
     }
 
-    return loop({ sessionID: input.sessionID })
+    const reply = await loop({ sessionID: input.sessionID })
+    if (input.memory === "remember") await remember({ sessionID: input.sessionID })
+    return reply
   })
+
+  const MEMORY_THRESHOLD = {
+    events: 2,
+    chars: 500,
+  }
+
+  const MEMORY_SKILL = [
+    "/data/programming/personal/agentgraph/.agents/skills",
+    "/run/archiso/data/programming/personal/agentgraph/.agents/skills",
+  ]
+
+  /** @internal Exported for testing */
+  export function memoryActivity(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
+    const last = input.last
+    const msgs = last ? input.messages.filter((msg) => msg.info.id > last) : input.messages
+    const text = msgs.flatMap((msg) =>
+      msg.parts.flatMap((part) =>
+        msg.info.role === "user" && part.type === "text" && !part.synthetic && !part.ignored ? [part.text] : [],
+      ),
+    )
+    const tools = msgs.flatMap((msg) =>
+      msg.parts.flatMap((part) =>
+        part.type === "tool" && (part.state.status === "completed" || part.state.status === "error") ? [part] : [],
+      ),
+    )
+    return {
+      events: text.filter((item) => item.trim()).length + tools.length,
+      chars: text.join("\n").trim().length,
+    }
+  }
+
+  /** @internal Exported for testing */
+  export function shouldRemember(activity: { events: number; chars: number }) {
+    return activity.events >= MEMORY_THRESHOLD.events || activity.chars >= MEMORY_THRESHOLD.chars
+  }
+
+  /** @internal Exported for testing */
+  export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
+    return [
+      "Use the agentgraph memory skill to add durable graph memory nodes for this opencode session.",
+      `Load the skill from ${MEMORY_SKILL.join(" or ")}.`,
+      "Only add useful, stable project/user/task facts. Do not add transient tool chatter or duplicate nodes.",
+      "Return only one line per node in this exact format: Created <node> or Modified <node>.",
+      "If you added or changed nothing, return exactly: No nodes added.",
+      "",
+      "Previously added nodes in this conversation:",
+      input.added.length ? input.added.join("\n\n") : "None",
+      "",
+      "Conversation to review:",
+      input.messages
+        .map((msg) => {
+          const body = msg.parts
+            .flatMap((part) => {
+              if (part.type === "text" && !part.ignored) return [part.text]
+              if (part.type === "tool" && part.state.status === "completed")
+                return [`Tool ${part.tool}: ${part.state.output}`]
+              return []
+            })
+            .join("\n")
+            .trim()
+          if (!body) return ""
+          return `<${msg.info.role}>\n${body}\n</${msg.info.role}>`
+        })
+        .filter(Boolean)
+        .join("\n\n"),
+    ].join("\n")
+  }
+
+  async function remember(input: { sessionID: SessionID }) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
+    const notes = msgs.flatMap((msg) =>
+      msg.parts.flatMap((part) =>
+        part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph" ? [part.text] : [],
+      ),
+    )
+    const last = msgs.findLast((msg) =>
+      msg.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph"),
+    )?.info.id
+    if (!shouldRemember(memoryActivity({ messages: msgs, last }))) return
+
+    const user = msgs.findLast((msg) => msg.info.role === "user")?.info as MessageV2.User | undefined
+    if (!user) return
+
+    const agents = await Agent.list()
+    const agent = agents.find((item) => item.name === "general") ?? agents.find((item) => item.mode !== "primary")
+    if (!agent) return
+
+    const session = await Session.create({
+      parentID: input.sessionID,
+      title: "Remembering...",
+    })
+    const reply = await prompt({
+      sessionID: session.id,
+      agent: agent.name,
+      model: user.model,
+      parts: [{ type: "text", text: memoryPrompt({ messages: msgs, added: notes }) }],
+    }).catch((err) => {
+      log.error("memory failed", { err, sessionID: input.sessionID })
+      return undefined
+    })
+    const text = reply?.parts.findLast((part) => part.type === "text")?.text.trim()
+    if (!text || text === "No nodes added.") return
+
+    await Session.updatePart({
+      id: PartID.ascending(),
+      sessionID: input.sessionID,
+      messageID: user.id,
+      type: "text",
+      text: ["<agentgraph-memory>", text, "</agentgraph-memory>"].join("\n"),
+      synthetic: true,
+      metadata: {
+        memory: "agentgraph",
+        sessionID: session.id,
+        memoryTime: Date.now(),
+      },
+    })
+  }
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
     const parts: PromptInput["parts"] = [
@@ -1021,6 +1141,7 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
+      memory: input.memory,
       deferred: input.deferred || undefined,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))

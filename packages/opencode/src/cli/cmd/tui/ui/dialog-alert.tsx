@@ -1,7 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
-import { useKeyboard } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 
 export type DialogAlertProps = {
   title: string
@@ -12,6 +12,7 @@ export type DialogAlertProps = {
 export function DialogAlert(props: DialogAlertProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
+  const dimensions = useTerminalDimensions()
 
   useKeyboard((evt) => {
     if (evt.name === "return") {
@@ -29,9 +30,9 @@ export function DialogAlert(props: DialogAlertProps) {
           esc
         </text>
       </box>
-      <box paddingBottom={1}>
+      <scrollbox height={Math.max(1, Math.min(20, Math.floor(dimensions().height * 0.6)))}>
         <text fg={theme.textMuted}>{props.message}</text>
-      </box>
+      </scrollbox>
       <box flexDirection="row" justifyContent="flex-end" paddingBottom={1}>
         <box
           paddingLeft={3}

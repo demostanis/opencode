@@ -10,6 +10,7 @@ import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 import { useRoute } from "../../context/route"
 import { Editor } from "../../util/editor"
+import "opentui-spinner/solid"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -21,6 +22,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const messages = createMemo(() => sync.data.message[props.sessionID] ?? [])
   const pty = createMemo(() =>
     sync.data.pty.filter((p) => p.parentSessionID === props.sessionID && p.status === "running"),
+  )
+  const memory = createMemo(() =>
+    sync.data.session.filter(
+      (s) =>
+        s.parentID === props.sessionID &&
+        s.title === "Remembering..." &&
+        sync.data.session_status[s.id]?.type === "busy",
+    ),
   )
 
   const [expanded, setExpanded] = createStore({
@@ -173,6 +182,22 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   )}
                 </For>
               </Show>
+            </box>
+          </Show>
+
+          <Show when={memory().length > 0}>
+            <box>
+              <box
+                flexDirection="row"
+                gap={1}
+                onMouseUp={() => {
+                  const session = memory()[0]
+                  if (session) navigate({ type: "session", sessionID: session.id })
+                }}
+              >
+                <spinner color={theme.info} interval={80} />
+                <text fg={theme.text}>Remembering...</text>
+              </box>
             </box>
           </Show>
 
