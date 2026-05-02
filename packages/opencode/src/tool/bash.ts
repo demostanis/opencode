@@ -257,7 +257,7 @@ export const BashTool = Tool.define("bash", async () => {
       if (elapsed > 30) {
         const mins = Math.round(elapsed / 60)
         resultMetadata.push(
-          `Command took ${mins} minutes to complete. Consider using the pty tool for long-running interactive commands, or optimizing this step to reduce execution time.`,
+          `Command took ~${mins} minute(s) to complete. Consider using the pty tool and short sleep for long-running interactive commands, or optimizing this step to reduce execution time.`,
         )
       }
 
