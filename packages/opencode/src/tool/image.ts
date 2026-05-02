@@ -82,7 +82,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
     model: z.enum(["gpt-image-2", "gpt-image-1.5"]).optional().describe("Image generation model (defaults to gpt-image-2)"),
     size: z.string().optional().describe("Image size, such as auto, 1024x1024, 1536x1024, 1024x1536, or another supported WIDTHxHEIGHT value"),
     quality: z.enum(["auto", "low", "medium", "high"]).optional().describe("Image quality (defaults to auto)"),
-    background: z.enum(["auto", "opaque", "transparent"]).optional().describe("Background mode when supported by the selected image model (defaults to auto)"),
+    background: z.enum(["auto", "opaque", "transparent"]).optional().describe("Background mode when supported by the selected image model (defaults to auto). Transparent is most likely not what you want, check the imagegen skill to know how to generate transparent images"),
     output_format: OutputFormat.optional().describe("Output image format (defaults to png)"),
     output_compression: z.number().int().min(0).max(100).optional().describe("Compression level for jpeg/webp outputs, 0-100"),
     moderation: z.enum(["auto", "low"]).optional().describe("Image moderation strictness (defaults to auto)"),
