@@ -695,12 +695,7 @@ export function Prompt(props: PromptProps) {
       ...store.prompt,
       mode: currentMode,
     })
-    input.extmarks.clear()
-    setStore("prompt", {
-      input: "",
-      parts: [],
-    })
-    setStore("extmarkToPartIndex", new Map())
+    clear(false)
     props.onSubmit?.()
 
     // temporary hack to make sure the message is sent
@@ -711,7 +706,22 @@ export function Prompt(props: PromptProps) {
           sessionID,
         })
       }, 50)
+  }
+
+  function clear(save: boolean) {
+    if (save && store.prompt.input) {
+      history.append({
+        ...store.prompt,
+        mode: store.mode,
+      })
+    }
+    input.extmarks.clear()
     input.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
   }
   const exit = useExit()
 
@@ -911,13 +921,7 @@ export function Prompt(props: PromptProps) {
                   // If no image, let the default paste behavior continue
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
-                  input.clear()
-                  input.extmarks.clear()
-                  setStore("prompt", {
-                    input: "",
-                    parts: [],
-                  })
-                  setStore("extmarkToPartIndex", new Map())
+                  clear(true)
                   return
                 }
                 if (keybind.match("app_exit", e)) {
