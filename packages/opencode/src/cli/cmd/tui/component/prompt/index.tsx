@@ -257,10 +257,12 @@ export function Prompt(props: PromptProps) {
           const entries = (sync.data.message[sessionID] ?? []).flatMap((msg) =>
             (sync.data.part[msg.id] ?? []).flatMap((part) => {
               if (part.type !== "text" || !part.synthetic || part.metadata?.memory !== "agentgraph") return []
-              const time = part.metadata.memoryTime ?? part.metadata.time
-              const date = typeof time === "number" ? new Date(time).toLocaleString() : "Unknown date"
+              const match = part.text.match(/^<agentgraph-memory(?: date="([^"]+)")?>\n?/)
+              const time = part.metadata.memoryTime
+              const stamp = typeof time === "number" ? time : typeof time === "string" ? Number(time) : NaN
+              const date = match?.[1] ?? (Number.isFinite(stamp) ? new Date(stamp).toLocaleString() : "Unknown date")
               return [
-                `${date}\n${part.text.replace(/^<agentgraph-memory>\n?/, "").replace(/\n?<\/agentgraph-memory>$/, "")}`,
+                `${date}\n${part.text.replace(/^<agentgraph-memory(?: date="[^"]+")?>\n?/, "").replace(/\n?<\/agentgraph-memory>$/, "")}`,
               ]
             }),
           )

@@ -314,7 +314,9 @@ describe("session.prompt memory", () => {
   test("builds prompt with prior nodes and skill path", () => {
     const text = SessionPrompt.memoryPrompt({ messages: [], added: ["Node: project uses Bun"] })
     expect(text).toContain("agentgraph")
-    expect(text).toContain("/data/programming/personal/agentgraph/.agents/skills")
+    expect(text).toContain("/usr/lib/agentgraph/conversation-node-summarizer/SKILL.md")
+    expect(text).toContain("/usr/lib/agentgraph/conversation-node-summarizer")
+    expect(text).toContain(".local/share/agentgraph/nodes")
     expect(text).toContain("Node: project uses Bun")
   })
 })

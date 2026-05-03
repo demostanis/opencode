@@ -197,10 +197,9 @@ export namespace SessionPrompt {
     chars: 500,
   }
 
-  const MEMORY_SKILL = [
-    "/data/programming/personal/agentgraph/.agents/skills",
-    "/run/archiso/data/programming/personal/agentgraph/.agents/skills",
-  ]
+  const MEMORY_ROOT = "/usr/lib/agentgraph/conversation-node-summarizer"
+  const MEMORY_SKILL = `${MEMORY_ROOT}/SKILL.md`
+  const MEMORY_NODES = path.join(os.homedir(), ".local/share/agentgraph/nodes")
 
   /** @internal Exported for testing */
   export function memoryActivity(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
@@ -231,7 +230,9 @@ export namespace SessionPrompt {
   export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
     return [
       "Use the agentgraph memory skill to add durable graph memory nodes for this opencode session.",
-      `Load the skill from ${MEMORY_SKILL.join(" or ")}.`,
+      `Load the skill from ${MEMORY_SKILL}.`,
+      `Run any agentgraph commands from ${MEMORY_ROOT}.`,
+      `The node graph directory is ${MEMORY_NODES}. The scripts also default to this through AG_NODES_DIR.`,
       "Only add useful, stable project/user/task facts. Do not add transient tool chatter or duplicate nodes.",
       "Return only one line per node in this exact format: Created <node> or Modified <node>.",
       "If you added or changed nothing, return exactly: No nodes added.",
@@ -281,6 +282,18 @@ export namespace SessionPrompt {
     const session = await Session.create({
       parentID: input.sessionID,
       title: "Remembering...",
+      permission: [
+        {
+          permission: "external_directory",
+          pattern: `${MEMORY_ROOT}/*`,
+          action: "allow",
+        },
+        {
+          permission: "external_directory",
+          pattern: `${MEMORY_NODES}/*`,
+          action: "allow",
+        },
+      ],
     })
     const reply = await prompt({
       sessionID: session.id,
@@ -293,18 +306,19 @@ export namespace SessionPrompt {
     })
     const text = reply?.parts.findLast((part) => part.type === "text")?.text.trim()
     if (!text || text === "No nodes added.") return
+    const time = Date.now()
 
     await Session.updatePart({
       id: PartID.ascending(),
       sessionID: input.sessionID,
       messageID: user.id,
       type: "text",
-      text: ["<agentgraph-memory>", text, "</agentgraph-memory>"].join("\n"),
+      text: [`<agentgraph-memory date="${new Date(time).toLocaleString()}">`, text, "</agentgraph-memory>"].join("\n"),
       synthetic: true,
       metadata: {
         memory: "agentgraph",
         sessionID: session.id,
-        memoryTime: Date.now(),
+        memoryTime: time,
       },
     })
   }
