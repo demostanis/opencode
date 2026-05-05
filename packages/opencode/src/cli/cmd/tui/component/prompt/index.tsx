@@ -1277,9 +1277,6 @@ export function Prompt(props: PromptProps) {
                     {keybind.print("memory_cycle")} <span style={{ fg: theme.textMuted }}>memory</span>
                   </text>
                   <text fg={theme.text}>
-                    {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
-                  </text>
-                  <text fg={theme.text}>
                     {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
                   </text>
                 </Match>
