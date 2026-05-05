@@ -97,6 +97,8 @@ export function Prompt(props: PromptProps) {
     "permission_auto_accept",
     "edit",
   )
+  const perms = ["none", "edit", "yolo", "autoreject"] as const
+  const perm = (mode: (typeof perms)[number]) => (mode === "none" ? "prompt" : mode === "edit" ? "autoedit" : mode)
   const [memory, setMemory] = kv.signal<"none" | "remember" | "readonly" | "full">("memory_mode", "none")
   const modes = ["none", "remember", "readonly", "full"] as const
   const label = (mode: (typeof modes)[number]) => (mode === "full" ? "remember+write" : mode)
@@ -195,18 +197,17 @@ export function Prompt(props: PromptProps) {
   command.register(() => {
     return [
       {
-        title: "Auto-accept",
+        title: "Permission mode",
         value: "permission.auto_accept.list",
-        search: "auto-accept",
-        keybind: "permission_auto_accept_toggle",
+        search: "permission mode auto-accept prompt autoedit yolo autoreject",
         category: "Agent",
         onSelect: (dialog) => {
           dialog.replace(() => (
             <DialogSelect
-              title="Auto-accept"
+              title="Permission mode"
               current={autoaccept()}
               options={[
-                { title: "Disabled", value: "none", description: "Prompt for all permissions" },
+                { title: "Prompt", value: "none", description: "Prompt for all permissions" },
                 { title: "Autoedit", value: "edit", description: "Auto-accept all permissions in current directory" },
                 {
                   title: "Yolo",
@@ -221,6 +222,16 @@ export function Prompt(props: PromptProps) {
               }}
             />
           ))
+        },
+      },
+      {
+        title: "Permission mode cycle",
+        value: "permission.auto_accept.cycle",
+        keybind: "permission_auto_accept_toggle",
+        category: "Agent",
+        hidden: true,
+        onSelect: () => {
+          setAutoaccept(() => perms[(perms.indexOf(autoaccept()) + 1) % perms.length])
         },
       },
       {
@@ -1179,11 +1190,9 @@ export function Prompt(props: PromptProps) {
                   </box>
                 </Show>
               </box>
-              <Show when={autoaccept() !== "none"}>
-                <text>
-                  <span style={{ fg: theme.warning }}>{autoaccept() === "edit" ? "autoedit" : autoaccept()}</span>
-                </text>
-              </Show>
+              <text>
+                <span style={{ fg: theme.warning, bold: true }}>{perm(autoaccept())}</span>
+              </text>
             </box>
           </box>
         </box>
