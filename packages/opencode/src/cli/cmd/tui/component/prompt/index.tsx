@@ -1,5 +1,17 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  type JSX,
+  onMount,
+  createSignal,
+  onCleanup,
+  on,
+  Show,
+  Switch,
+  Match,
+  For,
+} from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -87,6 +99,7 @@ export function Prompt(props: PromptProps) {
   )
   const [memory, setMemory] = kv.signal<"none" | "remember" | "readonly" | "full">("memory_mode", "none")
   const modes = ["none", "remember", "readonly", "full"] as const
+  const label = (mode: (typeof modes)[number]) => (mode === "full" ? "remember+write" : mode)
 
   function promptModelWarning() {
     toast.show({
@@ -213,7 +226,7 @@ export function Prompt(props: PromptProps) {
       {
         title: "Memory",
         value: "memory.list",
-        search: "memory remember readonly full agentgraph",
+        search: "memory remember readonly full remember+write agentgraph",
         category: "Agent",
         onSelect: (dialog) => {
           dialog.replace(() => (
@@ -224,7 +237,7 @@ export function Prompt(props: PromptProps) {
                 { title: "None", value: "none", description: "Do not use agentgraph memory" },
                 { title: "Remember", value: "remember", description: "Add useful memory nodes after turns" },
                 { title: "Readonly", value: "readonly", description: "Show mode only; not implemented yet" },
-                { title: "Full", value: "full", description: "Show mode only; not implemented yet" },
+                { title: "Remember+write", value: "full", description: "Show mode only; not implemented yet" },
               ]}
               onSelect={(option) => {
                 setMemory(option.value)
@@ -881,6 +894,25 @@ export function Prompt(props: PromptProps) {
     return !!current
   })
 
+  const badges = createMemo(() => {
+    return [
+      showVariant()
+        ? {
+            text: local.model.variant.current(),
+            fg: theme.warning,
+            bold: true,
+          }
+        : undefined,
+      memory() !== "none"
+        ? {
+            text: label(memory()),
+            fg: theme.info,
+            bold: true,
+          }
+        : undefined,
+    ].filter((item) => item !== undefined)
+  })
+
   const placeholderText = createMemo(() => {
     if (props.sessionID) return undefined
     if (store.mode === "shell") {
@@ -1134,18 +1166,16 @@ export function Prompt(props: PromptProps) {
                       {local.model.parsed().model}
                     </text>
                     <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
-                    <Show when={showVariant()}>
-                      <text fg={theme.textMuted}>·</text>
-                      <text>
-                        <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
-                      </text>
-                    </Show>
-                    <Show when={memory() !== "none"}>
-                      <text fg={theme.textMuted}>·</text>
-                      <text>
-                        <span style={{ fg: theme.info, bold: memory() === "remember" }}>{memory()}</span>
-                      </text>
-                    </Show>
+                    <For each={badges()}>
+                      {(item) => (
+                        <>
+                          <text fg={theme.textMuted}>·</text>
+                          <text>
+                            <span style={{ fg: item.fg, bold: item.bold }}>{item.text}</span>
+                          </text>
+                        </>
+                      )}
+                    </For>
                   </box>
                 </Show>
               </box>
