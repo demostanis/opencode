@@ -49,6 +49,7 @@ import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
+import { AgentGraph } from "@/memory/agentgraph"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -188,7 +189,7 @@ export namespace SessionPrompt {
     }
 
     const reply = await loop({ sessionID: input.sessionID })
-    if (input.memory === "remember") await remember({ sessionID: input.sessionID })
+    if (shouldRememberMemory(input.memory)) await remember({ sessionID: input.sessionID })
     return reply
   })
 
@@ -197,9 +198,25 @@ export namespace SessionPrompt {
     chars: 500,
   }
 
-  const MEMORY_ROOT = "/usr/lib/agentgraph/conversation-node-summarizer"
-  const MEMORY_SKILL = `${MEMORY_ROOT}/SKILL.md`
-  const MEMORY_NODES = path.join(os.homedir(), ".local/share/agentgraph/nodes")
+  type MemoryMode = z.infer<typeof PromptInput>["memory"]
+
+  /** @internal Exported for testing */
+  export function shouldFetchMemory(memory: MemoryMode) {
+    return memory === "readonly" || memory === "full"
+  }
+
+  /** @internal Exported for testing */
+  export function shouldRememberMemory(memory: MemoryMode) {
+    return memory === "remember" || memory === "full"
+  }
+
+  function memorySystem() {
+    return [
+      "Agentgraph memory read mode is enabled.",
+      "Use the memory_fetch tool when durable memory from prior sessions may help with the current request.",
+      "Call memory_fetch with a concise natural-language description of the facts you want to recall.",
+    ].join("\n")
+  }
 
   /** @internal Exported for testing */
   export function memoryActivity(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
@@ -228,11 +245,12 @@ export namespace SessionPrompt {
 
   /** @internal Exported for testing */
   export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
+    const nodes = AgentGraph.nodes()
     return [
       "Use the agentgraph memory skill to add durable graph memory nodes for this opencode session.",
-      `Load the skill from ${MEMORY_SKILL}.`,
-      `Run any agentgraph commands from ${MEMORY_ROOT}.`,
-      `The node graph directory is ${MEMORY_NODES}. The scripts also default to this through AG_NODES_DIR.`,
+      `Load the skill from ${AgentGraph.skill}.`,
+      `Run any agentgraph commands from ${AgentGraph.root}.`,
+      `The node graph directory is ${nodes}. The scripts also default to this through AG_NODES_DIR.`,
       "Only add useful, stable project/user/task facts. Do not add transient tool chatter or duplicate nodes.",
       "Return only one line per node in this exact format: Created <node> or Modified <node>.",
       "If you added or changed nothing, return exactly: No nodes added.",
@@ -261,6 +279,7 @@ export namespace SessionPrompt {
   }
 
   async function remember(input: { sessionID: SessionID }) {
+    const nodes = AgentGraph.nodes()
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
     const notes = msgs.flatMap((msg) =>
       msg.parts.flatMap((part) =>
@@ -285,12 +304,12 @@ export namespace SessionPrompt {
       permission: [
         {
           permission: "external_directory",
-          pattern: `${MEMORY_ROOT}/*`,
+          pattern: AgentGraph.pattern(AgentGraph.root),
           action: "allow",
         },
         {
           permission: "external_directory",
-          pattern: `${MEMORY_NODES}/*`,
+          pattern: AgentGraph.pattern(nodes),
           action: "allow",
         },
       ],
@@ -761,6 +780,7 @@ export namespace SessionPrompt {
         bypassAgentCheck,
         messages: msgs,
       })
+      if (!shouldFetchMemory(lastUser.memory)) delete tools.memory_fetch
 
       // Inject StructuredOutput tool if JSON schema mode enabled
       if (lastUser.format?.type === "json_schema") {
@@ -806,6 +826,7 @@ export namespace SessionPrompt {
       const system = [
         ...(await SystemPrompt.environment(model)),
         ...(skills ? [skills] : []),
+        ...(shouldFetchMemory(lastUser.memory) ? [memorySystem()] : []),
         ...(await InstructionPrompt.system()),
       ]
       const format = lastUser.format ?? { type: "text" }

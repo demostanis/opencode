@@ -101,7 +101,7 @@ export function Prompt(props: PromptProps) {
   const perm = (mode: (typeof perms)[number]) => (mode === "none" ? "prompt" : mode === "edit" ? "autoedit" : mode)
   const [memory, setMemory] = kv.signal<"none" | "remember" | "readonly" | "full">("memory_mode", "none")
   const modes = ["none", "remember", "readonly", "full"] as const
-  const label = (mode: (typeof modes)[number]) => (mode === "full" ? "remember+write" : mode)
+  const label = (mode: (typeof modes)[number]) => (mode === "full" ? "remember+read" : mode)
 
   function promptModelWarning() {
     toast.show({
@@ -237,7 +237,7 @@ export function Prompt(props: PromptProps) {
       {
         title: "Memory",
         value: "memory.list",
-        search: "memory remember readonly full remember+write agentgraph",
+        search: "memory remember readonly full remember+read agentgraph",
         category: "Agent",
         onSelect: (dialog) => {
           dialog.replace(() => (
@@ -247,8 +247,12 @@ export function Prompt(props: PromptProps) {
               options={[
                 { title: "None", value: "none", description: "Do not use agentgraph memory" },
                 { title: "Remember", value: "remember", description: "Add useful memory nodes after turns" },
-                { title: "Readonly", value: "readonly", description: "Show mode only; not implemented yet" },
-                { title: "Remember+write", value: "full", description: "Show mode only; not implemented yet" },
+                { title: "Readonly", value: "readonly", description: "Read existing memory with memory_fetch" },
+                {
+                  title: "Remember+read",
+                  value: "full",
+                  description: "Read existing memory and add useful nodes after turns",
+                },
               ]}
               onSelect={(option) => {
                 setMemory(option.value)

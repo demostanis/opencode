@@ -1,0 +1,5 @@
+Fetch durable agentgraph memory by spawning a read-only subagent.
+
+Use this tool when the current task may benefit from facts remembered from prior opencode sessions. Provide a concise natural-language description of what you want to recall, such as "project database conventions" or "user preferences for frontend work".
+
+The subagent searches the agentgraph node directory from AG_NODES_DIR, or ~/.local/share/agentgraph/nodes when AG_NODES_DIR is unset. It returns only relevant memory facts and does not modify memory.

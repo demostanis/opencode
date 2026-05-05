@@ -219,6 +219,18 @@ describe("session.prompt memory", () => {
     expect(SessionPrompt.shouldRemember({ events: 1, chars: 500 })).toBe(true)
   })
 
+  test("maps memory modes to read and write behavior", () => {
+    expect(SessionPrompt.shouldFetchMemory(undefined)).toBe(false)
+    expect(SessionPrompt.shouldFetchMemory("remember")).toBe(false)
+    expect(SessionPrompt.shouldFetchMemory("readonly")).toBe(true)
+    expect(SessionPrompt.shouldFetchMemory("full")).toBe(true)
+
+    expect(SessionPrompt.shouldRememberMemory(undefined)).toBe(false)
+    expect(SessionPrompt.shouldRememberMemory("remember")).toBe(true)
+    expect(SessionPrompt.shouldRememberMemory("readonly")).toBe(false)
+    expect(SessionPrompt.shouldRememberMemory("full")).toBe(true)
+  })
+
   test("counts user turns and completed tools after prior memory", () => {
     const sessionID = SessionID.make("ses_test")
     const first = MessageID.ascending()
@@ -318,5 +330,17 @@ describe("session.prompt memory", () => {
     expect(text).toContain("/usr/lib/agentgraph/conversation-node-summarizer")
     expect(text).toContain(".local/share/agentgraph/nodes")
     expect(text).toContain("Node: project uses Bun")
+  })
+
+  test("uses AG_NODES_DIR in memory prompt", () => {
+    const prev = process.env.AG_NODES_DIR
+    process.env.AG_NODES_DIR = "/tmp/opencode-agentgraph-test"
+    try {
+      const text = SessionPrompt.memoryPrompt({ messages: [], added: [] })
+      expect(text).toContain("/tmp/opencode-agentgraph-test")
+    } finally {
+      if (prev === undefined) delete process.env.AG_NODES_DIR
+      else process.env.AG_NODES_DIR = prev
+    }
   })
 })
