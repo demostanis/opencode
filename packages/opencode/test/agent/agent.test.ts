@@ -23,6 +23,7 @@ test("returns default native agents when no config", async () => {
       expect(names).toContain("general")
       expect(names).toContain("lightweight")
       expect(names).toContain("explore")
+      expect(names).toContain("security")
       expect(names).toContain("compaction")
       expect(names).toContain("title")
       expect(names).toContain("summary")
@@ -101,6 +102,23 @@ test("general agent denies todo tools", async () => {
       expect(general?.hidden).toBeUndefined()
       expect(evalPerm(general, "todoread")).toBe("deny")
       expect(evalPerm(general, "todowrite")).toBe("deny")
+    },
+  })
+})
+
+test("security agent denies edits and todo tools", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("security")
+      expect(agent).toBeDefined()
+      expect(agent?.mode).toBe("subagent")
+      expect(agent?.hidden).toBeUndefined()
+      expect(evalPerm(agent, "bash")).toBe("allow")
+      expect(evalPerm(agent, "edit")).toBe("deny")
+      expect(evalPerm(agent, "todoread")).toBe("deny")
+      expect(evalPerm(agent, "todowrite")).toBe("deny")
     },
   })
 })
