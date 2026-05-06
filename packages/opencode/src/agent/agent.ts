@@ -51,6 +51,7 @@ export namespace Agent {
 
   const state = Instance.state(async () => {
     const cfg = await Config.get()
+    const model = cfg.lightweight_model ? Provider.parseModel(cfg.lightweight_model) : undefined
 
     const skillDirs = await Skill.dirs()
     const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
@@ -129,6 +130,22 @@ export namespace Agent {
         mode: "subagent",
         native: true,
       },
+      lightweight: {
+        name: "lightweight",
+        description: `Lightweight general-purpose agent for quick tasks that benefit from speed over deep reasoning. Use this for low-complexity parallel work.`,
+        permission: PermissionNext.merge(
+          defaults,
+          PermissionNext.fromConfig({
+            todoread: "deny",
+            todowrite: "deny",
+          }),
+          user,
+        ),
+        model,
+        options: {},
+        mode: "subagent",
+        native: true,
+      },
       explore: {
         name: "explore",
         permission: PermissionNext.merge(
@@ -152,6 +169,7 @@ export namespace Agent {
         ),
         description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
         prompt: PROMPT_EXPLORE,
+        model,
         options: {},
         mode: "subagent",
         native: true,
@@ -283,6 +301,10 @@ export namespace Agent {
     const primaryVisible = Object.values(agents).find((a) => a.mode !== "subagent" && a.hidden !== true)
     if (!primaryVisible) throw new Error("no primary visible agent found")
     return primaryVisible.name
+  }
+
+  export function lightweight(name: string) {
+    return name === "lightweight" || name === "explore"
   }
 
   export async function generate(input: { description: string; model?: { providerID: ProviderID; modelID: ModelID } }) {

@@ -1342,6 +1342,26 @@ export namespace Provider {
     return undefined
   }
 
+  export async function getLightweightModel(providerID: ProviderID) {
+    const cfg = await Config.get()
+
+    if (cfg.lightweight_model) {
+      const parsed = parseModel(cfg.lightweight_model)
+      return getModel(parsed.providerID, parsed.modelID)
+    }
+
+    return getSmallModel(providerID)
+  }
+
+  export async function getLightweightModelID(providerID: ProviderID) {
+    const model = await getLightweightModel(providerID)
+    if (!model) return undefined
+    return {
+      providerID: model.providerID,
+      modelID: model.id,
+    }
+  }
+
   const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
   export function sort<T extends { id: string }>(models: T[]) {
     return sortBy(

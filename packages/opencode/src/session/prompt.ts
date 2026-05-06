@@ -1156,7 +1156,13 @@ export namespace SessionPrompt {
   async function createUserMessage(input: PromptInput) {
     const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
 
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const model = await iife(async () => {
+      if (input.model) return input.model
+      if (agent.model) return agent.model
+      const last = await lastModel(input.sessionID)
+      if (!Agent.lightweight(agent.name)) return last
+      return (await Provider.getLightweightModelID(last.providerID)) ?? last
+    })
     const full =
       !input.variant && agent.variant
         ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
@@ -1980,14 +1986,12 @@ You should build your plan incrementally by writing to or editing this file. NOT
       if (command.model) {
         return Provider.parseModel(command.model)
       }
-      if (command.agent) {
-        const cmdAgent = await Agent.get(command.agent)
-        if (cmdAgent?.model) {
-          return cmdAgent.model
-        }
-      }
+      const agent = command.agent ? await Agent.get(command.agent) : undefined
+      if (agent?.model) return agent.model
       if (input.model) return Provider.parseModel(input.model)
-      return await lastModel(input.sessionID)
+      const last = await lastModel(input.sessionID)
+      if (!agent || !Agent.lightweight(agent.name)) return last
+      return (await Provider.getLightweightModelID(last.providerID)) ?? last
     })()
 
     try {

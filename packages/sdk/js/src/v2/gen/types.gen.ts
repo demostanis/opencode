@@ -1387,6 +1387,10 @@ export type Config = {
    */
   model?: string
   /**
+   * Lightweight model to use for faster, less intelligent agents and tasks in the format of provider/model
+   */
+  lightweight_model?: string
+  /**
    * Small model to use for tasks like title generation in the format of provider/model
    */
   small_model?: string
@@ -1413,6 +1417,7 @@ export type Config = {
     plan?: AgentConfig
     build?: AgentConfig
     general?: AgentConfig
+    lightweight?: AgentConfig
     explore?: AgentConfig
     title?: AgentConfig
     summary?: AgentConfig

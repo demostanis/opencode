@@ -967,6 +967,32 @@ test("getSmallModel respects config small_model override", async () => {
   })
 })
 
+test("getLightweightModel respects config lightweight_model override", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          lightweight_model: "anthropic/claude-sonnet-4-20250514",
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      Env.set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const model = await Provider.getLightweightModel(ProviderID.anthropic)
+      expect(model).toBeDefined()
+      expect(String(model?.providerID)).toBe("anthropic")
+      expect(String(model?.id)).toBe("claude-sonnet-4-20250514")
+    },
+  })
+})
+
 test("provider.sort prioritizes preferred models", () => {
   const models = [
     { id: "random-model", name: "Random" },

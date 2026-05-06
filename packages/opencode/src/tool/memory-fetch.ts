@@ -6,6 +6,7 @@ import { MessageV2 } from "../session/message-v2"
 import { Session } from "../session"
 import { SessionPrompt } from "../session/prompt"
 import { MessageID } from "../session/schema"
+import { Provider } from "../provider/provider"
 import { defer } from "../util/defer"
 import { Tool } from "./tool"
 import DESCRIPTION from "./memory-fetch.txt"
@@ -40,7 +41,11 @@ export function memoryPrompt(input: { description: string; dir: string }) {
 
 async function agent() {
   const agents = await Agent.list()
-  return agents.find((item) => item.name === "general") ?? agents.find((item) => item.mode !== "primary")
+  return (
+    agents.find((item) => item.name === "lightweight") ??
+    agents.find((item) => item.name === "general") ??
+    agents.find((item) => item.mode !== "primary")
+  )
 }
 
 export const MemoryFetchTool = Tool.define<typeof parameters, Metadata>("memory_fetch", {
@@ -75,10 +80,11 @@ export const MemoryFetchTool = Tool.define<typeof parameters, Metadata>("memory_
     const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
     if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
 
-    const model = runner.model ?? {
-      modelID: msg.info.modelID,
-      providerID: msg.info.providerID,
-    }
+    const model = runner.model ??
+      (await Provider.getLightweightModelID(msg.info.providerID)) ?? {
+        modelID: msg.info.modelID,
+        providerID: msg.info.providerID,
+      }
     const session = await Session.create({
       parentID: ctx.sessionID,
       title: "Fetching memory...",

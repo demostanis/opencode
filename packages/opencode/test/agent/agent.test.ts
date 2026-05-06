@@ -21,6 +21,7 @@ test("returns default native agents when no config", async () => {
       expect(names).toContain("build")
       expect(names).toContain("plan")
       expect(names).toContain("general")
+      expect(names).toContain("lightweight")
       expect(names).toContain("explore")
       expect(names).toContain("compaction")
       expect(names).toContain("title")
@@ -100,6 +101,27 @@ test("general agent denies todo tools", async () => {
       expect(general?.hidden).toBeUndefined()
       expect(evalPerm(general, "todoread")).toBe("deny")
       expect(evalPerm(general, "todowrite")).toBe("deny")
+    },
+  })
+})
+
+test("lightweight agent mirrors general with configured lightweight model", async () => {
+  await using tmp = await tmpdir({
+    config: {
+      lightweight_model: "anthropic/claude-haiku-4-5",
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("lightweight")
+      expect(agent).toBeDefined()
+      expect(agent?.mode).toBe("subagent")
+      expect(agent?.hidden).toBeUndefined()
+      expect(String(agent?.model?.providerID)).toBe("anthropic")
+      expect(String(agent?.model?.modelID)).toBe("claude-haiku-4-5")
+      expect(evalPerm(agent, "todoread")).toBe("deny")
+      expect(evalPerm(agent, "todowrite")).toBe("deny")
     },
   })
 })
