@@ -1462,7 +1462,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   })
 
   const duration = createMemo(() => {
-    if (!final()) return 0
     if (!props.message.time.completed) return 0
     const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
     if (!user || !user.time) return 0
