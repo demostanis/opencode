@@ -179,7 +179,7 @@ async function codex(params: { query: string; type?: "auto" | "fast" | "deep" },
     headers,
     signal,
     body: JSON.stringify({
-      model: "gpt-5.5-instant",
+      model: "gpt-5.4-mini",
       instructions: [
         "Use web_search to answer the user's query with current information.",
         "Return concise results with source URLs when available.",
