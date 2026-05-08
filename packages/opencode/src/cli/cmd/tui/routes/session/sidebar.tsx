@@ -143,6 +143,22 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
             )}
           </Show>
 
+          <Show when={memory().length > 0}>
+            <box>
+              <box
+                flexDirection="row"
+                gap={1}
+                onMouseUp={() => {
+                  const session = memory()[0]
+                  if (session) navigate({ type: "session", sessionID: session.id })
+                }}
+              >
+                <spinner color={theme.info} interval={80} />
+                <text fg={theme.text}>Remembering...</text>
+              </box>
+            </box>
+          </Show>
+
           <Show when={pty().length > 0}>
             <box>
               <box
@@ -182,22 +198,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   )}
                 </For>
               </Show>
-            </box>
-          </Show>
-
-          <Show when={memory().length > 0}>
-            <box>
-              <box
-                flexDirection="row"
-                gap={1}
-                onMouseUp={() => {
-                  const session = memory()[0]
-                  if (session) navigate({ type: "session", sessionID: session.id })
-                }}
-              >
-                <spinner color={theme.info} interval={80} />
-                <text fg={theme.text}>Remembering...</text>
-              </box>
             </box>
           </Show>
 
