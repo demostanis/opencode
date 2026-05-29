@@ -344,3 +344,15 @@ describe("session.prompt memory", () => {
     }
   })
 })
+
+describe("session.prompt resume", () => {
+  test("does not resume unfinished assistant when a newer user exists", () => {
+    const older = { id: MessageID.ascending() } as MessageV2.User
+    const assistant = { id: MessageID.ascending() } as MessageV2.Assistant
+    const newer = { id: MessageID.ascending() } as MessageV2.User
+
+    expect(SessionPrompt.shouldResume({ user: older, assistant })).toBe(true)
+    expect(SessionPrompt.shouldResume({ user: newer, assistant })).toBe(false)
+    expect(SessionPrompt.shouldResume({ assistant })).toBe(true)
+  })
+})

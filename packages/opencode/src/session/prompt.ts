@@ -254,6 +254,11 @@ export namespace SessionPrompt {
   }
 
   /** @internal Exported for testing */
+  export function shouldResume(input: { user?: MessageV2.User; assistant: MessageV2.Assistant }) {
+    return !input.user || input.user.id < input.assistant.id
+  }
+
+  /** @internal Exported for testing */
   export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
     const nodes = AgentGraph.nodes()
     return [
@@ -493,7 +498,7 @@ export namespace SessionPrompt {
       const parent = lastAssistant
         ? (msgs.find((msg) => msg.info.id === lastAssistant.parentID)?.info as MessageV2.User | undefined)
         : undefined
-      if (!done && parent && (!lastUser || lastUser.id < lastAssistant!.id)) {
+      if (!done && parent && shouldResume({ user: lastUser, assistant: lastAssistant! })) {
         lastUser = parent
       } else if (done && deferred.length) {
         lastUser = deferred[0]
