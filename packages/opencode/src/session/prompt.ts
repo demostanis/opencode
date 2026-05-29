@@ -493,7 +493,7 @@ export namespace SessionPrompt {
       const parent = lastAssistant
         ? (msgs.find((msg) => msg.info.id === lastAssistant.parentID)?.info as MessageV2.User | undefined)
         : undefined
-      if (!done && parent) {
+      if (!done && parent && (!lastUser || lastUser.id < lastAssistant!.id)) {
         lastUser = parent
       } else if (done && deferred.length) {
         lastUser = deferred[0]
