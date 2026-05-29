@@ -38,7 +38,11 @@ export namespace SessionCompaction {
 
     const count =
       input.tokens.total ||
-      input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
+      input.tokens.input +
+        input.tokens.output +
+        input.tokens.reasoning +
+        input.tokens.cache.read +
+        input.tokens.cache.write
 
     const reserved =
       config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
@@ -210,7 +214,7 @@ When constructing the summary, try to stick to this template:
       tools: {},
       system: [],
       messages: [
-        ...MessageV2.toModelMessages(msgs, model, { stripMedia: true }),
+        ...MessageV2.toModelMessages(msgs, model, { stripMedia: true, stripReasoning: true }),
         {
           role: "user",
           content: [

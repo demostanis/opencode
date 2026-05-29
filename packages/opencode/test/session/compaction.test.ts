@@ -77,6 +77,18 @@ describe("session.compaction.isOverflow", () => {
     })
   })
 
+  test("includes reasoning tokens in fallback token count", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = createModel({ context: 100_000, output: 32_000 })
+        const tokens = { input: 40_000, output: 5_000, reasoning: 25_000, cache: { read: 0, write: 0 } }
+        expect(await SessionCompaction.isOverflow({ tokens, model })).toBe(true)
+      },
+    })
+  })
+
   test("respects input limit for input caps", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({

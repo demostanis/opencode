@@ -561,7 +561,7 @@ export namespace MessageV2 {
   export function toModelMessages(
     input: WithParts[],
     model: Provider.Model,
-    options?: { stripMedia?: boolean },
+    options?: { stripMedia?: boolean; stripReasoning?: boolean },
   ): ModelMessage[] {
     const msgs = compacted(input)
     const result: UIMessage[] = []
@@ -750,7 +750,7 @@ export namespace MessageV2 {
                 ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
               })
           }
-          if (part.type === "reasoning") {
+          if (part.type === "reasoning" && !options?.stripReasoning) {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,

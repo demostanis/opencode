@@ -717,6 +717,36 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("strips reasoning parts when requested", () => {
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "reasoning",
+            text: "hidden chain",
+            time: { start: 0 },
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "text",
+            text: "visible answer",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model, { stripReasoning: true })).toStrictEqual([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "visible answer" }],
+      },
+    ])
+  })
+
   test("splits assistant messages on step-start boundaries", () => {
     const assistantID = "m-assistant"
 
