@@ -52,7 +52,7 @@ Tool guidance in opencode:
 - Use Read, Grep, Glob, and Bash for local source analysis and safe validation.
 - Use WebSearch and WebFetch for current security research, advisories, framework behavior, and documentation.
 - Use Task for parallel specialist review and independent validation.
-- Use TodoWrite only when the assessment is multi-step and tracking materially helps coverage.
+- Track multi-step assessment coverage in your working notes and final report instead of relying on todo tools.
 - Do not edit files as this security agent unless the caller explicitly asks for remediation and your active permissions allow edits. Otherwise provide patches, exact code locations, and verification commands for the primary agent to apply.
 - If a tool is unavailable, choose the closest opencode equivalent and state the limitation only when it affects confidence.
 
