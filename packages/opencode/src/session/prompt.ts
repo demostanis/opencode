@@ -538,7 +538,16 @@ export namespace SessionPrompt {
       // TODO: centralize "invoke tool" logic
       if (task?.type === "subtask") {
         const taskTool = await TaskTool.init()
-        const taskModel = task.model ? await Provider.getModel(task.model.providerID, task.model.modelID) : model
+        const taskAgent = await Agent.get(task.agent)
+        const id = await resolveSubtaskModel({
+          task,
+          agent: taskAgent,
+          fallback: {
+            providerID: model.providerID,
+            modelID: model.id,
+          },
+        })
+        const taskModel = await Provider.getModel(id.providerID, id.modelID)
         const assistantMessage = (await Session.updateMessage({
           id: MessageID.ascending(),
           role: "assistant",
@@ -600,14 +609,13 @@ export namespace SessionPrompt {
           { args: taskArgs },
         )
         let executionError: Error | undefined
-        const taskAgent = await Agent.get(task.agent)
         const taskCtx: Tool.Context = {
           agent: task.agent,
           messageID: assistantMessage.id,
           sessionID: sessionID,
           abort,
           callID: part.callID,
-          extra: { bypassAgentCheck: true },
+          extra: { bypassAgentCheck: true, subagentModel: id },
           messages: visible,
           async metadata(input) {
             part = (await Session.updatePart({
@@ -623,7 +631,7 @@ export namespace SessionPrompt {
             await PermissionNext.ask({
               ...req,
               sessionID: sessionID,
-              ruleset: PermissionNext.merge(taskAgent.permission, session.permission ?? []),
+              ruleset: PermissionNext.merge(taskAgent?.permission ?? [], session.permission ?? []),
             })
           },
         }
@@ -948,6 +956,25 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
+  export async function resolveSubtaskModel(input: {
+    task: Pick<MessageV2.SubtaskPart, "agent" | "model">
+    agent?: Agent.Info
+    fallback: {
+      providerID: ProviderID
+      modelID: ModelID
+    }
+  }) {
+    const agent = input.agent ?? (await Agent.get(input.task.agent))
+    return (
+      input.task.model ??
+      (agent ? Agent.model({ agent, subagent: true }) : undefined) ??
+      (agent && Agent.lightweight(agent.name)
+        ? await Provider.getLightweightModelID(input.fallback.providerID)
+        : undefined) ??
+      input.fallback
+    )
+  }
+
   /** @internal Exported for testing */
   export async function resolveTools(input: {
     agent: Agent.Info
@@ -1174,7 +1201,8 @@ export namespace SessionPrompt {
 
     const model = await iife(async () => {
       if (input.model) return input.model
-      if (agent.model) return agent.model
+      const configured = Agent.model({ agent })
+      if (configured) return configured
       const last = await lastModel(input.sessionID)
       if (!Agent.lightweight(agent.name)) return last
       return (await Provider.getLightweightModelID(last.providerID)) ?? last
@@ -1702,7 +1730,7 @@ You should build your plan incrementally by writing to or editing this file. NOT
       await SessionRevert.cleanup(session)
     }
     const agent = await Agent.get(input.agent)
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const model = input.model ?? Agent.model({ agent }) ?? (await lastModel(input.sessionID))
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
       sessionID: input.sessionID,
@@ -1998,15 +2026,28 @@ You should build your plan incrementally by writing to or editing this file. NOT
     }
     template = template.trim()
 
+    const agent = await Agent.get(agentName)
+    if (!agent) {
+      const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
+      const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
+      const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
+      Bus.publish(Session.Event.Error, {
+        sessionID: input.sessionID,
+        error: error.toObject(),
+      })
+      throw error
+    }
+
+    const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
     const taskModel = await (async () => {
       if (command.model) {
         return Provider.parseModel(command.model)
       }
-      const agent = command.agent ? await Agent.get(command.agent) : undefined
-      if (agent?.model) return agent.model
+      const configured = command.agent || isSubtask ? Agent.model({ agent, subagent: isSubtask }) : undefined
+      if (configured) return configured
       if (input.model) return Provider.parseModel(input.model)
       const last = await lastModel(input.sessionID)
-      if (!agent || !Agent.lightweight(agent.name)) return last
+      if (!Agent.lightweight(agent.name)) return last
       return (await Provider.getLightweightModelID(last.providerID)) ?? last
     })()
 
@@ -2023,20 +2064,7 @@ You should build your plan incrementally by writing to or editing this file. NOT
       }
       throw e
     }
-    const agent = await Agent.get(agentName)
-    if (!agent) {
-      const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
-      const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-      const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-      Bus.publish(Session.Event.Error, {
-        sessionID: input.sessionID,
-        error: error.toObject(),
-      })
-      throw error
-    }
-
     const templateParts = await resolvePromptParts(template)
-    const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
     const parts = isSubtask
       ? [
           {

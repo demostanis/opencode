@@ -23,6 +23,11 @@ import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 
 export namespace Agent {
+  const Model = z.object({
+    modelID: ModelID.zod,
+    providerID: ProviderID.zod,
+  })
+
   export const Info = z
     .object({
       name: z.string(),
@@ -34,12 +39,8 @@ export namespace Agent {
       temperature: z.number().optional(),
       color: z.string().optional(),
       permission: PermissionNext.Ruleset,
-      model: z
-        .object({
-          modelID: ModelID.zod,
-          providerID: ProviderID.zod,
-        })
-        .optional(),
+      model: Model.optional(),
+      subagentModel: Model.optional(),
       variant: z.string().optional(),
       prompt: z.string().optional(),
       options: z.record(z.string(), z.any()),
@@ -53,6 +54,7 @@ export namespace Agent {
   const state = Instance.state(async () => {
     const cfg = await Config.get()
     const lightweight = cfg.lightweight_model ? Provider.parseModel(cfg.lightweight_model) : undefined
+    const parse = (model: string) => (model === "lightweight_model" ? lightweight : Provider.parseModel(model))
 
     const skillDirs = await Skill.dirs()
     const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
@@ -256,7 +258,8 @@ export namespace Agent {
           options: {},
           native: false,
         }
-      if (value.model) item.model = value.model === "lightweight_model" ? lightweight : Provider.parseModel(value.model)
+      if (value.model) item.model = parse(value.model)
+      if (value.subagent_model) item.subagentModel = parse(value.subagent_model)
       item.variant = value.variant ?? item.variant
       item.prompt = value.prompt ?? item.prompt
       item.description = value.description ?? item.description
@@ -325,6 +328,11 @@ export namespace Agent {
 
   export function lightweight(name: string) {
     return name === "lightweight" || name === "explore"
+  }
+
+  export function model(input: { agent: Info; subagent?: boolean }) {
+    if (input.subagent && input.agent.subagentModel) return input.agent.subagentModel
+    return input.agent.model
   }
 
   export async function generate(input: { description: string; model?: { providerID: ProviderID; modelID: ModelID } }) {

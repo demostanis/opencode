@@ -212,6 +212,40 @@ test("custom agent can use configured lightweight model", async () => {
   })
 })
 
+test("custom agent can configure subagent-only model", async () => {
+  await using tmp = await tmpdir({
+    config: {
+      lightweight_model: "anthropic/claude-haiku-4-5",
+      agent: {
+        quick: {
+          model: "openai/gpt-4",
+          subagent_model: "lightweight_model",
+          description: "Quick custom agent",
+        },
+        helper: {
+          subagent_model: "anthropic/claude-3-haiku",
+          description: "Helper agent",
+        },
+      },
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const quick = await Agent.get("quick")
+      const helper = await Agent.get("helper")
+
+      expect(String(Agent.model({ agent: quick! })?.providerID)).toBe("openai")
+      expect(String(Agent.model({ agent: quick! })?.modelID)).toBe("gpt-4")
+      expect(String(Agent.model({ agent: quick!, subagent: true })?.providerID)).toBe("anthropic")
+      expect(String(Agent.model({ agent: quick!, subagent: true })?.modelID)).toBe("claude-haiku-4-5")
+      expect(Agent.model({ agent: helper! })).toBeUndefined()
+      expect(String(Agent.model({ agent: helper!, subagent: true })?.providerID)).toBe("anthropic")
+      expect(String(Agent.model({ agent: helper!, subagent: true })?.modelID)).toBe("claude-3-haiku")
+    },
+  })
+})
+
 test("custom agent config overrides native agent properties", async () => {
   await using tmp = await tmpdir({
     config: {

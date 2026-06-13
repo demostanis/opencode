@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
-import { TaskTool } from "../../src/tool/task"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import { resolveModel, TaskTool } from "../../src/tool/task"
 import { tmpdir } from "../fixture/fixture"
 
 describe("tool.task", () => {
@@ -48,6 +49,42 @@ describe("tool.task", () => {
         expect(security).toBe(-1)
         expect(shadow).toBe(-1)
         expect(zebra).toBeGreaterThan(general)
+      },
+    })
+  })
+
+  test("uses subagent model instead of parent model from tool context", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        agent: {
+          browser: {
+            model: "openai/gpt-5.5",
+            subagent_model: "openai/gpt-5.4-mini",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const agent = await Agent.get("browser")
+        const model = await resolveModel({
+          agent: agent!,
+          fallback: {
+            providerID: ProviderID.make("opencode"),
+            modelID: ModelID.make("big-pickle"),
+          },
+          extra: {
+            model: {
+              providerID: ProviderID.make("openai"),
+              id: ModelID.make("gpt-5.5"),
+            },
+          },
+        })
+
+        expect(String(model.providerID)).toBe("openai")
+        expect(String(model.modelID)).toBe("gpt-5.4-mini")
       },
     })
   })
