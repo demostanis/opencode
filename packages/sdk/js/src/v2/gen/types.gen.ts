@@ -1088,7 +1088,14 @@ export type PermissionConfig =
   | PermissionActionConfig
 
 export type AgentConfig = {
+  /**
+   * Model to use in the format of provider/model, or 'lightweight_model' to use the configured lightweight_model
+   */
   model?: string
+  /**
+   * Model to use when this agent is invoked as a subagent, or 'lightweight_model' to use the configured lightweight_model
+   */
+  subagent_model?: string
   /**
    * Default model variant for this agent (applies only when using the agent's configured model).
    */
@@ -1934,6 +1941,10 @@ export type Agent = {
   color?: string
   permission: PermissionRuleset
   model?: {
+    modelID: string
+    providerID: string
+  }
+  subagentModel?: {
     modelID: string
     providerID: string
   }

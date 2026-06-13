@@ -782,6 +782,9 @@ export namespace Config {
       model: ModelId.optional().describe(
         "Model to use in the format of provider/model, or 'lightweight_model' to use the configured lightweight_model",
       ),
+      subagent_model: ModelId.optional().describe(
+        "Model to use when this agent is invoked as a subagent, or 'lightweight_model' to use the configured lightweight_model",
+      ),
       variant: z
         .string()
         .optional()
@@ -819,6 +822,7 @@ export namespace Config {
       const knownKeys = new Set([
         "name",
         "model",
+        "subagent_model",
         "variant",
         "prompt",
         "description",

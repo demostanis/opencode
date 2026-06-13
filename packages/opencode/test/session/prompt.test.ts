@@ -212,6 +212,74 @@ describe("session.prompt agent variant", () => {
   })
 })
 
+describe("session.prompt agent model", () => {
+  test("does not use subagent model for primary prompt", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        model: "openai/gpt-5.2",
+        agent: {
+          build: {
+            subagent_model: "anthropic/claude-haiku-4-5",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+
+        const msg = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+        if (msg.info.role !== "user") throw new Error("expected user message")
+
+        expect(msg.info.model).toEqual({ providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") })
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("uses subagent model for queued subtasks", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        agent: {
+          browser: {
+            model: "openai/gpt-5.5",
+            subagent_model: "openai/gpt-5.4-mini",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await SessionPrompt.resolveSubtaskModel({
+          task: {
+            agent: "browser",
+          },
+          fallback: {
+            providerID: ProviderID.make("openai"),
+            modelID: ModelID.make("gpt-5.5"),
+          },
+        })
+
+        expect(model).toEqual({
+          providerID: ProviderID.make("openai"),
+          modelID: ModelID.make("gpt-5.4-mini"),
+        })
+      },
+    })
+  })
+})
+
 describe("session.prompt memory", () => {
   test("only triggers after useful activity", () => {
     expect(SessionPrompt.shouldRemember({ events: 1, chars: 20 })).toBe(false)

@@ -26,6 +26,31 @@ const parameters = z.object({
   command: z.string().describe("The command that triggered this task").optional(),
 })
 
+function id(model: Agent.Info["model"] | Provider.Model | undefined) {
+  if (!model) return
+  const mid = "modelID" in model && model.modelID ? model.modelID : "id" in model ? model.id : undefined
+  if (!mid) return
+  return {
+    modelID: mid,
+    providerID: model.providerID,
+  }
+}
+
+export async function resolveModel(input: {
+  agent: Agent.Info
+  fallback: NonNullable<Agent.Info["model"]>
+  extra?: Tool.Context["extra"]
+}) {
+  return SessionPrompt.resolveSubtaskModel({
+    task: {
+      agent: input.agent.name,
+      model: id(input.extra?.subagentModel as Agent.Info["model"] | Provider.Model | undefined),
+    },
+    agent: input.agent,
+    fallback: input.fallback,
+  })
+}
+
 export const TaskTool = Tool.define("task", async (ctx) => {
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary" && !a.hidden))
 
@@ -106,11 +131,14 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
 
-      const model = agent.model ??
-        (Agent.lightweight(agent.name) ? await Provider.getLightweightModelID(msg.info.providerID) : undefined) ?? {
+      const model = await resolveModel({
+        agent,
+        extra: ctx.extra,
+        fallback: {
           modelID: msg.info.modelID,
           providerID: msg.info.providerID,
-        }
+        },
+      })
 
       ctx.metadata({
         title: params.description,
