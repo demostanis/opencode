@@ -6,6 +6,7 @@ import { Instance } from "../project/instance"
 import { Identifier } from "../id/id"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
+import PROMPT_SECURITY from "./template/security.txt"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
 
@@ -55,6 +56,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    SECURITY: "security",
   } as const
 
   const state = Instance.state(async () => {
@@ -79,6 +81,17 @@ export namespace Command {
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
+      },
+      [Default.SECURITY]: {
+        name: Default.SECURITY,
+        description: "run a security assessment",
+        agent: "security",
+        source: "command",
+        get template() {
+          return PROMPT_SECURITY
+        },
+        subtask: true,
+        hints: hints(PROMPT_SECURITY),
       },
     }
 

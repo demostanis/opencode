@@ -179,12 +179,19 @@ export namespace Agent {
         name: "security",
         permission: PermissionNext.merge(
           defaults,
+          PermissionNext.fromConfig({
+            edit: "deny",
+            todoread: "deny",
+            todowrite: "deny",
+            task: "allow",
+          }),
           user,
         ),
         description: `Security assessment agent for authorized vulnerability research, penetration testing, and CTF-style targets. Use this agent when you need scope-aware reconnaissance, proof-oriented validation of Critical or High vulnerabilities, real exploit evidence in authorized environments, and remediation guidance. For broader assessments, it should coordinate multiple independent subagents with different review angles to reduce false positives while staying within explicit authorization and safety boundaries.`,
         prompt: PROMPT_SECURITY,
         options: {},
-        mode: "primary",
+        mode: "subagent",
+        hidden: true,
         native: true,
       },
       compaction: {

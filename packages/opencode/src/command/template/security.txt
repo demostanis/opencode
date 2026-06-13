@@ -1,0 +1,3 @@
+Run an authorized security assessment for the following scope or request. If no scope or request is provided, assess the current directory. Stay strictly in scope and report only validated findings.
+
+$ARGUMENTS

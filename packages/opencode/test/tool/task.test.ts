@@ -17,6 +17,11 @@ describe("tool.task", () => {
             description: "Alpha agent",
             mode: "subagent",
           },
+          shadow: {
+            description: "Hidden agent",
+            hidden: true,
+            mode: "subagent",
+          },
         },
       },
     })
@@ -33,11 +38,15 @@ describe("tool.task", () => {
         const alpha = first.description.indexOf("- alpha: Alpha agent")
         const explore = first.description.indexOf("- explore:")
         const general = first.description.indexOf("- general:")
+        const security = first.description.indexOf("- security:")
+        const shadow = first.description.indexOf("- shadow: Hidden agent")
         const zebra = first.description.indexOf("- zebra: Zebra agent")
 
         expect(alpha).toBeGreaterThan(-1)
         expect(explore).toBeGreaterThan(alpha)
         expect(general).toBeGreaterThan(explore)
+        expect(security).toBe(-1)
+        expect(shadow).toBe(-1)
         expect(zebra).toBeGreaterThan(general)
       },
     })

@@ -106,7 +106,7 @@ test("general agent denies todo tools", async () => {
   })
 })
 
-test("security agent denies edits and todo tools", async () => {
+test("security agent is hidden and denies edits and todo tools", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -114,9 +114,10 @@ test("security agent denies edits and todo tools", async () => {
       const agent = await Agent.get("security")
       expect(agent).toBeDefined()
       expect(agent?.mode).toBe("subagent")
-      expect(agent?.hidden).toBeUndefined()
+      expect(agent?.hidden).toBe(true)
       expect(evalPerm(agent, "bash")).toBe("allow")
       expect(evalPerm(agent, "edit")).toBe("deny")
+      expect(evalPerm(agent, "task")).toBe("allow")
       expect(evalPerm(agent, "todoread")).toBe("deny")
       expect(evalPerm(agent, "todowrite")).toBe("deny")
     },
