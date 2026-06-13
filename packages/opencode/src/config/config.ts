@@ -779,7 +779,9 @@ export namespace Config {
 
   export const Agent = z
     .object({
-      model: ModelId.optional(),
+      model: ModelId.optional().describe(
+        "Model to use in the format of provider/model, or 'lightweight_model' to use the configured lightweight_model",
+      ),
       variant: z
         .string()
         .optional()

@@ -188,6 +188,29 @@ test("custom agent from config creates new agent", async () => {
   })
 })
 
+test("custom agent can use configured lightweight model", async () => {
+  await using tmp = await tmpdir({
+    config: {
+      lightweight_model: "anthropic/claude-haiku-4-5",
+      agent: {
+        quick: {
+          model: "lightweight_model",
+          description: "Quick custom agent",
+        },
+      },
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("quick")
+      expect(agent).toBeDefined()
+      expect(String(agent?.model?.providerID)).toBe("anthropic")
+      expect(String(agent?.model?.modelID)).toBe("claude-haiku-4-5")
+    },
+  })
+})
+
 test("custom agent config overrides native agent properties", async () => {
   await using tmp = await tmpdir({
     config: {
