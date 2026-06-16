@@ -423,4 +423,11 @@ describe("session.prompt resume", () => {
     expect(SessionPrompt.shouldResume({ user: newer, assistant })).toBe(false)
     expect(SessionPrompt.shouldResume({ assistant })).toBe(true)
   })
+
+  test("resumes unfinished assistant when newer user is deferred", () => {
+    const assistant = { id: MessageID.ascending() } as MessageV2.Assistant
+    const user = { id: MessageID.ascending(), deferred: true } as MessageV2.User
+
+    expect(SessionPrompt.shouldResume({ user, assistant })).toBe(true)
+  })
 })

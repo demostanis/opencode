@@ -255,7 +255,7 @@ export namespace SessionPrompt {
 
   /** @internal Exported for testing */
   export function shouldResume(input: { user?: MessageV2.User; assistant: MessageV2.Assistant }) {
-    return !input.user || input.user.id < input.assistant.id
+    return !input.user || input.user.deferred || input.user.id < input.assistant.id
   }
 
   /** @internal Exported for testing */
@@ -1609,7 +1609,7 @@ export namespace SessionPrompt {
         continue
       }
       if (msg.info.id !== active) continue
-      const last = main.findLastIndex((item) => item.info.role === "assistant" && item.info.time.completed)
+      const last = main.findLastIndex((item) => item.info.role === "assistant")
       main.splice(last + 1, 0, msg)
     }
     return main

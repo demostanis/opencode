@@ -157,7 +157,7 @@ export function Session() {
         main.splice(reply, 0, msg)
         continue
       }
-      const last = main.findLastIndex((item) => item.role === "assistant" && item.time.completed)
+      const last = main.findLastIndex((item) => item.role === "assistant")
       main.splice(last + 1, 0, msg)
     }
     return main
