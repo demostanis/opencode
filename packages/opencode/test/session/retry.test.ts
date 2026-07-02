@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
+import { SSE_READ_TIMEOUT } from "../../src/provider/timeout"
 
 const providerID = ProviderID.make("test")
 
@@ -174,6 +175,17 @@ describe("session.message-v2.fromError", () => {
     const retryable = SessionRetry.retryable(error)
     expect(retryable).toBeDefined()
     expect(retryable).toBe("Connection reset by server")
+  })
+
+  test("SSE read timeout is retryable", () => {
+    const error = new Error("SSE stream timed out after 60000ms without receiving a chunk")
+    error.name = SSE_READ_TIMEOUT
+
+    const result = MessageV2.fromError(error, { providerID }) as MessageV2.APIError
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect(result.data.isRetryable).toBe(true)
+    expect(SessionRetry.retryable(result)).toBe(error.message)
   })
 
   test("marks OpenAI 404 status codes as retryable", () => {

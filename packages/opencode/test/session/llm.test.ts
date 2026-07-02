@@ -12,7 +12,9 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 import type { Agent } from "../../src/agent/agent"
-import type { MessageV2 } from "../../src/session/message-v2"
+import { MessageV2 } from "../../src/session/message-v2"
+import { Session } from "../../src/session"
+import { SessionProcessor } from "../../src/session/processor"
 import { SessionID, MessageID } from "../../src/session/schema"
 
 describe("session.llm.hasToolCalls", () => {
@@ -223,7 +225,244 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
   })
 }
 
+function createHangingResponse(chunks: unknown[]) {
+  const payload = chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`).join("\n\n") + "\n\n"
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(payload))
+      },
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    },
+  )
+}
+
 describe("session.llm.stream", () => {
+  test("retries OpenAI streams when provider SSE chunks stop", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const source = await loadFixture("openai", "gpt-5.2")
+    const model = source.model
+    const retry = waitRequest(
+      "/responses",
+      createHangingResponse([
+        {
+          type: "response.created",
+          response: {
+            id: "resp-hang",
+            created_at: Math.floor(Date.now() / 1000),
+            model: model.id,
+            service_tier: null,
+          },
+        },
+      ]),
+    )
+    const done = waitRequest(
+      "/responses",
+      createEventResponse(
+        [
+          {
+            type: "response.created",
+            response: {
+              id: "resp-retry",
+              created_at: Math.floor(Date.now() / 1000),
+              model: model.id,
+              service_tier: null,
+            },
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 0,
+            item: {
+              id: "item-retry",
+              type: "message",
+              status: "in_progress",
+              role: "assistant",
+              content: [],
+            },
+          },
+          {
+            type: "response.content_part.added",
+            item_id: "item-retry",
+            output_index: 0,
+            content_index: 0,
+            part: {
+              type: "output_text",
+              text: "",
+              annotations: [],
+            },
+          },
+          {
+            type: "response.output_text.delta",
+            item_id: "item-retry",
+            output_index: 0,
+            content_index: 0,
+            delta: "Recovered",
+            logprobs: null,
+          },
+          {
+            type: "response.output_text.done",
+            item_id: "item-retry",
+            output_index: 0,
+            content_index: 0,
+            text: "Recovered",
+            logprobs: null,
+          },
+          {
+            type: "response.content_part.done",
+            item_id: "item-retry",
+            output_index: 0,
+            content_index: 0,
+            part: {
+              type: "output_text",
+              text: "Recovered",
+              annotations: [],
+            },
+          },
+          {
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              id: "item-retry",
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: "Recovered",
+                  annotations: [],
+                },
+              ],
+            },
+          },
+          {
+            type: "response.completed",
+            response: {
+              incomplete_details: null,
+              usage: {
+                input_tokens: 1,
+                input_tokens_details: null,
+                output_tokens: 1,
+                output_tokens_details: null,
+              },
+              service_tier: null,
+            },
+          },
+        ],
+        true,
+      ),
+    )
+
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                name: "OpenAI",
+                env: ["OPENAI_API_KEY"],
+                npm: "@ai-sdk/openai",
+                api: "https://api.openai.com/v1",
+                models: {
+                  [model.id]: model,
+                },
+                options: {
+                  apiKey: "test-openai-key",
+                  baseURL: `${server.url.origin}/v1`,
+                  chunkTimeout: 10,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.openai, ModelID.make(model.id))
+        const session = await Session.create({})
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.ascending(),
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: resolved.id },
+        } satisfies MessageV2.User
+        const processor = SessionProcessor.create({
+          assistantMessage: (await Session.updateMessage({
+            id: MessageID.ascending(),
+            parentID: user.id,
+            role: "assistant",
+            mode: agent.name,
+            agent: agent.name,
+            path: {
+              cwd: tmp.path,
+              root: tmp.path,
+            },
+            cost: 0,
+            tokens: {
+              input: 0,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+            modelID: resolved.id,
+            providerID: resolved.providerID,
+            time: {
+              created: Date.now(),
+            },
+            sessionID: session.id,
+          })) as MessageV2.Assistant,
+          sessionID: session.id,
+          model: resolved,
+          abort: new AbortController().signal,
+        })
+
+        const result = await processor.process({
+          user,
+          sessionID: session.id,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+
+        await retry
+        await done
+        const parts = await MessageV2.parts(processor.message.id)
+        const text = parts.find((part) => part.type === "text")
+
+        expect(result).toBe("continue")
+        expect(text?.text).toBe("Recovered")
+        expect(processor.message.error).toBeUndefined()
+
+        await Session.remove(session.id)
+      },
+    })
+  }, 15_000)
+
   test("sends temperature, tokens, and reasoning options for openai-compatible models", async () => {
     const server = state.server
     if (!server) {

@@ -49,9 +49,33 @@ export namespace SessionProcessor {
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
+          let currentText: MessageV2.TextPart | undefined
+          let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+          const stopParts = async () => {
+            if (currentText) {
+              currentText.text = currentText.text.trimEnd()
+              currentText.time = {
+                start: currentText.time?.start ?? Date.now(),
+                end: Date.now(),
+              }
+              await Session.updatePart(currentText)
+              currentText = undefined
+            }
+
+            await Promise.all(
+              Object.values(reasoningMap).map(async (part) => {
+                part.text = part.text.trimEnd()
+                part.time = {
+                  ...part.time,
+                  end: Date.now(),
+                }
+                await Session.updatePart(part)
+              }),
+            )
+            reasoningMap = {}
+          }
+
           try {
-            let currentText: MessageV2.TextPart | undefined
-            let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -361,6 +385,7 @@ export namespace SessionProcessor {
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             if (MessageV2.ContextOverflowError.isInstance(error)) {
+              await stopParts()
               needsCompaction = true
               Bus.publish(Session.Event.Error, {
                 sessionID: input.sessionID,
@@ -369,6 +394,7 @@ export namespace SessionProcessor {
             } else {
               const retry = SessionRetry.retryable(error)
               if (retry !== undefined) {
+                await stopParts()
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
                 SessionStatus.set(input.sessionID, {
@@ -380,6 +406,7 @@ export namespace SessionProcessor {
                 await SessionRetry.sleep(delay, input.abort).catch(() => {})
                 continue
               }
+              await stopParts()
               input.assistantMessage.error = error
               Bus.publish(Session.Event.Error, {
                 sessionID: input.assistantMessage.sessionID,

@@ -15,6 +15,7 @@ import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
+import { SSE_READ_TIMEOUT } from "@/provider/timeout"
 import { ModelID, ProviderID } from "@/provider/schema"
 
 export namespace MessageV2 {
@@ -944,6 +945,18 @@ export namespace MessageV2 {
               code: (e as SystemError).code ?? "",
               syscall: (e as SystemError).syscall ?? "",
               message: (e as SystemError).message ?? "",
+            },
+          },
+          { cause: e },
+        ).toObject()
+      case e instanceof Error && e.name === SSE_READ_TIMEOUT:
+        return new MessageV2.APIError(
+          {
+            message: e.message,
+            isRetryable: true,
+            metadata: {
+              code: e.name,
+              message: e.message,
             },
           },
           { cause: e },
