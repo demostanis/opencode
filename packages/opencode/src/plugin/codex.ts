@@ -1,4 +1,5 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+import type { Provider } from "@/provider/provider"
 import { Log } from "../util/log"
 import { Installation } from "../installation"
 import { Auth, OAUTH_DUMMY_KEY } from "../auth"
@@ -16,6 +17,13 @@ const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
 export const CODEX_TIMEOUT = 300_000
 export const CODEX_CHUNK_TIMEOUT = 60_000
+const CODEX_LIMIT = { context: 400_000, input: 272_000, output: 128_000 }
+const CODEX_MODELS = [
+  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", release: "2026-02-05", family: "gpt-codex" },
+  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", release: "2026-06-26", family: "gpt" },
+  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", release: "2026-06-26", family: "gpt" },
+  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", release: "2026-06-26", family: "gpt" },
+] as const
 
 interface PkceCodes {
   verifier: string
@@ -398,10 +406,10 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           "gpt-5.1-codex-mini",
           "gpt-5.2",
           "gpt-5.2-codex",
-          "gpt-5.3-codex",
           "gpt-5.4",
           "gpt-5.4-mini",
           "gpt-5.5",
+          ...CODEX_MODELS.map((model) => model.id),
         ])
         for (const modelId of Object.keys(provider.models)) {
           if (modelId.includes("codex")) continue
@@ -409,16 +417,17 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           delete provider.models[modelId]
         }
 
-        if (!provider.models["gpt-5.3-codex"]) {
-          const model = {
-            id: ModelID.make("gpt-5.3-codex"),
+        for (const item of CODEX_MODELS) {
+          if (provider.models[item.id]) continue
+          const model: Provider.Model = {
+            id: ModelID.make(item.id),
             providerID: ProviderID.openai,
             api: {
-              id: "gpt-5.3-codex",
+              id: item.id,
               url: "https://chatgpt.com/backend-api/codex",
               npm: "@ai-sdk/openai",
             },
-            name: "GPT-5.3 Codex",
+            name: item.name,
             capabilities: {
               temperature: false,
               reasoning: true,
@@ -429,16 +438,16 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
               interleaved: false,
             },
             cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-            limit: { context: 400_000, input: 272_000, output: 128_000 },
-            status: "active" as const,
+            limit: { ...CODEX_LIMIT },
+            status: "active",
             options: {},
             headers: {},
-            release_date: "2026-02-05",
-            variants: {} as Record<string, Record<string, any>>,
-            family: "gpt-codex",
+            release_date: item.release,
+            variants: {},
+            family: item.family,
           }
           model.variants = ProviderTransform.variants(model)
-          provider.models["gpt-5.3-codex"] = model
+          provider.models[item.id] = model
         }
 
         // Zero out costs for Codex (included with ChatGPT subscription)
@@ -451,12 +460,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
 
           // gpt-5.5 models temporarily have restricted context window size for codex plans
           if (model.id.includes("gpt-5.5")) {
-            model.limit = {
-              context: 400_000,
-              //@ts-expect-error incorrect type for v1 sdk but works
-              input: 272_000,
-              output: 128_000,
-            }
+            model.limit = { ...CODEX_LIMIT }
           }
         }
 

@@ -2283,6 +2283,31 @@ describe("ProviderTransform.variants", () => {
       const result = ProviderTransform.variants(model)
       expect(Object.keys(result)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"])
     })
+
+    test("gpt-5.6 models only include medium, max, and ultra efforts", () => {
+      const model = createMockModel({
+        id: "gpt-5.6-sol",
+        providerID: "openai",
+        api: {
+          id: "gpt-5.6-sol",
+          url: "https://api.openai.com",
+          npm: "@ai-sdk/openai",
+        },
+        release_date: "2026-06-26",
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["medium", "max", "ultra"])
+      expect(result.max).toEqual({
+        reasoningEffort: "max",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+      expect(result.ultra).toEqual({
+        reasoningEffort: "ultra",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+    })
   })
 
   describe("@ai-sdk/anthropic", () => {

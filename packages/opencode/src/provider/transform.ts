@@ -328,11 +328,13 @@ export namespace ProviderTransform {
 
   const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
   const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
+  const GPT56_EFFORTS = ["medium", "max", "ultra"]
 
   export function variants(model: Provider.Model): Record<string, Record<string, any>> {
     if (!model.capabilities.reasoning) return {}
 
     const id = model.id.toLowerCase()
+    const gpt56 = id.includes("gpt-5.6")
     const isAnthropicAdaptive = ["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"].some((v) =>
       model.api.id.includes(v),
     )
@@ -366,6 +368,7 @@ export namespace ProviderTransform {
     switch (model.api.npm) {
       case "@openrouter/ai-sdk-provider":
         if (!model.id.includes("gpt") && !model.id.includes("gemini-3") && !model.id.includes("claude")) return {}
+        if (gpt56) return Object.fromEntries(GPT56_EFFORTS.map((effort) => [effort, { reasoning: { effort } }]))
         return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoning: { effort } }]))
 
       case "@ai-sdk/gateway":
@@ -425,6 +428,7 @@ export namespace ProviderTransform {
             ]),
           )
         }
+        if (gpt56) return Object.fromEntries(GPT56_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
         return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
 
       case "@ai-sdk/github-copilot":
@@ -436,6 +440,18 @@ export namespace ProviderTransform {
           return {
             thinking: { thinking_budget: 4000 },
           }
+        }
+        if (gpt56) {
+          return Object.fromEntries(
+            GPT56_EFFORTS.map((effort) => [
+              effort,
+              {
+                reasoningEffort: effort,
+                reasoningSummary: "auto",
+                include: ["reasoning.encrypted_content"],
+              },
+            ]),
+          )
         }
         const copilotEfforts = iife(() => {
           if (id.includes("5.1-codex-max") || id.includes("5.2") || id.includes("5.3"))
@@ -489,6 +505,7 @@ export namespace ProviderTransform {
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/openai
         if (id === "gpt-5-pro") return {}
         const openaiEfforts = iife(() => {
+          if (gpt56) return GPT56_EFFORTS
           if (id.includes("codex")) {
             if (id.includes("5.2") || id.includes("5.3")) return [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
             return WIDELY_SUPPORTED_EFFORTS

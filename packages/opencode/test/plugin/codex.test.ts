@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import type { PluginInput } from "@opencode-ai/plugin"
+import type { Provider } from "../../src/provider/provider"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import {
+  CodexAuthPlugin,
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
@@ -12,7 +16,62 @@ function createTestJwt(payload: object): string {
   return `${header}.${body}.sig`
 }
 
+function createModel(id: string): Provider.Model {
+  return {
+    id: ModelID.make(id),
+    providerID: ProviderID.openai,
+    api: {
+      id,
+      url: "https://api.openai.com/v1",
+      npm: "@ai-sdk/openai",
+    },
+    name: id,
+    capabilities: {
+      temperature: false,
+      reasoning: true,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 1, output: 1, cache: { read: 1, write: 1 } },
+    limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2026-04-23",
+    variants: {},
+    family: "gpt",
+  }
+}
+
 describe("plugin.codex", () => {
+  test("adds GPT-5.6 Codex models and keeps GPT-5.5 Codex limits", async () => {
+    const hooks = await CodexAuthPlugin({} as PluginInput)
+    const provider = {
+      models: {
+        "gpt-4.1": createModel("gpt-4.1"),
+        "gpt-5.5": createModel("gpt-5.5"),
+      } as Record<string, Provider.Model>,
+    }
+
+    if (!hooks.auth?.loader) throw new Error("missing loader")
+    await hooks.auth.loader(
+      async () => ({ type: "oauth", refresh: "rt", access: "at", expires: Date.now() + 1000 }),
+      provider as unknown as Parameters<typeof hooks.auth.loader>[1],
+    )
+
+    expect(provider.models["gpt-4.1"]).toBeUndefined()
+    expect(provider.models["gpt-5.5"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+    expect(provider.models["gpt-5.6-sol"].name).toBe("GPT-5.6 Sol")
+    expect(provider.models["gpt-5.6-terra"].name).toBe("GPT-5.6 Terra")
+    expect(provider.models["gpt-5.6-luna"].name).toBe("GPT-5.6 Luna")
+    expect(Object.keys(provider.models["gpt-5.6-sol"].variants ?? {})).toEqual(["medium", "max", "ultra"])
+    expect(provider.models["gpt-5.6-sol"].variants?.max?.reasoningEffort).toBe("max")
+    expect(provider.models["gpt-5.6-sol"].variants?.ultra?.reasoningEffort).toBe("ultra")
+  })
+
   describe("parseJwtClaims", () => {
     test("parses valid JWT with claims", () => {
       const payload = { email: "test@example.com", chatgpt_account_id: "acc-123" }
