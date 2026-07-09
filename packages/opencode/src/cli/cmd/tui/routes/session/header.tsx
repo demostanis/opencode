@@ -85,6 +85,7 @@ export function Header() {
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
+  const sessionType = createMemo(() => (/\(@[^ ]+ agent\)$/.test(session()?.title ?? "") ? "Agent" : "Subagent"))
 
   return (
     <box flexShrink={0}>
@@ -106,14 +107,18 @@ export function Header() {
                 {Flag.OPENCODE_EXPERIMENTAL_WORKSPACES ? (
                   <box flexDirection="column">
                     <text fg={theme.text}>
-                      <b>Subagent session</b>
+                      <b>{sessionType()} session</b>
                     </text>
+                    <text fg={theme.textMuted}>{session().title}</text>
                     <WorkspaceInfo workspace={workspace} />
                   </box>
                 ) : (
-                  <text fg={theme.text}>
-                    <b>Subagent session</b>
-                  </text>
+                  <box flexDirection="column">
+                    <text fg={theme.text}>
+                      <b>{sessionType()} session</b>
+                    </text>
+                    <text fg={theme.textMuted}>{session().title}</text>
+                  </box>
                 )}
 
                 <ContextInfo context={context} cost={cost} />

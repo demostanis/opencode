@@ -15,6 +15,7 @@ import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema }
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
+import { BusEvent } from "../bus/bus-event"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { InstructionPrompt } from "./instruction"
@@ -66,6 +67,15 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+
+  export const Event = {
+    Cancelled: BusEvent.define(
+      "session.prompt.cancelled",
+      z.object({
+        sessionID: SessionID.zod,
+      }),
+    ),
+  }
 
   const state = Instance.state(
     () => {
@@ -411,8 +421,9 @@ export namespace SessionPrompt {
     return s[sessionID].abort.signal
   }
 
-  export function cancel(sessionID: SessionID) {
+  export function cancel(sessionID: SessionID, reason: "cleanup" | "user" = "cleanup") {
     log.info("cancel", { sessionID })
+    if (reason === "user") Bus.publish(Event.Cancelled, { sessionID })
     const s = state()
     const match = s[sessionID]
     if (!match) {
@@ -1485,7 +1496,7 @@ export namespace SessionPrompt {
               // An extra space is added here. Otherwise the 'Use' gets appended
               // to user's last word; making a combined word
               text:
-                " Use the above message and context to generate a prompt and call the task tool with subagent: " +
+                " Use the above message and context to generate a prompt and call the available subagent tool with subagent: " +
                 part.name +
                 hint,
             },

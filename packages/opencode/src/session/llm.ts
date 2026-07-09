@@ -16,6 +16,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
+import { MultiAgent } from "@/agent/multi-agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
@@ -64,6 +65,7 @@ export namespace LLM {
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
 
     const system = []
     system.push(
@@ -75,6 +77,7 @@ export namespace LLM {
         ...input.system,
         // any custom prompt from last user message
         ...(input.user.system ? [input.user.system] : []),
+        ...(ultra ? [SystemPrompt.multiagent()] : []),
       ]
         .filter((x) => x)
         .join("\n"),
@@ -250,13 +253,14 @@ export namespace LLM {
     })
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "model" | "permission" | "user">) {
+    const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
     const disabled = PermissionNext.disabled(
       Object.keys(input.tools),
       PermissionNext.merge(input.agent.permission, input.permission ?? []),
     )
     for (const tool of Object.keys(input.tools)) {
-      if (input.user.tools?.[tool] === false || disabled.has(tool)) {
+      if (input.user.tools?.[tool] === false || disabled.has(tool) || (MultiAgent.tool(tool) && !ultra)) {
         delete input.tools[tool]
       }
     }

@@ -535,6 +535,133 @@ describe("session.llm.stream", () => {
     })
   })
 
+  test("maps Ultra to max and enables collaboration tools only for Ultra", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const source = await loadFixture("openai", "gpt-5.2")
+    const model = {
+      ...source.model,
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      release_date: "2026-07-09",
+    }
+    const response = () =>
+      createEventResponse(
+        [
+          {
+            type: "response.created",
+            response: {
+              id: "resp-ultra",
+              created_at: Math.floor(Date.now() / 1000),
+              model: model.id,
+              service_tier: null,
+            },
+          },
+          {
+            type: "response.output_text.delta",
+            item_id: "item-ultra",
+            delta: "Done",
+            logprobs: null,
+          },
+          {
+            type: "response.completed",
+            response: {
+              incomplete_details: null,
+              usage: {
+                input_tokens: 1,
+                input_tokens_details: null,
+                output_tokens: 1,
+                output_tokens_details: null,
+              },
+              service_tier: null,
+            },
+          },
+        ],
+        true,
+      )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                name: "OpenAI",
+                env: ["OPENAI_API_KEY"],
+                npm: "@ai-sdk/openai",
+                api: "https://api.openai.com/v1",
+                models: { [model.id]: model },
+                options: {
+                  apiKey: "test-openai-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.openai, ModelID.make(model.id))
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const noop = tool({
+          description: "test tool",
+          inputSchema: z.object({}),
+          execute: async () => ({ output: "" }),
+        })
+
+        for (const variant of ["ultra", "medium"] as const) {
+          const request = waitRequest("/responses", response())
+          const user = {
+            id: MessageID.make(`user-${variant}`),
+            sessionID: SessionID.make(`session-${variant}`),
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderID.openai, modelID: resolved.id },
+            variant,
+          } satisfies MessageV2.User
+          const stream = await LLM.stream({
+            user,
+            sessionID: user.sessionID,
+            model: resolved,
+            agent,
+            system: [],
+            abort: new AbortController().signal,
+            messages: [{ role: "user", content: "Work" }],
+            tools: { bash: noop, spawn_agent: noop, task: noop },
+          })
+
+          for await (const _ of stream.fullStream) {
+          }
+
+          const body = (await request).body
+          const names = (body.tools as Array<{ name?: string; function?: { name?: string } }> | undefined)?.map(
+            (item) => item.name ?? item.function?.name,
+          )
+          expect(names).toContain("bash")
+          expect(names?.includes("spawn_agent")).toBe(variant === "ultra")
+          expect(names).toContain("task")
+          expect(JSON.stringify(body).includes("Proactive multi-agent delegation is active")).toBe(variant === "ultra")
+          expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe(
+            variant === "ultra" ? "max" : "medium",
+          )
+        }
+      },
+    })
+  })
+
   test("sends messages API payload for Anthropic models", async () => {
     const server = state.server
     if (!server) {

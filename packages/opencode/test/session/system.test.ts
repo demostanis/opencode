@@ -6,6 +6,15 @@ import { SystemPrompt } from "../../src/session/system"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session.system", () => {
+  test("multi-agent prompt enables proactive bounded delegation", () => {
+    const prompt = SystemPrompt.multiagent()
+
+    expect(prompt).toContain("Proactive multi-agent delegation is active")
+    expect(prompt).toContain("spawn_agent")
+    expect(prompt).toContain("wait_agent")
+    expect(prompt).toContain("At most three subagents")
+  })
+
   test("skills output is sorted by name and stable across calls", async () => {
     await using tmp = await tmpdir({
       git: true,

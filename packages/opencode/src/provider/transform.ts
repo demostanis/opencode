@@ -328,6 +328,25 @@ export namespace ProviderTransform {
 
   const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
   const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
+  const GPT_56_EFFORTS = ["medium"]
+
+  export function ultra(model: Provider.Model, variant?: string) {
+    const supported = [model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-5.6"))
+    return variant === undefined ? supported : supported && variant === "ultra"
+  }
+
+  function augment(model: Provider.Model, variants: Record<string, Record<string, any>>, max: Record<string, any>) {
+    if (!ultra(model)) return variants
+    return {
+      ...variants,
+      max,
+      ultra: max,
+    }
+  }
+
+  function efforts(model: Provider.Model, fallback: string[]) {
+    return ultra(model) ? GPT_56_EFFORTS : fallback
+  }
 
   export function variants(model: Provider.Model): Record<string, Record<string, any>> {
     if (!model.capabilities.reasoning) return {}
@@ -366,7 +385,11 @@ export namespace ProviderTransform {
     switch (model.api.npm) {
       case "@openrouter/ai-sdk-provider":
         if (!model.id.includes("gpt") && !model.id.includes("gemini-3") && !model.id.includes("claude")) return {}
-        return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoning: { effort } }]))
+        return augment(
+          model,
+          Object.fromEntries(efforts(model, OPENAI_EFFORTS).map((effort) => [effort, { reasoning: { effort } }])),
+          { reasoning: { effort: "max" } },
+        )
 
       case "@ai-sdk/gateway":
         if (model.id.includes("anthropic")) {
@@ -425,7 +448,11 @@ export namespace ProviderTransform {
             ]),
           )
         }
-        return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
+        return augment(
+          model,
+          Object.fromEntries(efforts(model, OPENAI_EFFORTS).map((effort) => [effort, { reasoningEffort: effort }])),
+          { reasoningEffort: "max" },
+        )
 
       case "@ai-sdk/github-copilot":
         if (model.id.includes("gemini")) {
@@ -444,15 +471,23 @@ export namespace ProviderTransform {
           if (id.includes("gpt-5") && model.release_date >= "2025-12-04") arr.push("xhigh")
           return arr
         })
-        return Object.fromEntries(
-          copilotEfforts.map((effort) => [
-            effort,
-            {
-              reasoningEffort: effort,
-              reasoningSummary: "auto",
-              include: ["reasoning.encrypted_content"],
-            },
-          ]),
+        return augment(
+          model,
+          Object.fromEntries(
+            efforts(model, copilotEfforts).map((effort) => [
+              effort,
+              {
+                reasoningEffort: effort,
+                reasoningSummary: "auto",
+                include: ["reasoning.encrypted_content"],
+              },
+            ]),
+          ),
+          {
+            reasoningEffort: "max",
+            reasoningSummary: "auto",
+            include: ["reasoning.encrypted_content"],
+          },
         )
 
       case "@ai-sdk/cerebras":
@@ -466,7 +501,13 @@ export namespace ProviderTransform {
       case "venice-ai-sdk-provider":
       // https://docs.venice.ai/overview/guides/reasoning-models#reasoning-effort
       case "@ai-sdk/openai-compatible":
-        return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
+        return augment(
+          model,
+          Object.fromEntries(
+            efforts(model, WIDELY_SUPPORTED_EFFORTS).map((effort) => [effort, { reasoningEffort: effort }]),
+          ),
+          { reasoningEffort: "max" },
+        )
 
       case "@ai-sdk/azure":
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/azure
@@ -475,15 +516,23 @@ export namespace ProviderTransform {
         if (id.includes("gpt-5-") || id === "gpt-5") {
           azureEfforts.unshift("minimal")
         }
-        return Object.fromEntries(
-          azureEfforts.map((effort) => [
-            effort,
-            {
-              reasoningEffort: effort,
-              reasoningSummary: "auto",
-              include: ["reasoning.encrypted_content"],
-            },
-          ]),
+        return augment(
+          model,
+          Object.fromEntries(
+            efforts(model, azureEfforts).map((effort) => [
+              effort,
+              {
+                reasoningEffort: effort,
+                reasoningSummary: "auto",
+                include: ["reasoning.encrypted_content"],
+              },
+            ]),
+          ),
+          {
+            reasoningEffort: "max",
+            reasoningSummary: "auto",
+            include: ["reasoning.encrypted_content"],
+          },
         )
       case "@ai-sdk/openai":
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/openai
@@ -505,15 +554,23 @@ export namespace ProviderTransform {
           }
           return arr
         })
-        return Object.fromEntries(
-          openaiEfforts.map((effort) => [
-            effort,
-            {
-              reasoningEffort: effort,
-              reasoningSummary: "auto",
-              include: ["reasoning.encrypted_content"],
-            },
-          ]),
+        return augment(
+          model,
+          Object.fromEntries(
+            efforts(model, openaiEfforts).map((effort) => [
+              effort,
+              {
+                reasoningEffort: effort,
+                reasoningSummary: "auto",
+                include: ["reasoning.encrypted_content"],
+              },
+            ]),
+          ),
+          {
+            reasoningEffort: "max",
+            reasoningSummary: "auto",
+            include: ["reasoning.encrypted_content"],
+          },
         )
 
       case "@ai-sdk/anthropic":
@@ -704,7 +761,13 @@ export namespace ProviderTransform {
           }
         }
         if (model.api.id.includes("gpt") || /\bo[1-9]/.test(model.api.id)) {
-          return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
+          return augment(
+            model,
+            Object.fromEntries(
+              efforts(model, WIDELY_SUPPORTED_EFFORTS).map((effort) => [effort, { reasoningEffort: effort }]),
+            ),
+            { reasoningEffort: "max" },
+          )
         }
         return {}
     }
@@ -871,6 +934,14 @@ export namespace ProviderTransform {
   }
 
   export function providerOptions(model: Provider.Model, options: { [x: string]: any }) {
+    if (ultra(model)) {
+      options = { ...options }
+      if (options.reasoningEffort === "ultra") options.reasoningEffort = "max"
+      if (options.reasoning?.effort === "ultra") {
+        options.reasoning = { ...options.reasoning, effort: "max" }
+      }
+    }
+
     if (model.api.npm === "@ai-sdk/gateway") {
       // Gateway providerOptions are split across two namespaces:
       // - `gateway`: gateway-native routing/caching controls (order, only, byok, etc.)

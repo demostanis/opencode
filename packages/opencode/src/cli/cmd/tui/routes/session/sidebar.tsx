@@ -31,6 +31,45 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
         sync.data.session_status[s.id]?.type === "busy",
     ),
   )
+  const workers = createMemo(() => {
+    const sessions = sync.data.session
+    const byID = new Map(sessions.map((item) => [item.id, item]))
+    let root = session()
+    while (root?.parentID) root = byID.get(root.parentID)
+    if (!root) return []
+
+    const depth = new Map([[root.id, 0]])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const item of sessions) {
+        if (!item.parentID || depth.has(item.id)) continue
+        const parent = depth.get(item.parentID)
+        if (parent === undefined) continue
+        depth.set(item.id, parent + 1)
+        changed = true
+      }
+    }
+
+    return sessions
+      .flatMap((item) => {
+        const level = depth.get(item.id)
+        if (!level || item.title === "Remembering...") return []
+        const match = item.title.match(/\(@([^ ]+) (agent|subagent)\)$/)
+        return [
+          {
+            ...item,
+            level,
+            agent: match?.[1],
+            type: match?.[2] ?? "subagent",
+            status: sync.data.session_status[item.id]?.type ?? "idle",
+          },
+        ]
+      })
+      .toSorted((a, b) => a.id.localeCompare(b.id))
+  })
+  const agents = createMemo(() => workers().filter((worker) => worker.type === "agent"))
+  const subagents = createMemo(() => workers().filter((worker) => worker.type === "subagent"))
 
   const [expanded, setExpanded] = createStore({
     mcp: true,
@@ -39,6 +78,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     images: true,
     lsp: true,
     pty: true,
+    agents: true,
+    subagents: true,
   })
 
   const mcpEntries = createMemo(() => Object.entries(sync.data.mcp).sort(([a], [b]) => a.localeCompare(b)))
@@ -156,6 +197,87 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <spinner color={theme.info} interval={80} />
                 <text fg={theme.text}>Remembering...</text>
               </box>
+            </box>
+          </Show>
+
+          <Show when={agents().length > 0}>
+            <box>
+              <box flexDirection="row" gap={1} onMouseDown={() => setExpanded("agents", !expanded.agents)}>
+                <text fg={theme.text}>{expanded.agents ? "▼" : "▶"}</text>
+                <text fg={theme.text}>
+                  <b>Multi-agent team</b>
+                </text>
+                <text fg={theme.textMuted}>({agents().filter((agent) => agent.status !== "idle").length} active)</text>
+              </box>
+              <Show when={expanded.agents}>
+                <For each={agents()}>
+                  {(agent) => (
+                    <box
+                      paddingLeft={agent.level * 2}
+                      flexDirection="row"
+                      gap={1}
+                      onMouseUp={() => navigate({ type: "session", sessionID: agent.id })}
+                    >
+                      <Show
+                        when={agent.status !== "idle"}
+                        fallback={
+                          <text flexShrink={0} fg={agent.id === props.sessionID ? theme.primary : theme.textMuted}>
+                            •
+                          </text>
+                        }
+                      >
+                        <spinner color={theme.info} interval={80} />
+                      </Show>
+                      <text fg={agent.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
+                        {agent.title.replace(/ \(@[^ ]+ agent\)$/, "")}
+                        <Show when={agent.agent}>
+                          <span style={{ fg: theme.textMuted }}> @{agent.agent}</span>
+                        </Show>
+                      </text>
+                    </box>
+                  )}
+                </For>
+              </Show>
+            </box>
+          </Show>
+
+          <Show when={subagents().length > 0}>
+            <box>
+              <box flexDirection="row" gap={1} onMouseDown={() => setExpanded("subagents", !expanded.subagents)}>
+                <text fg={theme.text}>{expanded.subagents ? "▼" : "▶"}</text>
+                <text fg={theme.text}>
+                  <b>Subagents</b>
+                </text>
+              </box>
+              <Show when={expanded.subagents}>
+                <For each={subagents()}>
+                  {(subagent) => (
+                    <box
+                      paddingLeft={subagent.level * 2}
+                      flexDirection="row"
+                      gap={1}
+                      onMouseUp={() => navigate({ type: "session", sessionID: subagent.id })}
+                    >
+                      <Show
+                        when={subagent.status !== "idle"}
+                        fallback={
+                          <text flexShrink={0} fg={subagent.id === props.sessionID ? theme.primary : theme.textMuted}>
+                            •
+                          </text>
+                        }
+                      >
+                        <spinner color={theme.info} interval={80} />
+                      </Show>
+                      <text fg={subagent.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
+                        {subagent.title.replace(/ \(@[^ ]+ subagent\)$/, "")}
+                        <Show when={subagent.agent}>
+                          <span style={{ fg: theme.textMuted }}> @{subagent.agent}</span>
+                        </Show>
+                      </text>
+                    </box>
+                  )}
+                </For>
+              </Show>
             </box>
           </Show>
 

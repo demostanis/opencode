@@ -52,6 +52,12 @@ import { DialogSkill } from "../dialog-skill"
 export type PromptProps = {
   sessionID?: string
   workspaceID?: string
+  agent?: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
+  variant?: string
   visible?: boolean
   disabled?: boolean
   onSubmit?: () => void
@@ -87,6 +93,18 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const selectedAgent = createMemo(() => props.agent ?? local.agent.current().name)
+  const selectedModel = createMemo(() => props.model ?? local.model.current())
+  const selectedVariant = createMemo(() => (props.agent ? props.variant : local.model.variant.current()))
+  const selectedModelInfo = createMemo(() => {
+    const model = selectedModel()
+    if (!model) return local.model.parsed()
+    const provider = sync.data.provider.find((item) => item.id === model.providerID)
+    return {
+      provider: provider?.name ?? model.providerID,
+      model: provider?.models[model.modelID]?.name ?? model.modelID,
+    }
+  })
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -668,8 +686,9 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
-    const selectedModel = local.model.current()
-    if (!selectedModel) {
+    const model = selectedModel()
+    const agent = selectedAgent()
+    if (!model) {
       promptModelWarning()
       return
     }
@@ -719,15 +738,15 @@ export function Prompt(props: PromptProps) {
 
     // Capture mode before it gets reset
     const currentMode = store.mode
-    const variant = local.model.variant.current()
+    const variant = selectedVariant()
 
     if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
-        agent: local.agent.current().name,
+        agent,
         model: {
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
+          providerID: model.providerID,
+          modelID: model.modelID,
         },
         command: inputText,
       })
@@ -751,8 +770,8 @@ export function Prompt(props: PromptProps) {
         sessionID,
         command: command.slice(1),
         arguments: args,
-        agent: local.agent.current().name,
-        model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+        agent,
+        model: `${model.providerID}/${model.modelID}`,
         messageID,
         variant,
         parts: nonTextParts
@@ -766,10 +785,10 @@ export function Prompt(props: PromptProps) {
       sdk.client.session
         .prompt({
           sessionID,
-          ...selectedModel,
+          ...model,
           messageID,
-          agent: local.agent.current().name,
-          model: selectedModel,
+          agent,
+          model,
           variant,
           memory: memory() === "none" ? undefined : memory(),
           parts: [
@@ -783,7 +802,11 @@ export function Prompt(props: PromptProps) {
           deferred: defer || undefined,
           noReply: defer || undefined,
         })
-        .catch(() => {})
+        .catch((error) => {
+          if (!props.agent) return
+          const message = (error as any)?.data?.message ?? (error as Error)?.message ?? "Unable to continue subagent"
+          toast.show({ variant: "error", message })
+        })
     }
     history.append({
       ...store.prompt,
@@ -899,10 +922,11 @@ export function Prompt(props: PromptProps) {
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
-    return local.agent.color(local.agent.current().name)
+    return local.agent.color(selectedAgent())
   })
 
   const showVariant = createMemo(() => {
+    if (props.agent) return props.variant !== undefined
     const variants = local.model.variant.list()
     if (variants.length === 0) return false
     const current = local.model.variant.current()
@@ -913,7 +937,7 @@ export function Prompt(props: PromptProps) {
     return [
       showVariant()
         ? {
-            text: local.model.variant.current(),
+            text: selectedVariant(),
             fg: theme.warning,
             bold: true,
           }
@@ -938,7 +962,7 @@ export function Prompt(props: PromptProps) {
   })
 
   const spinnerDef = createMemo(() => {
-    const color = local.agent.color(local.agent.current().name)
+    const color = local.agent.color(selectedAgent())
     return {
       frames: createFrames({
         color,
@@ -1172,15 +1196,13 @@ export function Prompt(props: PromptProps) {
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
               <box flexDirection="row" gap={1}>
-                <text fg={highlight()}>
-                  {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
-                </text>
+                <text fg={highlight()}>{store.mode === "shell" ? "Shell" : Locale.titlecase(selectedAgent())} </text>
                 <Show when={store.mode === "normal"}>
                   <box flexDirection="row" gap={1}>
                     <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                      {local.model.parsed().model}
+                      {selectedModelInfo().model}
                     </text>
-                    <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
+                    <text fg={theme.textMuted}>{selectedModelInfo().provider}</text>
                     <For each={badges()}>
                       {(item) => (
                         <>

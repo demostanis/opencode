@@ -7,6 +7,7 @@ import { GrepTool } from "./grep"
 import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
+import { Collaboration } from "./collaboration"
 import { MemoryFetchTool } from "./memory-fetch"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
@@ -116,6 +117,7 @@ export namespace ToolRegistry {
       EditTool,
       WriteTool,
       TaskTool,
+      ...Collaboration.tools,
       MemoryFetchTool,
       WebFetchTool,
       TodoWriteTool,

@@ -19,6 +19,7 @@ import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
+import { Collaboration } from "@/tool/collaboration"
 
 const log = Log.create({ service: "server" })
 
@@ -379,7 +380,7 @@ export const SessionRoutes = lazy(() =>
         }),
       ),
       async (c) => {
-        SessionPrompt.cancel(c.req.valid("param").sessionID)
+        SessionPrompt.cancel(c.req.valid("param").sessionID, "user")
         return c.json(true)
       },
     )
@@ -814,7 +815,12 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async (stream) => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
-          const msg = await SessionPrompt.prompt({ ...body, sessionID })
+          const release = Collaboration.guard(sessionID)
+          const msg = await SessionPrompt.prompt({ ...body, sessionID }).catch((error) => {
+            release()
+            throw error
+          })
+          if (body.noReply) release()
           stream.write(JSON.stringify(msg))
         })
       },
@@ -846,7 +852,12 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async () => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
+          const release = Collaboration.guard(sessionID)
           SessionPrompt.prompt({ ...body, sessionID })
+            .then(() => {
+              if (body.noReply) release()
+            })
+            .catch(() => release())
         })
       },
     )
@@ -883,7 +894,11 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
-        const msg = await SessionPrompt.command({ ...body, sessionID })
+        const release = Collaboration.guard(sessionID)
+        const msg = await SessionPrompt.command({ ...body, sessionID }).catch((error) => {
+          release()
+          throw error
+        })
         return c.json(msg)
       },
     )
@@ -915,7 +930,11 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
-        const msg = await SessionPrompt.shell({ ...body, sessionID })
+        const release = Collaboration.guard(sessionID)
+        const msg = await SessionPrompt.shell({ ...body, sessionID }).catch((error) => {
+          release()
+          throw error
+        })
         return c.json(msg)
       },
     )

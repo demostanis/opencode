@@ -400,6 +400,8 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           "gpt-5.4",
           "gpt-5.4-mini",
           "gpt-5.5",
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
         ])
         for (const modelId of Object.keys(provider.models)) {
           if (modelId.includes("codex")) continue
@@ -453,6 +455,14 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
               context: 400_000,
               //@ts-expect-error incorrect type for v1 sdk but works
               input: 272_000,
+              output: 128_000,
+            }
+          }
+          if (model.id.includes("gpt-5.6")) {
+            model.limit = {
+              context: 372_000,
+              //@ts-expect-error incorrect type for v1 sdk but works
+              input: 244_000,
               output: 128_000,
             }
           }

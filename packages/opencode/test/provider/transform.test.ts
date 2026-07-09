@@ -372,6 +372,30 @@ describe("ProviderTransform.providerOptions", () => {
       groq: { reasoningFormat: "parsed" },
     })
   })
+
+  test("normalizes GPT-5.6 ultra effort before provider routing", () => {
+    const model = createModel({
+      id: "gpt-5.6-sol",
+      providerID: "openai",
+      api: {
+        id: "gpt-5.6-sol",
+        url: "https://api.openai.com/v1",
+        npm: "@ai-sdk/openai",
+      },
+    })
+
+    expect(
+      ProviderTransform.providerOptions(model, {
+        reasoningEffort: "ultra",
+        reasoning: { effort: "ultra" },
+      }),
+    ).toEqual({
+      openai: {
+        reasoningEffort: "max",
+        reasoning: { effort: "max" },
+      },
+    })
+  })
 })
 
 describe("ProviderTransform.schema - gemini array items", () => {
@@ -2282,6 +2306,57 @@ describe("ProviderTransform.variants", () => {
       })
       const result = ProviderTransform.variants(model)
       expect(Object.keys(result)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"])
+    })
+
+    test("gpt-5.6 exposes max and ultra while sending max for both", () => {
+      const model = createMockModel({
+        id: "gpt-5.6-sol",
+        providerID: "openai",
+        api: {
+          id: "gpt-5.6-sol",
+          url: "https://api.openai.com",
+          npm: "@ai-sdk/openai",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
+      model.variants = result
+
+      expect(Object.keys(result)).toEqual(["medium", "max", "ultra"])
+      expect(result.max).toEqual({
+        reasoningEffort: "max",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+      expect(result.ultra).toEqual(result.max)
+      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
+      expect(ProviderTransform.ultra(model, "max")).toBe(false)
+    })
+
+    test("gpt-5.6-terra exposes medium, max, and Ultra", () => {
+      const model = createMockModel({
+        id: "gpt-5.6-terra",
+        providerID: "openai",
+        api: {
+          id: "gpt-5.6-terra",
+          url: "https://api.openai.com",
+          npm: "@ai-sdk/openai",
+        },
+      })
+
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["medium", "max", "ultra"])
+      expect(result.max).toEqual({
+        reasoningEffort: "max",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+      expect(result.ultra).toEqual({
+        reasoningEffort: "max",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
   })
 

@@ -10,6 +10,7 @@ import PROMPT_GPT from "./prompt/gpt.txt"
 import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
+import PROMPT_MULTI_AGENT from "./prompt/multi-agent.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
@@ -19,6 +20,10 @@ import { Skill } from "@/skill"
 export namespace SystemPrompt {
   export function instructions() {
     return PROMPT_CODEX.trim()
+  }
+
+  export function multiagent() {
+    return PROMPT_MULTI_AGENT.trim()
   }
 
   export function provider(model: Provider.Model) {

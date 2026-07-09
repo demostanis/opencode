@@ -48,6 +48,7 @@ import type { EditTool } from "@/tool/edit"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { WebFetchTool } from "@/tool/webfetch"
 import type { TaskTool } from "@/tool/task"
+import type { Collaboration } from "@/tool/collaboration"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
@@ -76,14 +77,12 @@ import { Editor } from "../../util/editor"
 import stripAnsi from "strip-ansi"
 import { Footer } from "./footer.tsx"
 import { usePromptRef } from "../../context/prompt"
-import { useExit } from "../../context/exit"
 import { Filesystem } from "@/util/filesystem"
 import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
-import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 
 addDefaultParsers(parsers.parsers)
@@ -132,6 +131,19 @@ export function Session() {
       .filter((x) => x.parentID === parentID || x.id === parentID)
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
+  const branch = createMemo(() => {
+    const ids = new Set([route.sessionID])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const item of sync.data.session) {
+        if (!item.parentID || !ids.has(item.parentID) || ids.has(item.id)) continue
+        ids.add(item.id)
+        changed = true
+      }
+    }
+    return sync.data.session.filter((item) => ids.has(item.id))
+  })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const display = createMemo(() => {
     const list = messages()
@@ -151,12 +163,10 @@ export function Session() {
     return main
   })
   const permissions = createMemo(() => {
-    if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
+    return branch().flatMap((item) => sync.data.permission[item.id] ?? [])
   })
   const questions = createMemo(() => {
-    if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.question[x.id] ?? [])
+    return branch().flatMap((item) => sync.data.question[item.id] ?? [])
   })
 
   const pending = createMemo(() => {
@@ -165,6 +175,17 @@ export function Session() {
 
   const lastAssistant = createMemo(() => {
     return messages().findLast((x) => x.role === "assistant")
+  })
+
+  const continuation = createMemo(() => {
+    if (!session()?.parentID) return
+    const message = messages().findLast((item): item is UserMessage => item.role === "user")
+    if (!message) return
+    return {
+      agent: message.agent,
+      model: message.model,
+      variant: message.variant,
+    }
   })
 
   const dimensions = useTerminalDimensions()
@@ -258,35 +279,6 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
-  // Allow exit when in child session (prompt is hidden)
-  const exit = useExit()
-
-  createEffect(() => {
-    const title = Locale.truncate(session()?.title ?? "", 50)
-    const pad = (text: string) => text.padEnd(10, " ")
-    const weak = (text: string) => UI.Style.TEXT_DIM + pad(text) + UI.Style.TEXT_NORMAL
-    const logo = UI.logo("  ").split(/\r?\n/)
-    return exit.message.set(
-      [
-        `${logo[0] ?? ""}`,
-        `${logo[1] ?? ""}`,
-        `${logo[2] ?? ""}`,
-        `${logo[3] ?? ""}`,
-        ``,
-        `  ${weak("Session")}${UI.Style.TEXT_NORMAL_BOLD}${title}${UI.Style.TEXT_NORMAL}`,
-        `  ${weak("Continue")}${UI.Style.TEXT_NORMAL_BOLD}opencode -s ${session()?.id}${UI.Style.TEXT_NORMAL}`,
-        ``,
-      ].join("\n"),
-    )
-  })
-
-  useKeyboard((evt) => {
-    if (!session()?.parentID) return
-    if (keybind.match("app_exit", evt)) {
-      exit()
-    }
-  })
-
   // Helper: Find next visible message boundary in direction
   const findNextVisibleMessage = (direction: "next" | "prev"): string | null => {
     const children = scroll.getChildren()
@@ -343,8 +335,9 @@ export function Session() {
   const local = useLocal()
 
   function moveFirstChild() {
-    if (children().length === 1) return
-    const next = children().find((x) => !!x.parentID)
+    const next = sync.data.session
+      .filter((item) => item.parentID === route.sessionID)
+      .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]
     if (next) {
       navigate({
         type: "session",
@@ -1200,7 +1193,7 @@ export function Session() {
                 <QuestionPrompt request={questions()[0]} />
               </Show>
               <Prompt
-                visible={!session()?.parentID && permissions().length === 0 && questions().length === 0}
+                visible={permissions().length === 0 && questions().length === 0}
                 ref={(r) => {
                   prompt = r
                   promptRef.set(r)
@@ -1214,6 +1207,9 @@ export function Session() {
                   toBottom()
                 }}
                 sessionID={route.sessionID}
+                agent={continuation()?.agent}
+                model={continuation()?.model}
+                variant={continuation()?.variant}
               />
             </box>
           </Show>
@@ -1495,7 +1491,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           </Show>
         </box>
       </Show>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
+      <Show when={props.parts.some((x) => x.type === "tool" && ["task", "spawn_agent"].includes(x.tool))}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
@@ -1703,6 +1699,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
           <Edit {...toolprops} />
         </Match>
         <Match when={props.part.tool === "task"}>
+          <Task {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "spawn_agent"}>
           <Task {...toolprops} />
         </Match>
         <Match when={props.part.tool === "apply_patch"}>
@@ -2117,7 +2116,7 @@ function WebSearch(props: ToolProps<any>) {
   )
 }
 
-function Task(props: ToolProps<typeof TaskTool>) {
+function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration.SpawnAgentTool>) {
   const { theme } = useTheme()
   const keybind = useKeybind()
   const { navigate } = useRoute()
@@ -2141,7 +2140,13 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   const current = createMemo(() => tools().findLast((x) => (x.state as any).title))
 
-  const isRunning = createMemo(() => props.part.state.status === "running")
+  const isRunning = createMemo(() => {
+    const sessionID = props.metadata.sessionId
+    if (props.part.state.status === "running") return true
+    if (!sessionID) return false
+    if ((sync.data.session_status[sessionID] ?? { type: "idle" }).type !== "idle") return true
+    return messages().some((message) => message.role === "assistant" && !message.time.completed)
+  })
 
   const duration = createMemo(() => {
     const first = messages().find((x) => x.role === "user")?.time.created
@@ -2152,7 +2157,8 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   const content = createMemo(() => {
     if (!props.input.description) return ""
-    let content = [`Task ${props.input.description}`]
+    const label = props.tool === "spawn_agent" ? "Agent" : "Task"
+    let content = [`${label} ${props.input.description}`]
 
     if (isRunning() && tools().length > 0) {
       // content[0] += ` · ${tools().length} toolcalls`
@@ -2160,8 +2166,12 @@ function Task(props: ToolProps<typeof TaskTool>) {
       else content.push(`↳ ${tools().length} toolcalls`)
     }
 
-    if (props.part.state.status === "completed") {
+    if (!isRunning() && messages().length > 0) {
       content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}`)
+    }
+
+    if (props.tool === "spawn_agent" && props.metadata.sessionId) {
+      content.push("↳ click to inspect and interact")
     }
 
     return content.join("\n")
