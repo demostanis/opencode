@@ -126,3 +126,8 @@ const table = sqliteTable("session", {
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+
+## Notice
+
+This is a fork of opencode, and we only work on the TUI part, not the desktop
+part
