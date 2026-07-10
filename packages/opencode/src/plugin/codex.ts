@@ -6,6 +6,7 @@ import os from "os"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { setTimeout as sleep } from "node:timers/promises"
+import WebSocket from "ws"
 
 const log = Log.create({ service: "plugin.codex" })
 
@@ -14,6 +15,21 @@ const ISSUER = "https://auth.openai.com"
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
+export const CODEX_MODELS = new Set<string>([
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2",
+  "gpt-5.2-codex",
+  "gpt-5.3-codex",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+])
+export const CODEX_WEBSOCKET_MODELS = new Set<string>(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"])
 
 interface PkceCodes {
   verifier: string
@@ -354,6 +370,44 @@ function stopOAuthServer() {
   }
 }
 
+function codexWebsocket(body: Record<string, unknown>, headers: Headers) {
+  const encoder = new TextEncoder()
+  const state = { done: false }
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const socket = new WebSocket("wss://chatgpt.com/backend-api/codex/responses", {
+        headers: Object.fromEntries(headers.entries()),
+        perMessageDeflate: true,
+      })
+      const close = () => {
+        if (state.done) return
+        state.done = true
+        controller.close()
+      }
+
+      socket.once("open", () => {
+        socket.send(JSON.stringify({ type: "response.create", ...body }))
+      })
+      socket.on("message", (data) => {
+        const text = data.toString()
+        const event = JSON.parse(text) as { type?: string }
+        controller.enqueue(encoder.encode(`data: ${text}\n\n`))
+        if (["response.completed", "response.failed", "response.incomplete", "error"].includes(event.type ?? "")) {
+          socket.close()
+          close()
+        }
+      })
+      socket.once("error", (err) => {
+        if (state.done) return
+        state.done = true
+        controller.error(err)
+      })
+      socket.once("close", close)
+    },
+  })
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream" } })
+}
+
 function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResponse> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
@@ -390,22 +444,9 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         if (auth.type !== "oauth") return {}
 
         // Filter models to only allowed Codex models for OAuth
-        const allowedModels = new Set([
-          "gpt-5.1-codex",
-          "gpt-5.1-codex-max",
-          "gpt-5.1-codex-mini",
-          "gpt-5.2",
-          "gpt-5.2-codex",
-          "gpt-5.3-codex",
-          "gpt-5.4",
-          "gpt-5.4-mini",
-          "gpt-5.5",
-          "gpt-5.6-sol",
-          "gpt-5.6-terra",
-        ])
         for (const modelId of Object.keys(provider.models)) {
           if (modelId.includes("codex")) continue
-          if (allowedModels.has(modelId)) continue
+          if (CODEX_MODELS.has(modelId)) continue
           delete provider.models[modelId]
         }
 
@@ -542,6 +583,13 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
               parsed.pathname.includes("/v1/responses") || parsed.pathname.includes("/chat/completions")
                 ? new URL(CODEX_API_ENDPOINT)
                 : parsed
+
+            const body = init?.body ? ((await new Response(init.body).json()) as Record<string, unknown>) : undefined
+            if (body?.model && CODEX_WEBSOCKET_MODELS.has(String(body.model))) {
+              headers.set("originator", "codex_cli_rs")
+              headers.set("OpenAI-Beta", "responses_websockets=2026-02-06")
+              return codexWebsocket(body, headers)
+            }
 
             return fetch(url, {
               ...init,

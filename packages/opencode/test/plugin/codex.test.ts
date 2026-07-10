@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
+  CODEX_WEBSOCKET_MODELS,
+  CODEX_MODELS,
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
@@ -13,6 +15,16 @@ function createTestJwt(payload: object): string {
 }
 
 describe("plugin.codex", () => {
+  test("allows every GPT-5.6 model available in Codex", () => {
+    expect([...CODEX_MODELS]).toEqual(expect.arrayContaining(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]))
+  })
+
+  test("routes GPT-5.6 Codex models over WebSocket", () => {
+    expect([...CODEX_WEBSOCKET_MODELS]).toEqual(
+      expect.arrayContaining(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]),
+    )
+  })
+
   describe("parseJwtClaims", () => {
     test("parses valid JWT with claims", () => {
       const payload = { email: "test@example.com", chatgpt_account_id: "acc-123" }
