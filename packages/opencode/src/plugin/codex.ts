@@ -29,7 +29,8 @@ export const CODEX_MODELS = new Set<string>([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
 ])
-export const CODEX_WEBSOCKET_MODELS = new Set<string>(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"])
+export const CODEX_WEBSOCKET_MODELS = new Set<string>(["gpt-5.6-luna"])
+export const CODEX_WEBSOCKET_MAX_BYTES = 16 * 1024 * 1024
 
 interface PkceCodes {
   verifier: string
@@ -370,39 +371,118 @@ function stopOAuthServer() {
   }
 }
 
-function codexWebsocket(body: Record<string, unknown>, headers: Headers) {
+export function codexWebsocket(
+  body: Record<string, unknown>,
+  headers: Headers,
+  url = "wss://chatgpt.com/backend-api/codex/responses",
+  http = CODEX_API_ENDPOINT,
+) {
   const encoder = new TextEncoder()
-  const state = { done: false }
+  const payload = JSON.stringify({ type: "response.create", ...body })
+  const bytes = Buffer.byteLength(payload)
+  const state = { done: false, events: 0, terminal: "" }
+  const abort = new AbortController()
+  let socket: WebSocket | undefined
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const socket = new WebSocket("wss://chatgpt.com/backend-api/codex/responses", {
+      const fallback = () => {
+        const next = new Headers(headers)
+        next.delete("OpenAI-Beta")
+        void fetch(http, {
+          method: "POST",
+          headers: next,
+          body: JSON.stringify(body),
+          signal: abort.signal,
+        })
+          .then(async (response) => {
+            if (!response.ok)
+              throw new Error(`Codex HTTP fallback failed (${response.status}): ${await response.text()}`)
+            if (!response.body) throw new Error("Codex HTTP fallback returned no response body")
+            const reader = response.body.getReader()
+            while (true) {
+              const chunk = await reader.read()
+              if (chunk.done) break
+              controller.enqueue(chunk.value)
+            }
+            controller.close()
+          })
+          .catch((err) => {
+            if (abort.signal.aborted) return
+            controller.error(err)
+          })
+      }
+      if (bytes > CODEX_WEBSOCKET_MAX_BYTES) {
+        log.warn("codex websocket request too large, using http", { bytes })
+        fallback()
+        return
+      }
+
+      const ws = new WebSocket(url, {
         headers: Object.fromEntries(headers.entries()),
         perMessageDeflate: true,
       })
+      socket = ws
       const close = () => {
         if (state.done) return
         state.done = true
         controller.close()
       }
 
-      socket.once("open", () => {
-        socket.send(JSON.stringify({ type: "response.create", ...body }))
+      ws.once("open", () => {
+        ws.send(payload)
       })
-      socket.on("message", (data) => {
+      ws.on("message", (data) => {
         const text = data.toString()
-        const event = JSON.parse(text) as { type?: string }
+        const event = JSON.parse(text) as { type?: string; error?: { message?: string }; message?: string }
+        state.events++
+        if (["response.failed", "error"].includes(event.type ?? "")) {
+          if (state.done) return
+          state.done = true
+          state.terminal = event.type ?? "error"
+          ws.close()
+          controller.error(
+            new Error(event.error?.message ?? event.message ?? `Codex WebSocket returned ${state.terminal}`),
+          )
+          return
+        }
         controller.enqueue(encoder.encode(`data: ${text}\n\n`))
-        if (["response.completed", "response.failed", "response.incomplete", "error"].includes(event.type ?? "")) {
-          socket.close()
+        if (["response.completed", "response.incomplete"].includes(event.type ?? "")) {
+          state.terminal = event.type ?? ""
           close()
+          ws.close()
         }
       })
-      socket.once("error", (err) => {
+      ws.once("error", (err) => {
         if (state.done) return
         state.done = true
         controller.error(err)
       })
-      socket.once("close", close)
+      ws.once("close", (code, reason) => {
+        if (state.done) return
+        state.done = true
+        const detail = reason.toString()
+        if (code === 1009 && state.events === 0) {
+          log.warn("codex websocket request too large, falling back to http", { bytes })
+          fallback()
+          return
+        }
+        log.warn("codex websocket closed before terminal event", {
+          code,
+          reason: detail,
+          events: state.events,
+          bytes,
+        })
+        controller.error(
+          new Error(
+            `Codex WebSocket closed before a terminal response event (code ${code}${detail ? `: ${detail}` : ""})`,
+          ),
+        )
+      })
+    },
+    cancel() {
+      state.done = true
+      abort.abort()
+      socket?.close()
     },
   })
   return new Response(stream, { headers: { "Content-Type": "text/event-stream" } })

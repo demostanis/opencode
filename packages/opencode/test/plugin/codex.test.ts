@@ -1,12 +1,34 @@
 import { describe, expect, test } from "bun:test"
+import type { AddressInfo } from "node:net"
+import WebSocket, { WebSocketServer } from "ws"
 import {
   CODEX_WEBSOCKET_MODELS,
+  CODEX_WEBSOCKET_MAX_BYTES,
   CODEX_MODELS,
+  codexWebsocket,
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
   type IdTokenClaims,
 } from "../../src/plugin/codex"
+
+function socket(
+  send: (ws: WebSocket) => void,
+  opts?: { body?: Record<string, unknown>; headers?: Headers; http?: string },
+) {
+  const server = new WebSocketServer({ port: 0 })
+  server.on("connection", send)
+  const port = (server.address() as AddressInfo).port
+  return {
+    server,
+    response: codexWebsocket(opts?.body ?? {}, opts?.headers ?? new Headers(), `ws://127.0.0.1:${port}`, opts?.http),
+  }
+}
+
+function stop(server: WebSocketServer) {
+  server.clients.forEach((ws) => ws.terminate())
+  server.close()
+}
 
 function createTestJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url")
@@ -19,10 +41,88 @@ describe("plugin.codex", () => {
     expect([...CODEX_MODELS]).toEqual(expect.arrayContaining(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]))
   })
 
-  test("routes GPT-5.6 Codex models over WebSocket", () => {
-    expect([...CODEX_WEBSOCKET_MODELS]).toEqual(
-      expect.arrayContaining(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]),
-    )
+  test("routes only GPT-5.6 Luna over WebSocket", () => {
+    expect([...CODEX_WEBSOCKET_MODELS]).toEqual(["gpt-5.6-luna"])
+  })
+
+  describe("codexWebsocket", () => {
+    test("streams through a completed terminal event", async () => {
+      const call = socket((ws) => ws.send(JSON.stringify({ type: "response.completed" })))
+      try {
+        expect(await call.response.text()).toBe('data: {"type":"response.completed"}\n\n')
+      } finally {
+        stop(call.server)
+      }
+    })
+
+    test("rejects a failed response", async () => {
+      const call = socket((ws) =>
+        ws.send(JSON.stringify({ type: "response.failed", error: { message: "request rejected" } })),
+      )
+      try {
+        await expect(call.response.text()).rejects.toThrow("request rejected")
+      } finally {
+        stop(call.server)
+      }
+    })
+
+    test("rejects a close without a terminal event", async () => {
+      const call = socket((ws) => ws.close(1000, "closed early"))
+      try {
+        await expect(call.response.text()).rejects.toThrow(
+          "Codex WebSocket closed before a terminal response event (code 1000: closed early)",
+        )
+      } finally {
+        stop(call.server)
+      }
+    })
+
+    test("falls back to HTTP when the WebSocket request is too large", async () => {
+      using http = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          expect(req.headers.get("OpenAI-Beta")).toBeNull()
+          expect(await req.json()).toEqual({ model: "gpt-5.6-luna" })
+          return new Response('data: {"type":"response.completed"}\n\n')
+        },
+      })
+      const headers = new Headers({ "OpenAI-Beta": "responses_websockets=2026-02-06" })
+      const call = socket((ws) => ws.close(1009), {
+        body: { model: "gpt-5.6-luna" },
+        headers,
+        http: http.url.origin,
+      })
+      try {
+        expect(await call.response.text()).toBe('data: {"type":"response.completed"}\n\n')
+      } finally {
+        stop(call.server)
+      }
+    })
+
+    test("uses HTTP directly for requests above the WebSocket size limit", async () => {
+      let connections = 0
+      using http = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response('data: {"type":"response.completed"}\n\n')
+        },
+      })
+      const call = socket(
+        () => {
+          connections++
+        },
+        {
+          body: { input: "x".repeat(CODEX_WEBSOCKET_MAX_BYTES) },
+          http: http.url.origin,
+        },
+      )
+      try {
+        expect(await call.response.text()).toBe('data: {"type":"response.completed"}\n\n')
+        expect(connections).toBe(0)
+      } finally {
+        stop(call.server)
+      }
+    })
   })
 
   describe("parseJwtClaims", () => {
