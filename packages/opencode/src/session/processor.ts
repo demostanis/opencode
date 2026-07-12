@@ -20,6 +20,7 @@ import type { SessionID, MessageID } from "./schema"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
+  const EMPTY_RESPONSE_MAX_RETRIES = 2
   const log = Log.create({ service: "session.processor" })
 
   export type Info = Awaited<ReturnType<typeof create>>
@@ -35,6 +36,7 @@ export namespace SessionProcessor {
     let snapshot: string | undefined
     let blocked = false
     let attempt = 0
+    let emptyResponseRetries = 0
     let needsCompaction = false
 
     const result = {
@@ -52,6 +54,8 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            let hasTextOutput = false
+            let hasToolCall = false
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -136,6 +140,7 @@ export namespace SessionProcessor {
                 case "tool-call": {
                   const match = toolcalls[value.toolCallId]
                   if (match) {
+                    hasToolCall = true
                     const part = await Session.updatePart({
                       ...match,
                       tool: value.toolName,
@@ -251,12 +256,20 @@ export namespace SessionProcessor {
                     usage: value.usage,
                     metadata: value.providerMetadata,
                   })
-                  input.assistantMessage.finish = value.finishReason
+                  const finishReason =
+                    value.finishReason === "unknown"
+                      ? hasToolCall
+                        ? "tool-calls"
+                        : hasTextOutput
+                          ? "stop"
+                          : value.finishReason
+                      : value.finishReason
+                  input.assistantMessage.finish = finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
                   await Session.updatePart({
                     id: PartID.ascending(),
-                    reason: value.finishReason,
+                    reason: finishReason,
                     snapshot: await Snapshot.track(),
                     messageID: input.assistantMessage.id,
                     sessionID: input.assistantMessage.sessionID,
@@ -309,6 +322,7 @@ export namespace SessionProcessor {
                 case "text-delta":
                   if (currentText) {
                     currentText.text += value.text
+                    if (value.text.trim().length > 0) hasTextOutput = true
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
                     await Session.updatePartDelta({
                       sessionID: currentText.sessionID,
@@ -353,6 +367,50 @@ export namespace SessionProcessor {
                   continue
               }
               if (needsCompaction) break
+            }
+
+            if (!input.assistantMessage.finish || input.assistantMessage.finish === "unknown") {
+              if (hasToolCall) {
+                input.assistantMessage.finish = "tool-calls"
+                await Session.updateMessage(input.assistantMessage)
+              } else if (hasTextOutput) {
+                input.assistantMessage.finish = "stop"
+                await Session.updateMessage(input.assistantMessage)
+              } else if (emptyResponseRetries < EMPTY_RESPONSE_MAX_RETRIES) {
+                emptyResponseRetries++
+                const delay = SessionRetry.delay(emptyResponseRetries)
+                log.warn("empty model response", {
+                  sessionID: input.sessionID,
+                  attempt: emptyResponseRetries,
+                  next: Date.now() + delay,
+                })
+                input.assistantMessage.finish = undefined
+                await Session.updateMessage(input.assistantMessage)
+                SessionStatus.set(input.sessionID, {
+                  type: "retry",
+                  attempt: emptyResponseRetries,
+                  message: "Provider returned an empty response",
+                  next: Date.now() + delay,
+                })
+                await SessionRetry.sleep(delay, input.abort).catch(() => {})
+                input.abort.throwIfAborted()
+                continue
+              } else {
+                input.assistantMessage.error = new MessageV2.APIError({
+                  message: `Provider returned no output after ${emptyResponseRetries + 1} attempts`,
+                  isRetryable: false,
+                  metadata: {
+                    reason: "empty_model_response",
+                    attempts: (emptyResponseRetries + 1).toString(),
+                  },
+                }).toObject()
+                input.assistantMessage.finish = "error"
+                Bus.publish(Session.Event.Error, {
+                  sessionID: input.assistantMessage.sessionID,
+                  error: input.assistantMessage.error,
+                })
+                SessionStatus.set(input.sessionID, { type: "idle" })
+              }
             }
           } catch (e: any) {
             log.error("process", {
