@@ -4,6 +4,8 @@ import { Tool } from "./tool"
 import { Filesystem } from "../util/filesystem"
 import { Global } from "../global"
 import { codexAuthHeaders } from "../plugin/codex"
+import { Instance } from "../project/instance"
+import { assertExternalDirectory } from "./external-directory"
 
 type ImageItem = {
   id?: string
@@ -19,6 +21,92 @@ const OutputFormat = z.enum(["png", "jpeg", "webp"])
 function safeName(value: string | undefined, fallback: string) {
   const safe = (value || fallback).replace(/[^A-Za-z0-9_-]/g, "_")
   return safe.length ? safe : fallback
+}
+
+function format(bytes: Uint8Array) {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 137 &&
+    bytes[1] === 80 &&
+    bytes[2] === 78 &&
+    bytes[3] === 71 &&
+    bytes[4] === 13 &&
+    bytes[5] === 10 &&
+    bytes[6] === 26 &&
+    bytes[7] === 10
+  ) {
+    return "image/png"
+  }
+  if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg"
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 71 &&
+    bytes[1] === 73 &&
+    bytes[2] === 70 &&
+    bytes[3] === 56 &&
+    (bytes[4] === 55 || bytes[4] === 57) &&
+    bytes[5] === 97
+  ) {
+    return "image/gif"
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 82 &&
+    bytes[1] === 73 &&
+    bytes[2] === 70 &&
+    bytes[3] === 70 &&
+    bytes[8] === 87 &&
+    bytes[9] === 69 &&
+    bytes[10] === 66 &&
+    bytes[11] === 80
+  ) {
+    return "image/webp"
+  }
+}
+
+async function reference(value: string, ctx: Tool.Context) {
+  if (value.startsWith("data:")) {
+    const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value)
+    if (!match) {
+      throw new Error("Reference image must be a PNG, JPEG, GIF, or WebP data URL")
+    }
+    const bytes = Buffer.from(match[2], "base64")
+    const mime = format(bytes)
+    if (mime !== match[1]) throw new Error("Reference image must be a PNG, JPEG, GIF, or WebP data URL")
+    return `data:${mime};base64,${bytes.toString("base64")}`
+  }
+
+  if (!path.isAbsolute(value) && URL.canParse(value)) {
+    if (new URL(value).protocol !== "https:") {
+      throw new Error("Reference image URL must use HTTPS")
+    }
+    return value
+  }
+
+  const raw = path.resolve(Instance.directory, value)
+  const local = Instance.containsPath(raw)
+  const opts = {
+    bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
+    kind: "file" as const,
+  }
+  if (!local) await assertExternalDirectory(ctx, raw, opts)
+
+  const file = Filesystem.resolve(raw)
+  if (local) await assertExternalDirectory(ctx, file, opts)
+  const stat = Filesystem.stat(file)
+  if (!stat) throw new Error(`Reference image not found: ${file}`)
+  if (!stat.isFile()) throw new Error(`Reference image must be a file: ${file}`)
+
+  await ctx.ask({
+    permission: "read",
+    patterns: [file],
+    always: ["*"],
+    metadata: {},
+  })
+  const bytes = await Filesystem.readBytes(file)
+  const mime = format(bytes)
+  if (!mime) throw new Error(`Reference image must be a PNG, JPEG, GIF, or WebP file: ${file}`)
+  return `data:${mime};base64,${bytes.toString("base64")}`
 }
 
 function parseSSE(buffer: string) {
@@ -54,7 +142,11 @@ async function collectImage(response: Response): Promise<ImageItem> {
       const complete = pending.slice(0, boundary + 2)
       pending = pending.slice(boundary + 2)
       for (const event of parseSSE(complete) as Array<{ type?: string; item?: ImageItem }>) {
-        if (event.type === "response.output_item.done" && event.item?.type === "image_generation_call" && event.item.result) {
+        if (
+          event.type === "response.output_item.done" &&
+          event.item?.type === "image_generation_call" &&
+          event.item.result
+        ) {
           found = event.item
         }
       }
@@ -63,7 +155,11 @@ async function collectImage(response: Response): Promise<ImageItem> {
   }
 
   for (const event of parseSSE(pending) as Array<{ type?: string; item?: ImageItem }>) {
-    if (event.type === "response.output_item.done" && event.item?.type === "image_generation_call" && event.item.result) {
+    if (
+      event.type === "response.output_item.done" &&
+      event.item?.type === "image_generation_call" &&
+      event.item.result
+    ) {
       found = event.item
     }
   }
@@ -75,19 +171,57 @@ async function collectImage(response: Response): Promise<ImageItem> {
 
 export const ImageGenerateTool = Tool.define("image_generate", {
   description:
-    "Generate an image from a text prompt using the OpenAI Codex/ChatGPT image generation tool. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
-  parameters: z.object({
-    prompt: z.string().describe("Detailed image prompt describing the desired image"),
-    short_name: z.string().describe("Short human-readable name shown for this image in the Generated images sidebar"),
-    model: z.enum(["gpt-image-2", "gpt-image-1.5"]).optional().describe("Image generation model (defaults to gpt-image-2)"),
-    size: z.string().optional().describe("Image size, such as auto, 1024x1024, 1536x1024, 1024x1536, or another supported WIDTHxHEIGHT value"),
-    quality: z.enum(["auto", "low", "medium", "high"]).optional().describe("Image quality (defaults to auto)"),
-    background: z.enum(["auto", "opaque", "transparent"]).optional().describe("Background mode when supported by the selected image model (defaults to auto). Transparent is most likely not what you want, check the imagegen skill to know how to generate transparent images"),
-    output_format: OutputFormat.optional().describe("Output image format (defaults to png)"),
-    output_compression: z.number().int().min(0).max(100).optional().describe("Compression level for jpeg/webp outputs, 0-100"),
-    moderation: z.enum(["auto", "low"]).optional().describe("Image moderation strictness (defaults to auto)"),
-  }),
+    "Generate or edit an image using the OpenAI Codex/ChatGPT image generation tool. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
+  parameters: z
+    .object({
+      prompt: z.string().describe("Detailed image prompt describing the desired image"),
+      short_name: z.string().describe("Short human-readable name shown for this image in the Generated images sidebar"),
+      reference_image: z
+        .string()
+        .optional()
+        .describe(
+          "Optional single reference image: local PNG, JPEG, GIF, or WebP path; HTTPS image URL; or matching data:image/<format>;base64 URL. Do not provide with reference_images.",
+        ),
+      reference_images: z
+        .array(z.string())
+        .min(1)
+        .optional()
+        .describe(
+          "Optional ordered reference images: local PNG, JPEG, GIF, or WebP paths; HTTPS image URLs; or matching data:image/<format>;base64 URLs. Do not provide with reference_image.",
+        ),
+      model: z
+        .enum(["gpt-image-2", "gpt-image-1.5"])
+        .optional()
+        .describe("Image generation model (defaults to gpt-image-2)"),
+      size: z
+        .string()
+        .optional()
+        .describe("Image size, such as auto, 1024x1024, 1536x1024, 1024x1536, or another supported WIDTHxHEIGHT value"),
+      quality: z.enum(["auto", "low", "medium", "high"]).optional().describe("Image quality (defaults to auto)"),
+      background: z
+        .enum(["auto", "opaque", "transparent"])
+        .optional()
+        .describe(
+          "Background mode when supported by the selected image model (defaults to auto). Transparent is most likely not what you want, check the imagegen skill to know how to generate transparent images",
+        ),
+      output_format: OutputFormat.optional().describe("Output image format (defaults to png)"),
+      output_compression: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe("Compression level for jpeg/webp outputs, 0-100"),
+      moderation: z.enum(["auto", "low"]).optional().describe("Image moderation strictness (defaults to auto)"),
+    })
+    .refine((params) => !(params.reference_image !== undefined && params.reference_images !== undefined), {
+      message: "Use reference_images instead of reference_image when providing multiple reference images",
+    }),
   async execute(params, ctx) {
+    const refs = params.reference_images ?? (params.reference_image === undefined ? [] : [params.reference_image])
+    const images: string[] = []
+    // Preserve input and permission-request order for local references.
+    for (const value of refs) images.push(await reference(value, ctx))
     const headers = await codexAuthHeaders()
     headers.set("content-type", "application/json")
 
@@ -104,8 +238,12 @@ export const ImageGenerateTool = Tool.define("image_generate", {
             content: [
               {
                 type: "input_text",
-                text: `Generate exactly one image for this prompt using the image_generation tool. Prompt: ${params.prompt}`,
+                text: `${images.length ? `Use the provided reference image${images.length > 1 ? "s in their supplied order" : ""} to create exactly one image` : "Generate exactly one image"} for this prompt using the image_generation tool. Prompt: ${params.prompt}`,
               },
+              ...images.map((image) => ({
+                type: "input_image",
+                image_url: image,
+              })),
             ],
           },
         ],
@@ -153,7 +291,10 @@ export const ImageGenerateTool = Tool.define("image_generate", {
     return {
       title: params.short_name,
       metadata: { files: [file], truncated: false },
-      output: [`Generated image: ${filepath}`, item.revised_prompt ? `Revised prompt: ${item.revised_prompt}` : undefined]
+      output: [
+        `Generated image: ${filepath}`,
+        item.revised_prompt ? `Revised prompt: ${item.revised_prompt}` : undefined,
+      ]
         .filter(Boolean)
         .join("\n"),
       attachments: [

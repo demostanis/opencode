@@ -10,6 +10,7 @@ Generates or edits images for the current project, for example website assets, g
 ## Top-level rules
 
 - Use the built-in `image_generate` tool by default for normal image generation requests. It uses Codex/ChatGPT auth and does not require `OPENAI_API_KEY`.
+- For editing or reference-driven work, set `reference_images` to an ordered list of one or more local PNG, JPEG, GIF, or WebP image paths; HTTPS image URLs; or matching `data:image/<format>;base64` URLs. `reference_image` remains available for one image; never provide both arguments.
 - Do not describe or rely on OS temp as the default destination. Built-in outputs are saved under opencode's generated-images data directory.
 - Do not describe or rely on a destination-path argument on the built-in tool. If a specific location is needed, generate first and then move or copy the selected output.
 - If the user names a destination, move or copy the selected output there.
@@ -40,11 +41,13 @@ Think about two separate questions:
 2. Execution strategy: is this one asset or many assets/variants?
 
 Intent:
+
 - If the user wants to modify an existing image while preserving parts of it, treat the request as edit.
 - If the user provides images only as references for style, composition, mood, or subject guidance, treat the request as generate.
 - If the user provides no images, treat the request as generate.
 
 Execution strategy:
+
 - For many assets or variants, issue one built-in call per requested asset or variant.
 - For many distinct assets, do not use one prompt as a substitute for separate prompts. Distinct assets need distinct built-in calls.
 - Assume the user wants a new image unless they clearly ask to change an existing one.
@@ -54,8 +57,8 @@ Execution strategy:
 1. Decide the intent: generate or edit.
 2. Decide whether the output is preview-only or meant to be consumed by the current project.
 3. Decide the execution strategy: single asset or repeated built-in calls.
-4. Collect inputs up front: prompt(s), exact text, constraints/avoid list, and any input images.
-5. For every input image, label its role explicitly: reference image, edit target, or supporting insert/style/compositing input.
+4. Collect inputs up front: prompt(s), exact text, constraints/avoid list, and optional reference images.
+5. Number input images by their supplied order and label each role explicitly: reference, edit target, style, composition, or supporting insert.
 6. If the user asked for a photo, illustration, sprite, product image, banner, or other explicitly raster-style asset, use `image_generate` rather than substituting SVG/HTML/CSS placeholders.
 7. If the request is for an icon, logo, or UI graphic that should match existing repo-native SVG/vector/code assets, prefer editing those directly instead.
 8. Augment the prompt based on specificity: preserve detailed prompts, and only add tasteful details to generic prompts when it materially improves output quality.
@@ -72,6 +75,7 @@ Execution strategy:
 Transparent-image requests should use built-in image generation first. If true model-native transparency is not available or is unreliable, create a removable chroma-key source image and then convert the key color to alpha locally.
 
 Default sequence:
+
 1. Generate the requested subject on a perfectly flat solid chroma-key background.
 2. Choose a key color that is unlikely to appear in the subject: default `#00ff00`, use `#ff00ff` for green subjects, and avoid `#0000ff` for blue subjects.
 3. Move or copy the selected source image into the workspace or `tmp/imagegen/`.
@@ -99,12 +103,14 @@ Use the user's prompt specificity to decide how much augmentation is appropriate
 - If the prompt is generic, add tasteful augmentation only when it will materially improve the result.
 
 Allowed augmentations:
+
 - composition or framing hints
 - polish level or intended-use hints
 - practical layout guidance
 - reasonable scene concreteness that supports the stated request
 
 Not allowed augmentations:
+
 - extra characters or objects that are not implied by the request
 - brand names, slogans, palettes, or narrative beats that are not implied
 - arbitrary side-specific placement unless the surrounding layout supports it
@@ -112,6 +118,7 @@ Not allowed augmentations:
 ## Use-case taxonomy
 
 Generate:
+
 - `photorealistic-natural` — candid/editorial lifestyle scenes with real texture and natural lighting.
 - `product-mockup` — product/packaging shots, catalog imagery, merch concepts.
 - `ui-mockup` — app/web interface mockups and wireframes; specify the desired fidelity.
@@ -125,13 +132,14 @@ Generate:
 - `historical-scene` — period-accurate/world-knowledge scenes.
 
 Edit:
+
 - `text-localization` — translate/replace in-image text, preserve layout.
 - `identity-preserve` — try-on, person-in-scene; lock face/body/pose.
 - `precise-object-edit` — remove/replace a specific element.
 - `lighting-weather` — time-of-day/season/atmosphere changes only.
 - `background-extraction` — transparent background or clean cutout.
 - `style-transfer` — apply reference style while changing subject/scene.
-- `compositing` — multi-image insert/merge with matched lighting/perspective.
+- `compositing` — merge one or more reference images with matched lighting and perspective.
 - `sketch-to-render` — drawing/line art to photoreal render.
 
 ## Shared prompt schema
@@ -142,7 +150,7 @@ Use this labeled spec as prompt scaffolding:
 Use case: <taxonomy slug>
 Asset type: <where the asset will be used>
 Primary request: <user's main prompt>
-Input images: <Image 1: role; Image 2: role> (optional)
+Input images: Image 1 — <role>; Image 2 — <role>; Image 3 — <role> (optional)
 Scene/backdrop: <environment>
 Subject: <main subject>
 Style/medium: <photo/illustration/3D/etc>
@@ -156,7 +164,8 @@ Avoid: <negative constraints>
 ```
 
 Notes:
-- `Asset type` and `Input images` are prompt scaffolding, not dedicated tool arguments.
+
+- `Asset type` and `Input images` are prompt scaffolding. Pass the images through `reference_images` in the same order.
 - `Scene/backdrop` refers to the visual setting, not only output transparency behavior.
 - Keep prompts short and focused.
 - For edits, explicitly list invariants such as `change only X; keep Y unchanged`.
@@ -181,6 +190,7 @@ Edit example:
 ```text
 Use case: precise-object-edit
 Asset type: product photo background replacement
+Input images: Image 1 — edit target
 Primary request: replace only the background with a warm sunset gradient
 Constraints: change only the background; keep the product and its edges unchanged; no text; no watermark
 ```
@@ -193,7 +203,8 @@ Constraints: change only the background; keep the product and its edges unchange
 - Only use SVG/vector stand-ins when the user explicitly asked for vector output or a non-image placeholder.
 - Quote exact text and specify typography plus placement.
 - For tricky words, spell them letter-by-letter and require verbatim rendering.
-- For multi-image inputs, reference images by index and describe how they should be used.
+- For multi-image inputs, refer to each image by its supplied order (`Image 1`, `Image 2`) and state its role.
+- Make precedence explicit when images conflict, such as `use Image 1 for subject identity and Image 2 for lighting and palette`.
 - For edits, repeat invariants every iteration to reduce drift.
 - Iterate with single-change follow-ups.
 - If the prompt is generic, add only the extra detail that will materially help.
