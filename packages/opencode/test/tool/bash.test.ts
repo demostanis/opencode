@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { BashTool } from "../../src/tool/bash"
@@ -37,6 +38,59 @@ describe("tool.bash", () => {
         )
         expect(result.metadata.exit).toBe(0)
         expect(result.metadata.output).toContain("test")
+      },
+    })
+  })
+
+  test.skipIf(process.platform === "win32")("uses configured shell", async () => {
+    await using tmp = await tmpdir()
+    const shell = path.join(tmp.path, "shell")
+    await Bun.write(shell, '#!/bin/sh\nprintf "configured:"\nexec /bin/sh "$@"\n')
+    await fs.chmod(shell, 0o755)
+    await Bun.write(
+      path.join(tmp.path, "opencode.json"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        shell,
+      }),
+    )
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await BashTool.init()
+        const result = await bash.execute(
+          {
+            command: "printf command",
+            description: "Print shell marker",
+          },
+          ctx,
+        )
+        expect(result.metadata.exit).toBe(0)
+        expect(result.metadata.output).toBe("configured:command")
+      },
+    })
+  })
+
+  test("does not fall back when configured shell is unavailable", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        shell: path.join(os.tmpdir(), `opencode-missing-shell-${crypto.randomUUID()}`),
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await BashTool.init()
+        await expect(
+          bash.execute(
+            {
+              command: "echo test",
+              description: "Test missing shell",
+            },
+            ctx,
+          ),
+        ).rejects.toThrow()
       },
     })
   })

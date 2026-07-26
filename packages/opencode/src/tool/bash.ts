@@ -13,6 +13,7 @@ import { Filesystem } from "@/util/filesystem"
 import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
+import { Config } from "@/config/config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncate"
@@ -53,7 +54,7 @@ const parser = lazy(async () => {
 
 // TODO: we may wanna rename this tool so it works better on other shells
 export const BashTool = Tool.define("bash", async () => {
-  const shell = Shell.acceptable()
+  const shell = (await Config.get()).shell ?? Shell.acceptable()
   log.info("bash tool using shell", { shell })
 
   return {

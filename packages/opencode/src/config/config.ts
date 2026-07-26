@@ -1126,6 +1126,7 @@ export namespace Config {
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
       logLevel: Log.Level.optional().describe("Log level"),
       server: Server.optional().describe("Server configuration for opencode serve and web commands"),
+      shell: z.string().min(1).optional().describe("Shell executable used to run commands from the bash tool"),
       command: z
         .record(z.string(), Command)
         .optional()

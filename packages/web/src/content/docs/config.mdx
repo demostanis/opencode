@@ -229,6 +229,23 @@ You can manage the tools an LLM can use through the `tools` option.
 
 ---
 
+### Choose a shell
+
+Set the optional top-level `shell` option to select the executable used for commands invoked by the agent `bash` tool. An explicitly configured value is used as-is.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "shell": "/bin/zsh"
+}
+```
+
+When omitted, OpenCode uses `$SHELL` unless it points to Fish or Nushell, then uses its platform fallback.
+
+This option does not change interactive TUI shell mode.
+
+---
+
 ### Models
 
 You can configure the providers and models you want to use in your OpenCode config through the `provider`, `model` and `small_model` options.

@@ -73,6 +73,7 @@ test("loads JSON config file", async () => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
         model: "test/model",
+        shell: "/bin/test-shell",
         username: "testuser",
       })
     },
@@ -82,6 +83,7 @@ test("loads JSON config file", async () => {
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("test/model")
+      expect(config.shell).toBe("/bin/test-shell")
       expect(config.username).toBe("testuser")
     },
   })

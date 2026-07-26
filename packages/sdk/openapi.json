@@ -10349,6 +10349,11 @@
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
           },
+          "shell": {
+            "description": "Shell executable used to run commands from the bash tool",
+            "type": "string",
+            "minLength": 1
+          },
           "command": {
             "description": "Command configuration, see https://opencode.ai/docs/commands",
             "type": "object",

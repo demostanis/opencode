@@ -1337,6 +1337,10 @@ export type Config = {
   logLevel?: LogLevel
   server?: ServerConfig
   /**
+   * Shell executable used to run commands from the bash tool
+   */
+  shell?: string
+  /**
    * Command configuration, see https://opencode.ai/docs/commands
    */
   command?: {
