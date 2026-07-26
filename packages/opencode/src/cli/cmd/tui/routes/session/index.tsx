@@ -84,6 +84,8 @@ import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { useTuiConfig } from "../../context/tui-config"
+import { writable } from "./worker"
+import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
 
@@ -125,6 +127,7 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID))
+  const editable = createMemo(() => writable(session()))
   const children = createMemo(() => {
     const parentID = session()?.parentID ?? session()?.id
     return sync.data.session
@@ -178,7 +181,7 @@ export function Session() {
   })
 
   const continuation = createMemo(() => {
-    if (!session()?.parentID) return
+    if (!session()?.parentID || !editable()) return
     const message = messages().findLast((item): item is UserMessage => item.role === "user")
     if (!message) return
     return {
@@ -278,6 +281,12 @@ export function Session() {
   const keybind = useKeybind()
   const dialog = useDialog()
   const renderer = useRenderer()
+  const exit = useExit()
+
+  useKeyboard((evt) => {
+    if (editable() || permissions().length > 0 || questions().length > 0 || dialog.stack.length > 0) return
+    if (keybind.match("app_exit", evt)) exit()
+  })
 
   // Helper: Find next visible message boundary in direction
   const findNextVisibleMessage = (direction: "next" | "prev"): string | null => {
@@ -411,6 +420,7 @@ export function Session() {
       value: "session.rename",
       keybind: "session_rename",
       category: "Session",
+      enabled: editable(),
       slash: {
         name: "rename",
       },
@@ -468,6 +478,7 @@ export function Session() {
       value: "session.compact",
       keybind: "session_compact",
       category: "Session",
+      enabled: editable(),
       slash: {
         name: "compact",
         aliases: ["summarize"],
@@ -1193,7 +1204,7 @@ export function Session() {
                 <QuestionPrompt request={questions()[0]} />
               </Show>
               <Prompt
-                visible={permissions().length === 0 && questions().length === 0}
+                visible={editable() && permissions().length === 0 && questions().length === 0}
                 ref={(r) => {
                   prompt = r
                   promptRef.set(r)
@@ -1202,7 +1213,7 @@ export function Session() {
                     r.set(route.initialPrompt)
                   }
                 }}
-                disabled={permissions().length > 0 || questions().length > 0}
+                disabled={!editable() || permissions().length > 0 || questions().length > 0}
                 onSubmit={() => {
                   toBottom()
                 }}

@@ -48,6 +48,7 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { hydrate } from "./session"
 
 export type PromptProps = {
   sessionID?: string
@@ -191,25 +192,22 @@ export function Prompt(props: PromptProps) {
     ),
   )
 
-  // Initialize agent/model/variant from last user message when session changes
+  // Initialize agent/model/variant from last user message when the root session changes
   let syncedSessionID: string | undefined
   createEffect(() => {
     const sessionID = props.sessionID
-    const msg = lastUserMessage()
+    const value = hydrate({
+      session: sessionID ? sync.session.get(sessionID) : undefined,
+      id: syncedSessionID,
+      msg: lastUserMessage(),
+      agents: local.agent.list().map((x) => x.name),
+    })
+    if (!value) return
 
-    if (sessionID !== syncedSessionID) {
-      if (!sessionID || !msg) return
-
-      syncedSessionID = sessionID
-
-      // Only set agent if it's a primary agent (not a subagent)
-      const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
-      if (msg.agent && isPrimaryAgent) {
-        local.agent.set(msg.agent)
-        if (msg.model) local.model.set(msg.model)
-        if (msg.variant) local.model.variant.set(msg.variant)
-      }
-    }
+    syncedSessionID = value.id
+    local.agent.set(value.msg.agent)
+    if (value.msg.model) local.model.set(value.msg.model)
+    if (value.msg.variant) local.model.variant.set(value.msg.variant)
   })
 
   command.register(() => {

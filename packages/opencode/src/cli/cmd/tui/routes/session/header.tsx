@@ -9,6 +9,7 @@ import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { Flag } from "@/flag/flag"
 import { useTerminalDimensions } from "@opentui/solid"
+import { parse } from "./worker"
 
 const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
@@ -85,7 +86,7 @@ export function Header() {
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
-  const sessionType = createMemo(() => (/\(@[^ ]+ agent\)$/.test(session()?.title ?? "") ? "Agent" : "Subagent"))
+  const sessionType = createMemo(() => (parse(session()?.title ?? "").type === "agent" ? "Agent" : "Subagent"))
 
   return (
     <box flexShrink={0}>

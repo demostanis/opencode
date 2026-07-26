@@ -11,6 +11,7 @@ import { TodoItem } from "../../component/todo-item"
 import { useRoute } from "../../context/route"
 import { Editor } from "../../util/editor"
 import "opentui-spinner/solid"
+import { parse } from "./worker"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -55,13 +56,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
       .flatMap((item) => {
         const level = depth.get(item.id)
         if (!level || item.title === "Remembering...") return []
-        const match = item.title.match(/\(@([^ ]+) (agent|subagent)\)$/)
+        const info = parse(item.title)
         return [
           {
             ...item,
             level,
-            agent: match?.[1],
-            type: match?.[2] ?? "subagent",
+            agent: info.agent,
+            type: info.type,
+            title: info.title,
             status: sync.data.session_status[item.id]?.type ?? "idle",
           },
         ]
@@ -229,7 +231,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                         <spinner color={theme.info} interval={80} />
                       </Show>
                       <text fg={agent.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
-                        {agent.title.replace(/ \(@[^ ]+ agent\)$/, "")}
+                        {agent.title}
                         <Show when={agent.agent}>
                           <span style={{ fg: theme.textMuted }}> @{agent.agent}</span>
                         </Show>
@@ -269,7 +271,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                         <spinner color={theme.info} interval={80} />
                       </Show>
                       <text fg={subagent.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
-                        {subagent.title.replace(/ \(@[^ ]+ subagent\)$/, "")}
+                        {subagent.title}
                         <Show when={subagent.agent}>
                           <span style={{ fg: theme.textMuted }}> @{subagent.agent}</span>
                         </Show>
