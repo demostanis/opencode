@@ -10,7 +10,7 @@ Generates or edits images for the current project, for example website assets, g
 ## Top-level rules
 
 - Use the built-in `image_generate` tool by default for normal image generation requests. It uses Codex/ChatGPT auth and does not require `OPENAI_API_KEY`.
-- For editing or reference-driven work, set `reference_images` to an ordered list of one or more local PNG, JPEG, GIF, or WebP image paths; HTTPS image URLs; or matching `data:image/<format>;base64` URLs. `reference_image` remains available for one image; never provide both arguments.
+- Every edit must attach its source, and every reference-driven generation must attach its references, through exactly one of `reference_image` or `reference_images`; prompt text and `Input images` scaffolding never attach files.
 - Do not describe or rely on OS temp as the default destination. Built-in outputs are saved under opencode's generated-images data directory.
 - Do not describe or rely on a destination-path argument on the built-in tool. If a specific location is needed, generate first and then move or copy the selected output.
 - If the user names a destination, move or copy the selected output there.
@@ -18,6 +18,41 @@ Generates or edits images for the current project, for example website assets, g
 - If the image is only for preview or brainstorming, the underlying file can remain at the default generated-images path.
 - Never leave a project-referenced asset only at the default generated-images path.
 - Do not overwrite an existing asset unless the user explicitly asked for replacement; otherwise create a sibling versioned filename such as `hero-v2.png` or `item-icon-edited.png`.
+
+## Required reference arguments for edits
+
+`image_generate` can preserve or change an existing image only when that image is passed as a tool argument. References may be local PNG, JPEG, GIF, or WebP paths; HTTPS image URLs; or matching `data:image/<format>;base64` URLs. Before every edit call, including follow-up iterations, attach the image being edited:
+
+- For exactly one input image, use `reference_image: "<path-or-url>"`.
+- For two or more input images, use `reference_images: ["<edit-target>", "<other-reference>"]`.
+- Choose the tool-argument order first. For edits, put the primary edit target first unless the user requires another order. Number `Image 1`, `Image 2`, and later prompt labels from that final order, then state each image's role.
+- Never provide both `reference_image` and `reference_images` in one call.
+- Do not call an edit with neither argument. If the source is not available, locate it or ask the user for it instead of recreating it from a text description.
+- Attach style, composition, or subject references for new-image generation through the same arguments; prompt text alone does not provide their image data either.
+- For each follow-up edit, replace the prior edit target with the latest generated output and reattach it using `reference_image`, or place it first in `reference_images` before any still-needed supporting references. Each tool call is independent.
+- Prefer `input_fidelity: "high"` when unchanged regions, identity, geometry, or fine details must be preserved.
+
+Single-image edit:
+
+```json
+{
+  "prompt": "Replace only the background with a warm sunset gradient. Keep the product and its edges unchanged.",
+  "short_name": "sunset-background",
+  "reference_image": "/absolute/path/product.png",
+  "input_fidelity": "high"
+}
+```
+
+Multi-image edit:
+
+```json
+{
+  "prompt": "Image 1 is the edit target. Apply the lighting and palette from Image 2 while preserving Image 1's subject and composition.",
+  "short_name": "relit-product",
+  "reference_images": ["/absolute/path/product.png", "/absolute/path/style.jpg"],
+  "input_fidelity": "high"
+}
+```
 
 ## When to use
 
@@ -57,18 +92,19 @@ Execution strategy:
 1. Decide the intent: generate or edit.
 2. Decide whether the output is preview-only or meant to be consumed by the current project.
 3. Decide the execution strategy: single asset or repeated built-in calls.
-4. Collect inputs up front: prompt(s), exact text, constraints/avoid list, and optional reference images.
-5. Number input images by their supplied order and label each role explicitly: reference, edit target, style, composition, or supporting insert.
-6. If the user asked for a photo, illustration, sprite, product image, banner, or other explicitly raster-style asset, use `image_generate` rather than substituting SVG/HTML/CSS placeholders.
-7. If the request is for an icon, logo, or UI graphic that should match existing repo-native SVG/vector/code assets, prefer editing those directly instead.
-8. Augment the prompt based on specificity: preserve detailed prompts, and only add tasteful details to generic prompts when it materially improves output quality.
-9. Use the built-in `image_generate` tool.
-10. Inspect outputs and validate subject, style, composition, text accuracy, invariants, and avoid items.
-11. Iterate with a single targeted change, then re-check.
-12. For preview-only work, report the generated path.
-13. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references.
-14. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only.
-15. Always report final saved path(s), the final prompt or prompt set, and that built-in image generation was used.
+4. Collect inputs up front: prompt(s), exact text, constraints/avoid list, and any source or reference images.
+5. Choose the tool-argument order first. For edits, put the primary target first unless the user requires another order; number prompt labels from that final order and identify each role explicitly.
+6. For an edit, prepare `reference_image` for one input or `reference_images` for multiple inputs. The prompt's `Input images` label is not a substitute for these tool arguments.
+7. If the user asked for a photo, illustration, sprite, product image, banner, or other explicitly raster-style asset, use `image_generate` rather than substituting SVG/HTML/CSS placeholders.
+8. If the request is for an icon, logo, or UI graphic that should match existing repo-native SVG/vector/code assets, prefer editing those directly instead.
+9. Augment the prompt based on specificity: preserve detailed prompts, and only add tasteful details to generic prompts when it materially improves output quality.
+10. Use the built-in `image_generate` tool, attaching every edit target and supporting image through `reference_image` or `reference_images`.
+11. Inspect outputs and validate subject, style, composition, text accuracy, invariants, and avoid items.
+12. Iterate with a single targeted change, pass the latest output back as a reference argument, then re-check.
+13. For preview-only work, report the generated path.
+14. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references.
+15. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only.
+16. Always report final saved path(s), the final prompt or prompt set, and that built-in image generation was used.
 
 ## Transparent image requests
 
@@ -165,7 +201,7 @@ Avoid: <negative constraints>
 
 Notes:
 
-- `Asset type` and `Input images` are prompt scaffolding. Pass the images through `reference_images` in the same order.
+- `Asset type` and `Input images` are prompt scaffolding only; they do not attach files. Use `reference_image` for one input or `reference_images` for multiple inputs in the actual tool call.
 - `Scene/backdrop` refers to the visual setting, not only output transparency behavior.
 - Keep prompts short and focused.
 - For edits, explicitly list invariants such as `change only X; keep Y unchanged`.

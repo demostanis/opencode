@@ -189,6 +189,10 @@ export const ImageGenerateTool = Tool.define("image_generate", {
         .describe(
           "Optional ordered reference images: local PNG, JPEG, GIF, or WebP paths; HTTPS image URLs; or matching data:image/<format>;base64 URLs. Do not provide with reference_image.",
         ),
+      input_fidelity: z
+        .enum(["low", "high"])
+        .optional()
+        .describe("Optional reference-image fidelity for models that support it."),
       model: z
         .enum(["gpt-image-2", "gpt-image-1.5"])
         .optional()
@@ -257,6 +261,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
             output_format: params.output_format || "png",
             output_compression: params.output_compression ?? 100,
             moderation: params.moderation || "auto",
+            ...(params.input_fidelity ? { input_fidelity: params.input_fidelity } : {}),
           },
         ],
         tool_choice: "auto",
