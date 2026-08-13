@@ -6,6 +6,8 @@ import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
+import { Auth } from "../../src/auth"
+import { CODEX_CHUNK_TIMEOUT, CODEX_TIMEOUT } from "../../src/plugin/codex"
 
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
@@ -282,6 +284,41 @@ test("env variable takes precedence, config merges options", async () => {
       expect(providers[ProviderID.anthropic].options.chunkTimeout).toBe(15000)
     },
   })
+})
+
+test("OpenAI OAuth auth defaults request and chunk timeouts", async () => {
+  const auth = await Auth.get("openai")
+  await Auth.set("openai", {
+    type: "oauth",
+    access: "test-access-token",
+    refresh: "test-refresh-token",
+    expires: Date.now() + 3_600_000,
+  })
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const providers = await Provider.list()
+        expect(providers[ProviderID.openai]).toBeDefined()
+        expect(providers[ProviderID.openai].options.timeout).toBe(CODEX_TIMEOUT)
+        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(CODEX_CHUNK_TIMEOUT)
+      },
+    })
+  } finally {
+    if (auth) await Auth.set("openai", auth)
+    else await Auth.remove("openai")
+  }
 })
 
 test("getModel returns model for valid provider/model", async () => {

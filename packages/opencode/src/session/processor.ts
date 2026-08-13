@@ -51,9 +51,51 @@ export namespace SessionProcessor {
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
+          let currentText: MessageV2.TextPart | undefined
+          let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+          const created = new Set<string>()
+          const finish = async () => {
+            if (currentText) {
+              currentText.text = currentText.text.trimEnd()
+              currentText.time = {
+                start: currentText.time?.start ?? Date.now(),
+                end: Date.now(),
+              }
+              await Session.updatePart(currentText)
+              currentText = undefined
+            }
+
+            await Promise.all(
+              Object.values(reasoningMap).map(async (part) => {
+                part.text = part.text.trimEnd()
+                part.time = {
+                  ...part.time,
+                  end: Date.now(),
+                }
+                await Session.updatePart(part)
+              }),
+            )
+            reasoningMap = {}
+          }
+
+          const reset = async () => {
+            const parts = await MessageV2.parts(input.assistantMessage.id)
+            await Promise.all(
+              parts
+                .filter((part) => created.has(part.id))
+                .map((part) =>
+                  Session.removePart({
+                    sessionID: part.sessionID,
+                    messageID: part.messageID,
+                    partID: part.id,
+                  }),
+                ),
+            )
+            currentText = undefined
+            reasoningMap = {}
+          }
+
           try {
-            let currentText: MessageV2.TextPart | undefined
-            let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             let hasTextOutput = false
             let hasToolCall = false
             const stream = await LLM.stream(streamInput)
@@ -81,6 +123,7 @@ export namespace SessionProcessor {
                     metadata: value.providerMetadata,
                   }
                   reasoningMap[value.id] = reasoningPart
+                  created.add(reasoningPart.id)
                   await Session.updatePart(reasoningPart)
                   break
 
@@ -316,6 +359,7 @@ export namespace SessionProcessor {
                     },
                     metadata: value.providerMetadata,
                   }
+                  created.add(currentText.id)
                   await Session.updatePart(currentText)
                   break
 
@@ -419,6 +463,7 @@ export namespace SessionProcessor {
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             if (MessageV2.ContextOverflowError.isInstance(error)) {
+              await finish()
               needsCompaction = true
               Bus.publish(Session.Event.Error, {
                 sessionID: input.sessionID,
@@ -427,6 +472,7 @@ export namespace SessionProcessor {
             } else {
               const retry = SessionRetry.retryable(error)
               if (retry !== undefined) {
+                await reset()
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
                 SessionStatus.set(input.sessionID, {
@@ -436,8 +482,10 @@ export namespace SessionProcessor {
                   next: Date.now() + delay,
                 })
                 await SessionRetry.sleep(delay, input.abort).catch(() => {})
+                input.abort.throwIfAborted()
                 continue
               }
+              await finish()
               input.assistantMessage.error = error
               Bus.publish(Session.Event.Error, {
                 sessionID: input.assistantMessage.sessionID,

@@ -192,3 +192,45 @@ describe("session.processor empty responses", () => {
     })
   })
 })
+
+describe("session.processor stream retries", () => {
+  test("removes partial output before retrying", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const error = new MessageV2.APIError({
+          message: "stream stalled",
+          isRetryable: true,
+        }).toObject()
+        const responses = [
+          [
+            { type: "start-step" },
+            { type: "text-start", id: "text-stalled" },
+            { type: "text-delta", id: "text-stalled", text: "Partial" },
+            { type: "text-end", id: "text-stalled" },
+            { type: "error", error },
+          ],
+          textResponse,
+        ]
+        const stream = spyOn(LLM, "stream").mockImplementation(async () => fakeStream(responses.shift()!))
+        const sleep = spyOn(SessionRetry, "sleep").mockResolvedValue()
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+
+        try {
+          const result = await fixture.processor.process(fixture.input)
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+
+          expect(result).toBe("continue")
+          expect(stream).toHaveBeenCalledTimes(2)
+          expect(parts.filter((part) => part.type === "text").map((part) => part.text)).toStrictEqual(["Recovered"])
+        } finally {
+          stream.mockRestore()
+          sleep.mockRestore()
+          summarize.mockRestore()
+        }
+      },
+    })
+  })
+})

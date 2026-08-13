@@ -15,6 +15,8 @@ const ISSUER = "https://auth.openai.com"
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
+export const CODEX_TIMEOUT = 300_000
+export const CODEX_CHUNK_TIMEOUT = 60_000
 export const CODEX_MODELS = new Set<string>([
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
@@ -591,6 +593,8 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
 
         return {
           apiKey: OAUTH_DUMMY_KEY,
+          timeout: CODEX_TIMEOUT,
+          chunkTimeout: CODEX_CHUNK_TIMEOUT,
           async fetch(requestInput: RequestInfo | URL, init?: RequestInit) {
             // Remove dummy API key authorization header
             if (init?.headers) {
