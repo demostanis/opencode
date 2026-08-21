@@ -300,7 +300,8 @@ export function Prompt(props: PromptProps) {
           if (!sessionID) return
           const entries = (sync.data.message[sessionID] ?? []).flatMap((msg) =>
             (sync.data.part[msg.id] ?? []).flatMap((part) => {
-              if (part.type !== "text" || !part.synthetic || part.metadata?.memory !== "agentgraph") return []
+              if (part.type !== "text" || !part.text || !part.synthetic || part.metadata?.memory !== "agentgraph")
+                return []
               const match = part.text.match(/^<agentgraph-memory(?: date="([^"]+)")?>\n?/)
               const time = part.metadata.memoryTime
               const stamp = typeof time === "number" ? time : typeof time === "string" ? Number(time) : NaN

@@ -391,6 +391,96 @@ describe("session.prompt memory", () => {
     expect(SessionPrompt.memoryActivity({ messages, last: first })).toEqual({ events: 2, chars: 15 })
   })
 
+  test("feeds only messages after the memory checkpoint", () => {
+    const sessionID = SessionID.make("ses_delta")
+    const old = MessageID.ascending()
+    const reply = MessageID.ascending()
+    const fresh = MessageID.ascending()
+    const messages = [
+      {
+        info: {
+          id: old,
+          role: "user",
+          sessionID,
+          time: { created: 1 },
+          agent: "build",
+          model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("big-pickle") },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: old,
+            sessionID,
+            type: "text",
+            text: "already reviewed",
+          },
+          {
+            id: PartID.ascending(),
+            messageID: old,
+            sessionID,
+            type: "text",
+            text: "<agentgraph-memory>Created old node</agentgraph-memory>",
+            synthetic: true,
+            metadata: { memory: "agentgraph", memoryThrough: reply },
+          },
+        ],
+      },
+      {
+        info: {
+          id: reply,
+          role: "assistant",
+          parentID: old,
+          sessionID,
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ModelID.make("big-pickle"),
+          providerID: ProviderID.make("opencode"),
+          time: { created: 2 },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: reply,
+            sessionID,
+            type: "text",
+            text: "old response",
+          },
+        ],
+      },
+      {
+        info: {
+          id: fresh,
+          role: "user",
+          sessionID,
+          time: { created: 3 },
+          agent: "build",
+          model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("big-pickle") },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: fresh,
+            sessionID,
+            type: "text",
+            text: "new requirement",
+          },
+        ],
+      },
+    ] as MessageV2.WithParts[]
+
+    const last = SessionPrompt.memoryCheckpoint(messages.toReversed())
+    const delta = SessionPrompt.memoryDelta({ messages, last })
+    const text = SessionPrompt.memoryPrompt({ messages: delta, added: [] })
+    expect(last).toBe(reply)
+    expect(delta.map((msg) => msg.info.id)).toEqual([fresh])
+    expect(text).toContain("new requirement")
+    expect(text).not.toContain("already reviewed")
+    expect(text).not.toContain("old response")
+  })
+
   test("builds prompt with prior nodes and skill path", () => {
     const text = SessionPrompt.memoryPrompt({ messages: [], added: ["Node: project uses Bun"] })
     expect(text).toContain("agentgraph")

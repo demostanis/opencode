@@ -234,9 +234,28 @@ export namespace SessionPrompt {
   }
 
   /** @internal Exported for testing */
-  export function memoryActivity(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
+  export function memoryDelta(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
     const last = input.last
-    const msgs = last ? input.messages.filter((msg) => msg.info.id > last) : input.messages
+    if (!last) return input.messages
+    return input.messages.filter((msg) => msg.info.id > last)
+  }
+
+  /** @internal Exported for testing */
+  export function memoryCheckpoint(messages: MessageV2.WithParts[]) {
+    const owner = messages.find((msg) =>
+      msg.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph"),
+    )
+    const mark = owner?.parts.findLast(
+      (part): part is MessageV2.TextPart =>
+        part.type === "text" && !!part.synthetic && part.metadata?.memory === "agentgraph",
+    )
+    const raw = mark?.metadata?.memoryThrough
+    return typeof raw === "string" ? MessageID.make(raw) : owner?.info.id
+  }
+
+  /** @internal Exported for testing */
+  export function memoryActivity(input: { messages: MessageV2.WithParts[]; last?: MessageID }) {
+    const msgs = memoryDelta(input)
     const text = msgs.flatMap((msg) =>
       msg.parts.flatMap((part) =>
         msg.info.role === "user" && part.type === "text" && !part.synthetic && !part.ignored ? [part.text] : [],
@@ -300,16 +319,20 @@ export namespace SessionPrompt {
 
   async function remember(input: { sessionID: SessionID }) {
     const nodes = AgentGraph.nodes()
-    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
-    const notes = msgs.flatMap((msg) =>
-      msg.parts.flatMap((part) =>
-        part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph" ? [part.text] : [],
-      ),
-    )
-    const last = msgs.findLast((msg) =>
-      msg.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph"),
-    )?.info.id
-    if (!shouldRemember(memoryActivity({ messages: msgs, last }))) return
+    const all = await Array.fromAsync(MessageV2.stream(input.sessionID))
+    const msgs = await MessageV2.filterCompacted(all)
+    const notes = all
+      .toReversed()
+      .flatMap((msg) =>
+        msg.parts.flatMap((part) =>
+          part.type === "text" && part.synthetic && part.metadata?.memory === "agentgraph" && part.text
+            ? [part.text]
+            : [],
+        ),
+      )
+    const last = memoryCheckpoint(all)
+    const delta = memoryDelta({ messages: msgs, last })
+    if (!shouldRemember(memoryActivity({ messages: delta }))) return
 
     const user = msgs.findLast((msg) => msg.info.role === "user")?.info as MessageV2.User | undefined
     if (!user) return
@@ -338,13 +361,13 @@ export namespace SessionPrompt {
       sessionID: session.id,
       agent: agent.name,
       model: (await Provider.getLightweightModelID(user.model.providerID)) ?? user.model,
-      parts: [{ type: "text", text: memoryPrompt({ messages: msgs, added: notes }) }],
+      parts: [{ type: "text", text: memoryPrompt({ messages: delta, added: notes }) }],
     }).catch((err) => {
       log.error("memory failed", { err, sessionID: input.sessionID })
       return undefined
     })
     const text = reply?.parts.findLast((part) => part.type === "text")?.text.trim()
-    if (!text || text === "No nodes added.") return
+    if (!text) return
     const time = Date.now()
 
     await Session.updatePart({
@@ -352,12 +375,16 @@ export namespace SessionPrompt {
       sessionID: input.sessionID,
       messageID: user.id,
       type: "text",
-      text: [`<agentgraph-memory date="${new Date(time).toLocaleString()}">`, text, "</agentgraph-memory>"].join("\n"),
+      text:
+        text === "No nodes added."
+          ? ""
+          : [`<agentgraph-memory date="${new Date(time).toLocaleString()}">`, text, "</agentgraph-memory>"].join("\n"),
       synthetic: true,
       metadata: {
         memory: "agentgraph",
         sessionID: session.id,
         memoryTime: time,
+        memoryThrough: all[0]?.info.id,
       },
     })
   }

@@ -899,7 +899,7 @@ export namespace MessageV2 {
     },
   )
 
-  export async function filterCompacted(stream: AsyncIterable<MessageV2.WithParts>) {
+  export async function filterCompacted(stream: AsyncIterable<MessageV2.WithParts> | Iterable<MessageV2.WithParts>) {
     const result = [] as MessageV2.WithParts[]
     const completed = new Set<string>()
     const replies = new Set<string>()
