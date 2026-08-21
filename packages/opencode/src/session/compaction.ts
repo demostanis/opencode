@@ -110,8 +110,13 @@ export namespace SessionCompaction {
     abort: AbortSignal
     auto: boolean
     overflow?: boolean
+    queued?: boolean
   }) {
-    const userMessage = input.messages.findLast((m) => m.info.id === input.parentID)!.info as MessageV2.User
+    const parent = input.messages.findLast((msg) => msg.info.id === input.parentID)
+    if (!parent || parent.info.role !== "user" || !parent.parts.some((part) => part.type === "compaction")) {
+      throw new Error(`Compaction parent must be a compaction message: ${input.parentID}`)
+    }
+    const userMessage = parent.info as MessageV2.User
 
     let messages = input.messages
     let replay: MessageV2.WithParts | undefined
@@ -253,6 +258,7 @@ When constructing the summary, try to stick to this template:
           tools: original.tools,
           system: original.system,
           variant: original.variant,
+          memory: original.memory,
         })
         for (const part of replay.parts) {
           if (part.type === "compaction") continue
@@ -267,7 +273,7 @@ When constructing the summary, try to stick to this template:
             sessionID: input.sessionID,
           })
         }
-      } else {
+      } else if (!input.queued) {
         const continueMsg = await Session.updateMessage({
           id: MessageID.ascending(),
           role: "user",
@@ -275,6 +281,7 @@ When constructing the summary, try to stick to this template:
           time: { created: Date.now() },
           agent: userMessage.agent,
           model: userMessage.model,
+          memory: userMessage.memory,
         })
         const text =
           (input.overflow
@@ -308,6 +315,7 @@ When constructing the summary, try to stick to this template:
         providerID: ProviderID.zod,
         modelID: ModelID.zod,
       }),
+      memory: MessageV2.User.shape.memory,
       auto: z.boolean(),
       overflow: z.boolean().optional(),
     }),
@@ -318,6 +326,7 @@ When constructing the summary, try to stick to this template:
         model: input.model,
         sessionID: input.sessionID,
         agent: input.agent,
+        memory: input.memory,
         time: {
           created: Date.now(),
         },

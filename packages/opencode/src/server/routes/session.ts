@@ -523,21 +523,15 @@ export const SessionRoutes = lazy(() =>
         const session = await Session.get(sessionID)
         await SessionRevert.cleanup(session)
         const msgs = await Session.messages({ sessionID })
-        let currentAgent = await Agent.defaultAgent()
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const info = msgs[i].info
-          if (info.role === "user") {
-            currentAgent = info.agent || (await Agent.defaultAgent())
-            break
-          }
-        }
+        const current = msgs.findLast((msg) => msg.info.role === "user")?.info as MessageV2.User | undefined
         await SessionCompaction.create({
           sessionID,
-          agent: currentAgent,
+          agent: current?.agent || (await Agent.defaultAgent()),
           model: {
             providerID: body.providerID,
             modelID: body.modelID,
           },
+          memory: current?.memory,
           auto: body.auto,
         })
         await SessionPrompt.loop({ sessionID })

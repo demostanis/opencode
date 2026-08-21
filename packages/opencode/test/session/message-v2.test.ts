@@ -893,6 +893,66 @@ describe("session.message-v2.toModelMessage", () => {
   })
 })
 
+describe("session.message-v2.filterCompacted", () => {
+  test("preserves deferred turns that are pending or answered after compaction", async () => {
+    const deferred = (id: string, part: string) => {
+      const info = userInfo(id)
+      info.deferred = true
+      return {
+        info,
+        parts: [
+          {
+            ...basePart(id, part),
+            type: "text" as const,
+            text: id,
+          },
+        ],
+      }
+    }
+    const handled = assistantInfo("m-old-reply", "m-old")
+    handled.finish = "stop"
+    const summary = assistantInfo("m-summary", "m-compact")
+    summary.summary = true
+    summary.finish = "stop"
+    const recent = assistantInfo("m-recent-reply", "m-recent")
+    recent.finish = "stop"
+    const input: MessageV2.WithParts[] = [
+      deferred("m-old", "p-old"),
+      {
+        info: handled,
+        parts: [{ ...basePart("m-old-reply", "p-old-reply"), type: "text", text: "handled" }],
+      },
+      deferred("m-recent", "p-recent"),
+      deferred("m-pending", "p-pending"),
+      {
+        info: userInfo("m-compact"),
+        parts: [{ ...basePart("m-compact", "p-compact"), type: "compaction", auto: true }],
+      },
+      {
+        info: summary,
+        parts: [{ ...basePart("m-summary", "p-summary"), type: "text", text: "summary" }],
+      },
+      {
+        info: recent,
+        parts: [{ ...basePart("m-recent-reply", "p-recent-reply"), type: "text", text: "recent" }],
+      },
+    ]
+    async function* stream() {
+      for (const msg of input.toReversed()) yield msg
+    }
+
+    const result = await MessageV2.filterCompacted(stream())
+
+    expect(result.map((msg) => msg.info.id)).toEqual([
+      MessageID.make("m-recent"),
+      MessageID.make("m-pending"),
+      MessageID.make("m-compact"),
+      MessageID.make("m-summary"),
+      MessageID.make("m-recent-reply"),
+    ])
+  })
+})
+
 describe("session.message-v2.fromError", () => {
   test("serializes context_length_exceeded as ContextOverflowError", () => {
     const input = {

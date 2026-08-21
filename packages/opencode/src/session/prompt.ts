@@ -487,6 +487,7 @@ export namespace SessionPrompt {
           tasks.push(...task)
         }
       }
+      const task = tasks.pop()
 
       const done = !!lastAssistant?.finish && !["tool-calls", "unknown"].includes(lastAssistant.finish)
       const assistants = msgs.flatMap((msg) => (msg.info.role === "assistant" ? [msg.info as MessageV2.Assistant] : []))
@@ -498,7 +499,10 @@ export namespace SessionPrompt {
       const parent = lastAssistant
         ? (msgs.find((msg) => msg.info.id === lastAssistant.parentID)?.info as MessageV2.User | undefined)
         : undefined
-      if (!done && parent && shouldResume({ user: lastUser, assistant: lastAssistant! })) {
+      const owner = task?.type === "compaction" ? msgs.find((msg) => msg.info.id === task.messageID) : undefined
+      if (owner?.info.role === "user") {
+        lastUser = owner.info as MessageV2.User
+      } else if (!done && parent && shouldResume({ user: lastUser, assistant: lastAssistant! })) {
         lastUser = parent
       } else if (done && deferred.length) {
         lastUser = deferred[0]
@@ -509,7 +513,7 @@ export namespace SessionPrompt {
         log.info("exiting loop", { sessionID })
         break
       }
-      const visible = order(msgs, done ? lastUser.id : undefined)
+      const visible = order(msgs, task?.type === "compaction" ? undefined : done ? lastUser.id : undefined)
 
       step++
       if (step === 1)
@@ -532,8 +536,6 @@ export namespace SessionPrompt {
         }
         throw e
       })
-      const task = tasks.pop()
-
       // pending subtask
       // TODO: centralize "invoke tool" logic
       if (task?.type === "subtask") {
@@ -724,11 +726,12 @@ export namespace SessionPrompt {
       if (task?.type === "compaction") {
         const result = await SessionCompaction.process({
           messages: visible,
-          parentID: lastUser.id,
+          parentID: task.messageID,
           abort,
           sessionID,
           auto: task.auto,
           overflow: task.overflow,
+          queued: deferred.length > 0,
         })
         if (result === "stop") break
         continue
@@ -744,6 +747,7 @@ export namespace SessionPrompt {
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
+          memory: lastUser.memory,
           auto: true,
         })
         continue
@@ -931,6 +935,7 @@ export namespace SessionPrompt {
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
+          memory: lastUser.memory,
           auto: true,
           overflow: !processor.message.finish,
         })

@@ -902,16 +902,27 @@ export namespace MessageV2 {
   export async function filterCompacted(stream: AsyncIterable<MessageV2.WithParts>) {
     const result = [] as MessageV2.WithParts[]
     const completed = new Set<string>()
+    const replies = new Set<string>()
+    const recent = new Set<string>()
+    let boundary = false
     for await (const msg of stream) {
-      result.push(msg)
-      if (
-        msg.info.role === "user" &&
-        completed.has(msg.info.id) &&
-        msg.parts.some((part) => part.type === "compaction")
-      )
-        break
-      if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
-        completed.add(msg.info.parentID)
+      if (msg.info.role === "assistant") {
+        replies.add(msg.info.parentID)
+        if (!boundary) recent.add(msg.info.parentID)
+        if (msg.info.summary && msg.info.finish && !msg.info.error) completed.add(msg.info.parentID)
+      }
+      if (!boundary) {
+        result.push(msg)
+        if (
+          msg.info.role === "user" &&
+          completed.has(msg.info.id) &&
+          msg.parts.some((part) => part.type === "compaction")
+        )
+          boundary = true
+        continue
+      }
+      if (msg.info.role === "user" && msg.info.deferred && (!replies.has(msg.info.id) || recent.has(msg.info.id)))
+        result.push(msg)
     }
     result.reverse()
     return result

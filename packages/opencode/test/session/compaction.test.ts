@@ -7,6 +7,7 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { Session } from "../../src/session"
 import type { Provider } from "../../src/provider/provider"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 
 Log.init({ print: false })
 
@@ -234,6 +235,33 @@ describe("session.compaction.isOverflow", () => {
         const model = createModel({ context: 100_000, output: 32_000 })
         const tokens = { input: 75_000, output: 5_000, reasoning: 0, cache: { read: 0, write: 0 } }
         expect(await SessionCompaction.isOverflow({ tokens, model })).toBe(false)
+      },
+    })
+  })
+})
+
+describe("session.compaction.create", () => {
+  test("preserves memory mode on the compaction message", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        await SessionCompaction.create({
+          sessionID: session.id,
+          agent: "build",
+          model: {
+            providerID: ProviderID.make("test"),
+            modelID: ModelID.make("test-model"),
+          },
+          memory: "full",
+          auto: true,
+        })
+
+        const info = (await Session.messages({ sessionID: session.id })).at(-1)?.info
+        expect(info?.role).toBe("user")
+        if (info?.role !== "user") throw new Error("Expected compaction user message")
+        expect(info.memory).toBe("full")
       },
     })
   })
