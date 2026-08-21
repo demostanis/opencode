@@ -139,6 +139,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionQueueErrors,
+  SessionQueueResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -2094,6 +2096,40 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionMessageResponses, SessionMessageErrors, ThrowOnError>({
       url: "/session/{sessionID}/message/{messageID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Queue deferred message
+   *
+   * Move a pending deferred message to the normal message queue and process it as soon as possible.
+   */
+  public queue<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionQueueResponses, SessionQueueErrors, ThrowOnError>({
+      url: "/session/{sessionID}/message/{messageID}/queue",
       ...options,
       ...params,
     })

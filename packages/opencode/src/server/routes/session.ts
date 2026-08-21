@@ -664,6 +664,34 @@ export const SessionRoutes = lazy(() =>
         return c.json(message)
       },
     )
+    .post(
+      "/:sessionID/message/:messageID/queue",
+      describeRoute({
+        summary: "Queue deferred message",
+        description: "Move a pending deferred message to the normal message queue and process it as soon as possible.",
+        operationId: "session.queue",
+        responses: {
+          204: {
+            description: "Message queued",
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", SessionPrompt.QueueInput),
+      async (c) => {
+        const queued = await SessionPrompt.queue(c.req.valid("param"))
+        if (!queued)
+          return c.json(
+            {
+              data: {},
+              errors: [{ message: "Message is not pending and deferred" }],
+              success: false as const,
+            },
+            400,
+          )
+        return c.body(null, 204)
+      },
+    )
     .delete(
       "/:sessionID/message/:messageID",
       describeRoute({

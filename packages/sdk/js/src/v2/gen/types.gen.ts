@@ -855,6 +855,13 @@ export type EventCommandExecuted = {
   }
 }
 
+export type EventSessionPromptCancelled = {
+  type: "session.prompt.cancelled"
+  properties: {
+    sessionID: string
+  }
+}
+
 export type PermissionAction = "allow" | "deny" | "ask"
 
 export type PermissionRule = {
@@ -1009,6 +1016,7 @@ export type Event =
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
+  | EventSessionPromptCancelled
   | EventSessionCreated
   | EventSessionUpdated
   | EventSessionDeleted
@@ -3587,6 +3595,41 @@ export type SessionMessageResponses = {
 }
 
 export type SessionMessageResponse = SessionMessageResponses[keyof SessionMessageResponses]
+
+export type SessionQueueData = {
+  body?: never
+  path: {
+    sessionID: string
+    messageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/message/{messageID}/queue"
+}
+
+export type SessionQueueErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionQueueError = SessionQueueErrors[keyof SessionQueueErrors]
+
+export type SessionQueueResponses = {
+  /**
+   * Message queued
+   */
+  204: void
+}
+
+export type SessionQueueResponse = SessionQueueResponses[keyof SessionQueueResponses]
 
 export type PartDeleteData = {
   body?: never

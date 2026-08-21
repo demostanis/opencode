@@ -67,6 +67,11 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+  class Cancelled extends Error {
+    constructor(readonly reason: "cleanup" | "user") {
+      super("Session cancelled")
+    }
+  }
 
   export const Event = {
     Cancelled: BusEvent.define(
@@ -332,7 +337,7 @@ export namespace SessionPrompt {
     const reply = await prompt({
       sessionID: session.id,
       agent: agent.name,
-      model: user.model,
+      model: (await Provider.getLightweightModelID(user.model.providerID)) ?? user.model,
       parts: [{ type: "text", text: memoryPrompt({ messages: msgs, added: notes }) }],
     }).catch((err) => {
       log.error("memory failed", { err, sessionID: input.sessionID })
@@ -436,10 +441,41 @@ export namespace SessionPrompt {
       return
     }
     match.abort.abort()
+    match.callbacks.forEach((item) => item.reject(new Cancelled(reason)))
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
     return
   }
+
+  export const QueueInput = z.object({
+    sessionID: SessionID.zod,
+    messageID: MessageID.zod,
+  })
+  export const queue = fn(QueueInput, async (input) => {
+    const target = await MessageV2.get(input)
+    if (target.info.role !== "user" || !target.info.deferred) return false
+
+    const msgs = await Session.messages({ sessionID: input.sessionID })
+    if (msgs.some((msg) => msg.info.role === "assistant" && msg.info.parentID === input.messageID)) return false
+
+    const msg = { ...target.info }
+    delete msg.deferred
+    await Session.updateMessage(msg)
+    const active = !!state()[input.sessionID]
+
+    void (async () => {
+      const stopped = await loop({ sessionID: input.sessionID })
+        .then(() => false)
+        .catch((err) => err instanceof Cancelled && err.reason === "user")
+      if (!active || stopped) return
+      const next = await Session.messages({ sessionID: input.sessionID })
+      if (next.some((item) => item.info.role === "assistant" && item.info.parentID === input.messageID)) return
+      await loop({ sessionID: input.sessionID })
+    })().catch((err) =>
+      log.error("failed to queue message", { sessionID: input.sessionID, messageID: input.messageID, err }),
+    )
+    return true
+  })
 
   export const LoopInput = z.object({
     sessionID: SessionID.zod,

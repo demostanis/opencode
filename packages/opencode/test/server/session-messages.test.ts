@@ -4,8 +4,10 @@ import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { Log } from "../../src/util/log"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -37,6 +39,85 @@ async function fill(sessionID: SessionID, count: number, time = (i: number) => D
 }
 
 describe("session messages endpoint", () => {
+  test("promotes a pending deferred message", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({})
+        const id = MessageID.ascending()
+        await Session.updateMessage({
+          id,
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+          deferred: true,
+        })
+
+        const res = await Server.Default().request(`/session/${session.id}/message/${id}/queue`, { method: "POST" })
+        expect(res.status).toBe(204)
+        const msg = await MessageV2.get({ sessionID: session.id, messageID: id })
+        expect(msg.info.role === "user" && msg.info.deferred).toBeUndefined()
+
+        SessionPrompt.cancel(session.id)
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("rejects messages that are not pending and deferred", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({})
+        const normal = MessageID.ascending()
+        const answered = MessageID.ascending()
+        await Session.updateMessage({
+          id: normal,
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+        })
+        await Session.updateMessage({
+          id: answered,
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+          deferred: true,
+        })
+        await Session.updateMessage({
+          id: MessageID.ascending(),
+          sessionID: session.id,
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+          parentID: answered,
+          modelID: ModelID.make("test"),
+          providerID: ProviderID.make("test"),
+          mode: "test",
+          agent: "test",
+          path: { cwd: root, root },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          finish: "stop",
+        })
+
+        const app = Server.Default()
+        const a = await app.request(`/session/${session.id}/message/${normal}/queue`, { method: "POST" })
+        const b = await app.request(`/session/${session.id}/message/${answered}/queue`, { method: "POST" })
+        expect(a.status).toBe(400)
+        expect(b.status).toBe(400)
+        expect(await a.json()).toMatchObject({ success: false })
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
   test("returns cursor headers for older pages", async () => {
     await Instance.provide({
       directory: root,

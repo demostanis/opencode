@@ -6,6 +6,8 @@ import { useRoute } from "@tui/context/route"
 import { Clipboard } from "@tui/util/clipboard"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { strip } from "@tui/component/prompt/part"
+import type { DialogContext } from "@tui/ui/dialog"
+import { useToast } from "@tui/ui/toast"
 
 export function DialogMessage(props: {
   messageID: string
@@ -14,13 +16,47 @@ export function DialogMessage(props: {
 }) {
   const sync = useSync()
   const sdk = useSDK()
+  const toast = useToast()
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
+  const pending = createMemo(() => {
+    const msg = message()
+    if (msg?.role !== "user" || !msg.deferred) return false
+    return !(sync.data.message[props.sessionID] ?? []).some(
+      (item) => item.role === "assistant" && item.parentID === msg.id,
+    )
+  })
   const route = useRoute()
 
   return (
     <DialogSelect
       title="Message Actions"
       options={[
+        ...(pending()
+          ? [
+              {
+                title: "Queue now",
+                value: "session.queue",
+                description: "move to the normal message queue",
+                onSelect: async (dialog: DialogContext) => {
+                  const queued = await sdk.client.session
+                    .queue(
+                      {
+                        sessionID: props.sessionID,
+                        messageID: props.messageID,
+                      },
+                      { throwOnError: true },
+                    )
+                    .then(() => true)
+                    .catch(() => false)
+                  if (!queued) {
+                    toast.show({ message: "Failed to queue message", variant: "error" })
+                    return
+                  }
+                  dialog.clear()
+                },
+              },
+            ]
+          : []),
         {
           title: "Revert",
           value: "session.revert",
