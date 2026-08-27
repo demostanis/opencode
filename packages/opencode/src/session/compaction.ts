@@ -110,7 +110,6 @@ export namespace SessionCompaction {
     abort: AbortSignal
     auto: boolean
     overflow?: boolean
-    queued?: boolean
   }) {
     const parent = input.messages.findLast((msg) => msg.info.id === input.parentID)
     if (!parent || parent.info.role !== "user" || !parent.parts.some((part) => part.type === "compaction")) {
@@ -273,7 +272,7 @@ When constructing the summary, try to stick to this template:
             sessionID: input.sessionID,
           })
         }
-      } else if (!input.queued) {
+      } else {
         const continueMsg = await Session.updateMessage({
           id: MessageID.ascending(),
           role: "user",

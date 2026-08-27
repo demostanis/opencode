@@ -288,6 +288,11 @@ export namespace SessionPrompt {
   }
 
   /** @internal Exported for testing */
+  export function shouldDefer(input: { user?: MessageV2.User; assistant: MessageV2.Assistant }) {
+    return !!input.user && input.user.id < input.assistant.id
+  }
+
+  /** @internal Exported for testing */
   export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
     const nodes = AgentGraph.nodes()
     return [
@@ -572,7 +577,7 @@ export namespace SessionPrompt {
         lastUser = owner.info as MessageV2.User
       } else if (!done && parent && shouldResume({ user: lastUser, assistant: lastAssistant! })) {
         lastUser = parent
-      } else if (done && deferred.length) {
+      } else if (done && deferred.length && shouldDefer({ user: lastUser, assistant: lastAssistant! })) {
         lastUser = deferred[0]
       }
 
@@ -799,7 +804,6 @@ export namespace SessionPrompt {
           sessionID,
           auto: task.auto,
           overflow: task.overflow,
-          queued: deferred.length > 0,
         })
         if (result === "stop") break
         continue
