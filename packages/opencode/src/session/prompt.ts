@@ -73,6 +73,11 @@ export namespace SessionPrompt {
     }
   }
 
+  export function isCancelled(error: unknown, reason?: "cleanup" | "user") {
+    if (!(error instanceof Cancelled)) return false
+    return reason === undefined || error.reason === reason
+  }
+
   export const Event = {
     Cancelled: BusEvent.define(
       "session.prompt.cancelled",
@@ -493,7 +498,7 @@ export namespace SessionPrompt {
     void (async () => {
       const stopped = await loop({ sessionID: input.sessionID })
         .then(() => false)
-        .catch((err) => err instanceof Cancelled && err.reason === "user")
+        .catch((err) => isCancelled(err, "user"))
       if (!active || stopped) return
       const next = await Session.messages({ sessionID: input.sessionID })
       if (next.some((item) => item.info.role === "assistant" && item.info.parentID === input.messageID)) return

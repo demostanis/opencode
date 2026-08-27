@@ -11,6 +11,7 @@ import { useSDK } from "../context/sdk"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { createDebouncedSignal } from "../util/signal"
 import { Spinner } from "./spinner"
+import { useConnection } from "../context/connection"
 
 export function DialogSessionList() {
   const dialog = useDialog()
@@ -19,6 +20,7 @@ export function DialogSessionList() {
   const keybind = useKeybind()
   const { theme } = useTheme()
   const sdk = useSDK()
+  const connection = useConnection()
 
   const [toDelete, setToDelete] = createSignal<string>()
   const [search, setSearch] = createDebouncedSignal("", 150)
@@ -81,12 +83,10 @@ export function DialogSessionList() {
       onMove={() => {
         setToDelete(undefined)
       }}
-      onSelect={(option) => {
-        route.navigate({
-          type: "session",
-          sessionID: option.value,
-        })
+      onSelect={async (option) => {
         dialog.clear()
+        const session = sessions().find((item) => item.id === option.value)
+        await connection.open(option.value, session?.directory ?? sdk.directory ?? process.cwd())
       }}
       keybind={[
         {

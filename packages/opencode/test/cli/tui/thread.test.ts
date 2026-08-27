@@ -7,11 +7,15 @@ const stop = new Error("stop")
 const seen = {
   tui: [] as string[],
   inst: [] as string[],
+  url: [] as string[],
+  auth: [] as (string | undefined)[],
 }
 
 mock.module("../../../src/cli/cmd/tui/app", () => ({
-  tui: async (input: { directory: string }) => {
+  tui: async (input: { directory: string; url: string; headers?: Record<string, string> }) => {
     seen.tui.push(input.directory)
+    seen.url.push(input.url)
+    seen.auth.push(input.headers?.Authorization)
     throw stop
   },
 }))
@@ -20,7 +24,7 @@ mock.module("@/util/rpc", () => ({
   Rpc: {
     client: () => ({
       call: async () => ({ url: "http://127.0.0.1" }),
-      on: () => {},
+      on: () => () => {},
     }),
   },
 }))
@@ -122,6 +126,8 @@ describe("tui thread", () => {
     const type = process.platform === "win32" ? "junction" : "dir"
     seen.tui.length = 0
     seen.inst.length = 0
+    seen.url.length = 0
+    seen.auth.length = 0
     await fs.symlink(tmp.path, link, type)
 
     Object.defineProperty(process.stdin, "isTTY", {
@@ -159,5 +165,50 @@ describe("tui thread", () => {
 
   test("uses the real cwd after resolving a relative project from PWD", async () => {
     await check(".")
+  })
+
+  test("spawns an independent worker for each launch", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const cwd = process.cwd()
+    const pwd = process.env.PWD
+    const worker = globalThis.Worker
+    const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+    let spawned = 0
+
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    })
+    globalThis.Worker = class extends EventTarget {
+      onerror = null
+      onmessage = null
+      onmessageerror = null
+      constructor() {
+        super()
+        spawned++
+      }
+      postMessage() {}
+      terminate() {}
+    } as unknown as typeof Worker
+
+    try {
+      seen.tui.length = 0
+      seen.inst.length = 0
+      seen.url.length = 0
+      seen.auth.length = 0
+      process.chdir(tmp.path)
+      process.env.PWD = tmp.path
+      await expect(call()).rejects.toBe(stop)
+      await expect(call()).rejects.toBe(stop)
+      expect(spawned).toBe(2)
+      expect(seen.url.at(-1)).toBe("http://opencode.internal")
+    } finally {
+      process.chdir(cwd)
+      if (pwd === undefined) delete process.env.PWD
+      else process.env.PWD = pwd
+      if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+      globalThis.Worker = worker
+    }
   })
 })

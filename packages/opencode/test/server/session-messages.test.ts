@@ -39,6 +39,35 @@ async function fill(sessionID: SessionID, count: number, time = (i: number) => D
 }
 
 describe("session messages endpoint", () => {
+  test("accepts an asynchronous deferred prompt", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({})
+        const res = await Server.Default().request(`/session/${session.id}/prompt_async`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            noReply: true,
+            deferred: true,
+            parts: [{ type: "text", text: "queued" }],
+          }),
+        })
+
+        expect(res.status).toBe(204)
+        const pending = async (tries = 50): Promise<boolean> => {
+          const messages = await Session.messages({ sessionID: session.id })
+          if (messages.some((item) => item.info.role === "user" && item.info.deferred)) return true
+          if (tries === 0) return false
+          await Bun.sleep(10)
+          return pending(tries - 1)
+        }
+        expect(await pending()).toBe(true)
+        await Session.remove(session.id)
+      },
+    })
+  })
+
   test("promotes a pending deferred message", async () => {
     await Instance.provide({
       directory: root,

@@ -102,6 +102,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     onCleanup(() => {
       abort.abort()
       sse?.abort()
+      props.events?.setWorkspace?.(undefined)
       if (timer) clearTimeout(timer)
     })
 

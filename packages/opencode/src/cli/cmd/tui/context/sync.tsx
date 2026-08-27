@@ -26,7 +26,7 @@ import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
 import { useKV } from "./kv"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
 import { Pty } from "@/pty"
@@ -121,7 +121,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       setStore("workspaceList", reconcile(result.data))
     }
 
-    sdk.event.listen((e) => {
+    const unsub = sdk.event.listen((e) => {
       const event = e.details
       switch (event.type) {
         case "server.instance.disposed":
@@ -415,6 +415,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
       }
     })
+    onCleanup(unsub)
+
+    let disposed = false
+    onCleanup(() => {
+      disposed = true
+    })
 
     const exit = useExit()
     const args = useArgs()
@@ -471,6 +477,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           })
         })
         .then(() => {
+          if (disposed) return
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
           Promise.all([
@@ -489,10 +496,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.pty.list().then((x) => setStore("pty", reconcile(x.data! as unknown as Pty.Info[]))),
             syncWorkspaces(),
           ]).then(() => {
+            if (disposed) return
             setStore("status", "complete")
           })
         })
         .catch(async (e) => {
+          if (disposed) return
           Log.Default.error("tui bootstrap failed", {
             error: e instanceof Error ? e.message : String(e),
             name: e instanceof Error ? e.name : undefined,

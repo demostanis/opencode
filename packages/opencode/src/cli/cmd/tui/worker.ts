@@ -38,6 +38,7 @@ GlobalBus.on("event", (event) => {
 })
 
 let server: Awaited<ReturnType<typeof Server.listen>> | undefined
+let local: Awaited<ReturnType<typeof Server.listen>> | undefined
 
 const eventStream = {
   abort: undefined as AbortController | undefined,
@@ -122,6 +123,20 @@ export const rpc = {
     server = await Server.listen(input)
     return { url: server.url.toString() }
   },
+  async share(input: { password: string }) {
+    if (local) return { url: `http://127.0.0.1:${local.port}` }
+    local = Server.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      ephemeral: true,
+      publish: false,
+      auth: {
+        username: "opencode",
+        password: input.password,
+      },
+    })
+    return { url: `http://127.0.0.1:${local.port}` }
+  },
   async checkUpgrade(input: { directory: string }) {
     await Instance.provide({
       directory: input.directory,
@@ -143,6 +158,7 @@ export const rpc = {
     if (eventStream.abort) eventStream.abort.abort()
     await Instance.disposeAll()
     if (server) await server.stop(true)
+    if (local) await local.stop(true)
   },
 }
 

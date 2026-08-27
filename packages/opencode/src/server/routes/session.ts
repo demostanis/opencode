@@ -840,8 +840,10 @@ export const SessionRoutes = lazy(() =>
           const release = Collaboration.guard(sessionID)
           const msg = await SessionPrompt.prompt({ ...body, sessionID }).catch((error) => {
             release()
+            if (SessionPrompt.isCancelled(error, "user")) return
             throw error
           })
+          if (!msg) return
           if (body.noReply) release()
           stream.write(JSON.stringify(msg))
         })

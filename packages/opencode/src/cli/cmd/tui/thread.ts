@@ -14,6 +14,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/config/tui"
 import { Instance } from "@/project/instance"
+import { Owner } from "./owner"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -123,6 +124,7 @@ export const TuiThreadCommand = cmd({
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
     // (Important when running under `bun run` wrappers on Windows.)
     const unguard = win32InstallCtrlCGuard()
+    let owner: Awaited<ReturnType<typeof Owner.create>> | undefined
     try {
       // Must be the very first thing — disables CTRL_C_EVENT before any Worker
       // spawn or async work so the OS cannot kill the process group.
@@ -140,7 +142,6 @@ export const TuiThreadCommand = cmd({
       const next = args.project
         ? Filesystem.resolve(path.isAbsolute(args.project) ? args.project : path.join(root, args.project))
         : Filesystem.resolve(process.cwd())
-      const file = await target()
       try {
         process.chdir(next)
       } catch {
@@ -148,7 +149,38 @@ export const TuiThreadCommand = cmd({
         return
       }
       const cwd = Filesystem.resolve(process.cwd())
-
+      const prompt = await input(args.prompt)
+      const config = await Instance.provide({
+        directory: cwd,
+        fn: () => TuiConfig.get(),
+      })
+      const network = await resolveNetworkOptions(args)
+      const external =
+        process.argv.includes("--port") ||
+        process.argv.includes("--hostname") ||
+        process.argv.includes("--mdns") ||
+        network.mdns ||
+        network.port !== 0 ||
+        network.hostname !== "127.0.0.1"
+      const opts = {
+        continue: args.continue,
+        sessionID: args.session,
+        agent: args.agent,
+        model: args.model,
+        prompt,
+        fork: args.fork,
+        autoaccept: (() => {
+          if (args.none) return "none" as const
+          if (args.edit) return "edit" as const
+          if (args.yolo) return "yolo" as const
+          if (args.autoreject) return "autoreject" as const
+          if (args.autoaccept) return args.autoaccept
+          return undefined
+        })(),
+      }
+      const file = await target()
+      const current = await Owner.create({ dir: cwd })
+      owner = current
       const worker = new Worker(file, {
         env: Object.fromEntries(
           Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
@@ -156,9 +188,26 @@ export const TuiThreadCommand = cmd({
       })
       worker.onerror = (e) => {
         Log.Default.error(e)
+        owner?.release().catch(() => {})
       }
 
       const client = Rpc.client<typeof rpc>(worker)
+      const off = client.on<{
+        directory: string
+        payload: {
+          type: string
+          properties?: {
+            sessionID?: string
+            status?: { type: string }
+          }
+        }
+      }>("global.event", (event) => {
+        if (event.payload.type !== "session.status") return
+        const sessionID = event.payload.properties?.sessionID
+        const status = event.payload.properties?.status
+        if (!sessionID || !status) return
+        current.active(sessionID, event.directory, status.type !== "idle")
+      })
       const error = (e: unknown) => {
         Log.Default.error(e)
       }
@@ -180,6 +229,7 @@ export const TuiThreadCommand = cmd({
         process.off("uncaughtException", error)
         process.off("unhandledRejection", error)
         process.off("SIGUSR2", reload)
+        off()
         await withTimeout(client.call("shutdown", undefined), 5000).catch((error) => {
           Log.Default.warn("worker shutdown failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -188,65 +238,39 @@ export const TuiThreadCommand = cmd({
         worker.terminate()
       }
 
-      const prompt = await input(args.prompt)
-      const config = await Instance.provide({
-        directory: cwd,
-        fn: () => TuiConfig.get(),
-      })
-
-      const network = await resolveNetworkOptions(args)
-      const external =
-        process.argv.includes("--port") ||
-        process.argv.includes("--hostname") ||
-        process.argv.includes("--mdns") ||
-        network.mdns ||
-        network.port !== 0 ||
-        network.hostname !== "127.0.0.1"
-
-      const transport = external
-        ? {
-            url: (await client.call("server", network)).url,
-            fetch: undefined,
-            events: undefined,
-          }
-        : {
-            url: "http://opencode.internal",
-            fetch: createWorkerFetch(client),
-            events: createEventSource(client),
-          }
-
-      setTimeout(() => {
-        client.call("checkUpgrade", { directory: cwd }).catch(() => {})
-      }, 1000).unref?.()
-
       try {
+        const shared = await client.call("share", { password: current.info.password })
+        await current.ready(shared.url)
+        const transport = external
+          ? {
+              url: (await client.call("server", network)).url,
+              fetch: undefined,
+              events: undefined,
+            }
+          : {
+              url: "http://opencode.internal",
+              fetch: createWorkerFetch(client),
+              events: createEventSource(client),
+            }
+
+        setTimeout(() => {
+          client.call("checkUpgrade", { directory: cwd }).catch(() => {})
+        }, 1000).unref?.()
+
         await tui({
           url: transport.url,
           config,
           directory: cwd,
           fetch: transport.fetch,
           events: transport.events,
-          args: {
-            continue: args.continue,
-            sessionID: args.session,
-            agent: args.agent,
-            model: args.model,
-            prompt,
-            fork: args.fork,
-            autoaccept: (() => {
-              if (args.none) return "none"
-              if (args.edit) return "edit"
-              if (args.yolo) return "yolo"
-              if (args.autoreject) return "autoreject"
-              if (args.autoaccept) return args.autoaccept as any
-              return undefined
-            })(),
-          },
+          owner: { ...current.info, url: shared.url },
+          args: opts,
         })
       } finally {
         await stop()
       }
     } finally {
+      await owner?.release()
       unguard?.()
     }
     process.exit(0)

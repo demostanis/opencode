@@ -9,8 +9,8 @@ import { Installation } from "@/installation"
 import { Flag } from "@/flag/flag"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
-import { SDKProvider, useSDK } from "@tui/context/sdk"
-import { SyncProvider, useSync } from "@tui/context/sync"
+import { useSDK } from "@tui/context/sdk"
+import { useSync } from "@tui/context/sync"
 import { LocalProvider, useLocal } from "@tui/context/local"
 import { DialogModel, useConnected } from "@tui/component/dialog-model"
 import { DialogMcp } from "@tui/component/dialog-mcp"
@@ -104,6 +104,8 @@ async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
 }
 
 import type { EventSource } from "./context/sdk"
+import { ConnectionProvider, useConnection } from "./context/connection"
+import type { Owner } from "./owner"
 
 export function tui(input: {
   url: string
@@ -113,6 +115,7 @@ export function tui(input: {
   fetch?: typeof fetch
   headers?: RequestInit["headers"]
   events?: EventSource
+  owner?: Owner.Info
 }) {
   // promise to prevent immediate exit
   return new Promise<void>(async (resolve) => {
@@ -142,35 +145,37 @@ export function tui(input: {
                   <ToastProvider>
                     <RouteProvider>
                       <TuiConfigProvider config={input.config}>
-                        <SDKProvider
-                          url={input.url}
-                          directory={input.directory}
-                          fetch={input.fetch}
-                          headers={input.headers}
-                          events={input.events}
+                        <ConnectionProvider
+                          owner={input.owner}
+                          backend={{
+                            id: input.owner?.id ?? input.url,
+                            url: input.url,
+                            directory: input.directory,
+                            fetch: input.fetch,
+                            headers: input.headers,
+                            events: input.events,
+                          }}
                         >
-                          <SyncProvider>
-                            <ThemeProvider mode={mode}>
-                              <LocalProvider>
-                                <KeybindProvider>
-                                  <PromptStashProvider>
-                                    <DialogProvider>
-                                      <CommandProvider>
-                                        <FrecencyProvider>
-                                          <PromptHistoryProvider>
-                                            <PromptRefProvider>
-                                              <App />
-                                            </PromptRefProvider>
-                                          </PromptHistoryProvider>
-                                        </FrecencyProvider>
-                                      </CommandProvider>
-                                    </DialogProvider>
-                                  </PromptStashProvider>
-                                </KeybindProvider>
-                              </LocalProvider>
-                            </ThemeProvider>
-                          </SyncProvider>
-                        </SDKProvider>
+                          <ThemeProvider mode={mode}>
+                            <LocalProvider>
+                              <KeybindProvider>
+                                <PromptStashProvider>
+                                  <DialogProvider>
+                                    <CommandProvider>
+                                      <FrecencyProvider>
+                                        <PromptHistoryProvider>
+                                          <PromptRefProvider>
+                                            <App />
+                                          </PromptRefProvider>
+                                        </PromptHistoryProvider>
+                                      </FrecencyProvider>
+                                    </CommandProvider>
+                                  </DialogProvider>
+                                </PromptStashProvider>
+                              </KeybindProvider>
+                            </LocalProvider>
+                          </ThemeProvider>
+                        </ConnectionProvider>
                       </TuiConfigProvider>
                     </RouteProvider>
                   </ToastProvider>
@@ -284,6 +289,7 @@ function App() {
   })
 
   const args = useArgs()
+  const connection = useConnection()
   onMount(() => {
     batch(() => {
       if (args.agent) local.agent.set(args.agent)
@@ -299,7 +305,7 @@ function App() {
         local.model.set({ providerID, modelID }, { recent: true })
       }
       // Handle --session without --fork immediately (fork is handled in createEffect below)
-      if (args.sessionID && !args.fork) {
+      if (connection.initial && args.sessionID && !args.fork) {
         route.navigate({
           type: "session",
           sessionID: args.sessionID,
@@ -311,7 +317,7 @@ function App() {
   let continued = false
   createEffect(() => {
     // When using -c, session list is loaded in blocking phase, so we can navigate at "partial"
-    if (continued || sync.status === "loading" || !args.continue) return
+    if (continued || !connection.initial || sync.status === "loading" || !args.continue) return
     const match = sync.data.session
       .toSorted((a, b) => b.time.updated - a.time.updated)
       .find((x) => x.parentID === undefined)?.id
@@ -336,7 +342,7 @@ function App() {
   // to avoid a race where reconcile overwrites the newly forked session)
   let forked = false
   createEffect(() => {
-    if (forked || sync.status !== "complete" || !args.sessionID || !args.fork) return
+    if (forked || !connection.initial || sync.status !== "complete" || !args.sessionID || !args.fork) return
     forked = true
     sdk.client.session.fork({ sessionID: args.sessionID }).then((result) => {
       if (result.data?.id) {
