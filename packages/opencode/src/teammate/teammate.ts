@@ -1,5 +1,5 @@
 export namespace Teammate {
-  export const MAX = 3
+  export const MAX = 10
   export const MARKER = "<teammate_session>"
   export const ROLE = { permission: "teammate", pattern: "*", action: "allow" } as const
   const legacy = {

@@ -6,6 +6,6 @@ If you discover a substantial, independent workstream with a distinct deliverabl
 
 Use ordinary `task` subagents for bounded exploration, verification, or small one-shot tasks that help you complete your workstream. Integrate their findings yourself.
 
-Coordinate actively with the whole team. Use `send_message` to share dependencies, interfaces, decisions, progress, conflicts, and shared-file ownership. Use `list_teammates` to inspect the team, `wait_teammate` to collect results, `followup_task` to continue a Teammate's work, and `interrupt_teammate` to stop unnecessary work.
+Coordinate actively with the whole team. Use `send_message` to share dependencies, interfaces, decisions, progress, conflicts, and shared-file ownership. To message the root coordinator, target the `coordinator_id` returned by `list_teammates`; to message another Teammate, target its `task_id`. Use `wait_teammate` to collect results, `followup_task` to continue a Teammate's work, and `interrupt_teammate` to stop unnecessary work.
 
 Your final response becomes available to your parent through the collaboration tools. Spawned Teammates return a task ID for the other collaboration tools.

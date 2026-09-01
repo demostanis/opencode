@@ -11,9 +11,11 @@ import { SessionPrompt } from "@/session/prompt"
 import { MessageID, SessionID } from "@/session/schema"
 import { SessionStatus } from "@/session/status"
 import { defer } from "@/util/defer"
+import { Log } from "@/util/log"
 import { Tool } from "./tool"
 
 export namespace Collaboration {
+  const log = Log.create({ service: "tool.collaboration" })
   const TEAMMATE_INSTRUCTION = [
     Teammate.MARKER,
     "You are a delegated Teammate running the Build Agent, not the coordinating root.",
@@ -211,6 +213,7 @@ export namespace Collaboration {
     return {
       task_id: entry.id,
       parent_id: entry.parent,
+      coordinator_id: entry.root,
       agent: entry.agent,
       description: entry.description,
       status: entry.status,
@@ -308,6 +311,55 @@ export namespace Collaboration {
         task_ids: entries.map((entry) => entry.id),
       },
     })
+  }
+
+  async function coordinator(ctx: Tool.Context, rootID: SessionID, message: string) {
+    if (ctx.sessionID === rootID) throw new Error("The root coordinator cannot message itself")
+    await ctx.ask({
+      permission: "teammate",
+      patterns: ["build"],
+      always: ["*"],
+      metadata: { task_ids: [rootID] },
+    })
+    available(ctx.abort)
+    const user = (await Session.messages({ sessionID: rootID })).findLast((item) => item.info.role === "user")
+    if (!user || user.info.role !== "user") throw new Error("Unable to resolve the root coordinator runtime")
+    const sender = state().entries.get(ctx.sessionID)
+    const parts = await SessionPrompt.resolvePromptParts(
+      [
+        "<teammate-message>",
+        `sender_session_id: ${ctx.sessionID}`,
+        `sender_agent: ${ctx.agent}`,
+        `sender_message_id: ${ctx.messageID}`,
+        ...(sender ? [`sender_workstream: ${sender.description}`] : []),
+        "",
+        message,
+        "</teammate-message>",
+      ].join("\n"),
+    )
+    available(ctx.abort)
+    const queued = await SessionPrompt.prompt({
+      sessionID: rootID,
+      messageID: MessageID.ascending(),
+      model: user.info.model,
+      agent: user.info.agent,
+      variant: user.info.variant,
+      system: user.info.system,
+      memory: user.info.memory,
+      format: user.info.format,
+      tools: user.info.tools,
+      noReply: true,
+      deferred: true,
+      parts,
+    })
+    void SessionPrompt.loop({ sessionID: rootID }).catch((err) =>
+      log.error("failed to deliver Teammate message", {
+        sessionID: rootID,
+        messageID: queued.info.id,
+        err,
+      }),
+    )
+    return queued
   }
 
   async function settle(promise: Promise<unknown>, signal: AbortSignal) {
@@ -411,14 +463,26 @@ export namespace Collaboration {
   })
 
   const target = z.object({
-    task_id: z.string().describe("The task ID returned by spawn_teammate"),
+    task_id: z
+      .string()
+      .describe("A Teammate task ID returned by spawn_teammate, or the coordinator ID from list_teammates"),
     message: z.string().describe("The message or additional context to send"),
   })
 
   export const SendMessageTool = Tool.define("send_message", {
-    description: "Queue a message for an existing Teammate. It runs as the next turn after its current work.",
+    description:
+      "Queue a message for an existing Teammate or the root coordinator. It runs as the next turn after the target's current work.",
     parameters: target,
     async execute(params, ctx) {
+      const rootID = await root(ctx.sessionID)
+      if (params.task_id === rootID) {
+        await coordinator(ctx, rootID, params.message)
+        return {
+          title: "Message coordinator",
+          metadata: { sessionId: rootID, status: "queued" },
+          output: "Message queued for coordinator.",
+        }
+      }
       const entry = await find(ctx.sessionID, params.task_id)
       await authorize(ctx, [entry])
       available(ctx.abort)
@@ -505,7 +569,7 @@ export namespace Collaboration {
   })
 
   export const ListTeammatesTool = Tool.define("list_teammates", {
-    description: "List Teammates in the current team with their workstreams and statuses.",
+    description: "List Teammates with their workstreams, statuses, and root coordinator ID.",
     parameters: z.object({}),
     async execute(_params, ctx) {
       const rootID = await root(ctx.sessionID)

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
+import { Bus } from "../../src/bus"
 import { Teammate } from "../../src/teammate/teammate"
 import { Instance } from "../../src/project/instance"
 import { ModelsDev } from "../../src/provider/models"
@@ -9,6 +10,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID } from "../../src/session/schema"
+import { SessionStatus } from "../../src/session/status"
 import { Collaboration } from "../../src/tool/collaboration"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
@@ -137,7 +139,7 @@ describe("tool.collaboration", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const session = await Session.create({})
+        const session = await Session.create({ title: "Root coordination" })
         const user = await Session.updateMessage({
           id: MessageID.ascending(),
           sessionID: session.id,
@@ -168,6 +170,7 @@ describe("tool.collaboration", () => {
           },
           modelID: ModelID.make(model.id),
           providerID: ProviderID.openai,
+          finish: "stop",
           time: { created: Date.now() },
         } satisfies MessageV2.Assistant)
         const build = await Agent.get("build")
@@ -204,6 +207,7 @@ describe("tool.collaboration", () => {
         const teammates = JSON.parse(result.output) as Array<{
           task_id: string
           parent_id: string
+          coordinator_id: string
           agent: string
           description: string
           status: string
@@ -214,6 +218,7 @@ describe("tool.collaboration", () => {
           {
             task_id: taskID,
             parent_id: session.id,
+            coordinator_id: session.id,
             agent: "build",
             description: "Research child",
             status: "completed",
@@ -234,6 +239,117 @@ describe("tool.collaboration", () => {
         expect(body).toContain("You are a delegated Teammate")
         expect(body).toContain("Never pass your assigned workstream")
         expect(body).toContain("Use ordinary task subagents")
+
+        let noticed = () => {}
+        let open = () => {}
+        let turn = 0
+        const active = new Promise<void>((resolve) => {
+          noticed = resolve
+        })
+        const inbox = new Promise<void>((resolve) => {
+          open = resolve
+        })
+        const baseline = state.requests.length
+        state.reply = async () => {
+          turn++
+          if (turn > 1) return response("coordinator received update")
+          noticed()
+          await inbox
+          return response("coordinator initial result")
+        }
+        const coordinating = SessionPrompt.prompt({
+          sessionID: session.id,
+          messageID: MessageID.ascending(),
+          model: {
+            providerID: ProviderID.openai,
+            modelID: ModelID.make(model.id),
+          },
+          agent: "build",
+          variant: "ultra",
+          tools: { bash: false },
+          parts: await SessionPrompt.resolvePromptParts("Continue coordinating the team."),
+        })
+        await active
+        const child = (await Session.messages({ sessionID: taskID })).findLast(
+          (message) => message.info.role === "assistant",
+        )
+        if (!child || child.info.role !== "assistant") throw new Error("Missing Teammate response")
+        const source = {
+          ...ctx,
+          sessionID: taskID,
+          messageID: child.info.id,
+          ask: async (request: { permission: string }) => {
+            expect(request.permission).toBe("teammate")
+          },
+        }
+        const delivered = await send.execute(
+          { task_id: session.id, message: "Backend contract is ready for integration." },
+          source,
+        )
+        expect(delivered.output).toBe("Message queued for coordinator.")
+        expect(state.requests).toHaveLength(baseline + 1)
+        const pending = (await Session.messages({ sessionID: session.id })).findLast(
+          (message) => message.info.role === "user" && message.info.deferred,
+        )
+        if (!pending || pending.info.role !== "user") throw new Error("Missing queued coordinator message")
+        expect(pending.info).toMatchObject({
+          agent: "build",
+          model: { providerID: "openai", modelID: model.id },
+          variant: "ultra",
+          deferred: true,
+          tools: { bash: false },
+        })
+        const update = pending.parts.find((part) => part.type === "text")?.text ?? ""
+        expect(update).toContain(`sender_session_id: ${taskID}`)
+        expect(update).toContain("sender_agent: build")
+        expect(update).toContain(`sender_message_id: ${child.info.id}`)
+        expect(update).toContain("sender_workstream: Research child")
+        expect(update).toContain("Backend contract is ready for integration.")
+        open()
+        await coordinating
+        expect(state.requests).toHaveLength(baseline + 2)
+        expect(
+          (await Session.messages({ sessionID: session.id }))
+            .find((message) => message.info.role === "assistant" && message.info.parentID === pending.info.id)
+            ?.parts.find((part) => part.type === "text")?.text,
+        ).toBe("coordinator received update")
+
+        const idlebase = state.requests.length
+        let idlenoticed = () => {}
+        let idleopen = () => {}
+        const idleactive = new Promise<void>((resolve) => {
+          idlenoticed = resolve
+        })
+        const idlegate = new Promise<void>((resolve) => {
+          idleopen = resolve
+        })
+        state.reply = async () => {
+          idlenoticed()
+          await idlegate
+          return response("idle coordinator received update")
+        }
+        let unsub = () => {}
+        const idlefinished = new Promise<void>((resolve) => {
+          unsub = Bus.subscribe(SessionStatus.Event.Status, (event) => {
+            if (event.properties.sessionID !== session.id || event.properties.status.type !== "idle") return
+            unsub()
+            resolve()
+          })
+        })
+        await send.execute({ task_id: session.id, message: "Tests are ready for final review." }, source)
+        await idleactive
+        const idle = (await Session.messages({ sessionID: session.id })).findLast(
+          (message) => message.info.role === "user" && message.info.deferred,
+        )
+        if (!idle || idle.info.role !== "user") throw new Error("Missing idle coordinator message")
+        idleopen()
+        await idlefinished
+        expect(state.requests).toHaveLength(idlebase + 1)
+        expect(
+          (await Session.messages({ sessionID: session.id }))
+            .find((message) => message.info.role === "assistant" && message.info.parentID === idle.info.id)
+            ?.parts.find((part) => part.type === "text")?.text,
+        ).toBe("idle coordinator received update")
 
         const queuedReplies = ["queued base result", "queued message result"]
         state.reply = () => response(queuedReplies.shift() ?? "unexpected queued result")
@@ -318,7 +434,7 @@ describe("tool.collaboration", () => {
           return response("held result")
         }
         const held = []
-        for (let i = 1; i <= 3; i++) {
+        for (let i = 1; i <= Teammate.MAX; i++) {
           held.push(
             await spawn.execute(
               {
@@ -329,16 +445,16 @@ describe("tool.collaboration", () => {
             ),
           )
         }
-        expect(() => Collaboration.guard(taskID)).toThrow("3 active across the session tree")
+        expect(() => Collaboration.guard(taskID)).toThrow("10 active across the session tree")
         await expect(
           spawn.execute(
             {
-              description: "Rejected fourth child",
+              description: "Rejected eleventh child",
               prompt: "This should not start.",
             },
             ctx,
           ),
-        ).rejects.toThrow('3 active across the session tree). Active Teammates: build "Held child 1"')
+        ).rejects.toThrow('10 active across the session tree). Active Teammates: build "Held child 1"')
         release()
 
         const ids = held.map((item) => item.metadata.sessionId)
@@ -347,7 +463,7 @@ describe("tool.collaboration", () => {
           const result = await wait.execute({ task_ids: ids, timeout_ms: 5_000 }, ctx)
           statuses = JSON.parse(result.output).map((item: { status: string }) => item.status)
         } while (statuses.includes("running"))
-        expect(statuses).toEqual(["completed", "completed", "completed"])
+        expect(statuses).toEqual(Array.from({ length: Teammate.MAX }, () => "completed"))
 
         let directSeen = () => {}
         let directRelease = () => {}

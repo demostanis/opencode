@@ -898,7 +898,7 @@ describe("session.llm.stream", () => {
           expect(JSON.stringify(body).includes("You are a Teammate running the Build Agent")).toBe(
             team && item.teammate === true,
           )
-          expect(JSON.stringify(body).includes("There are 4 available concurrency slots")).toBe(team)
+          expect(JSON.stringify(body).includes("There are 11 available concurrency slots")).toBe(team)
           expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe(
             item.variant === "ultra" ? "max" : "medium",
           )
