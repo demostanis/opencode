@@ -4,34 +4,43 @@ import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { SystemPrompt } from "../../src/session/system"
 import { tmpdir } from "../fixture/fixture"
-import { MultiAgent } from "../../src/agent/multi-agent"
+import { Teammate } from "../../src/teammate/teammate"
 
 describe("session.system", () => {
-  test("multi-agent prompt describes root collaboration", () => {
-    const [usage, mode] = SystemPrompt.multiagent()
+  test("Teammate prompt describes root collaboration", () => {
+    const [usage, mode] = SystemPrompt.teammate()
 
-    expect(usage).toContain("You are `/root`, the primary agent")
-    expect(usage).toContain("spawn_agent")
-    expect(usage).toContain("wait_agent")
-    expect(usage).toContain("All agents share the same directory")
+    expect(usage).toContain("You are `/root`, the coordinator of a team of Teammates")
+    expect(usage).toContain("Every Teammate runs the Build Agent")
+    expect(usage).toContain("spawn_teammate")
+    expect(usage).toContain("wait_teammate")
+    expect(usage).toContain("All Teammates share the same directory")
+    expect(usage).toContain("one Teammate can own the frontend, another the backend")
+    expect(usage).toContain("Use ordinary `task` subagents for bounded supporting work")
+    expect(usage).toContain("share dependencies, interfaces, decisions, progress, conflicts")
     expect(usage).toContain("There are 4 available concurrency slots")
-    expect(mode).toContain("Proactive multi-agent delegation is active")
-    expect(mode).toContain("no matter if you are root or subagent")
+    expect(mode).toContain("Proactive Teammate collaboration is active")
+    expect(mode).toContain("Favor a few broad, complementary assignments over recursive decomposition")
+    expect(mode).toContain("Never pass an assigned workstream wholesale to another Teammate")
   })
 
-  test("multi-agent prompt describes delegated agents", () => {
-    const [usage, mode] = SystemPrompt.multiagent(true)
+  test("Teammate prompt requires members to own their workstreams", () => {
+    const [usage, mode] = SystemPrompt.teammate(true)
 
-    expect(usage).toContain("You are an agent in a team of agents")
-    expect(usage).toContain("available to your parent agent through the collaboration tools")
+    expect(usage).toContain("You are a Teammate running the Build Agent in a collaborative team")
+    expect(usage).toContain("Own and complete the distinct workstream assigned to you")
+    expect(usage).toContain("Do not pass your assigned workstream")
+    expect(usage).toContain("Use ordinary `task` subagents for bounded exploration")
     expect(usage).not.toContain("You are `/root`")
-    expect(mode).toContain("Proactive multi-agent delegation is active")
+    expect(mode).toContain("Proactive Teammate collaboration is active")
   })
 
-  test("multi-agent marker identifies delegated sessions", () => {
-    expect(MultiAgent.subagent(`instructions\n${MultiAgent.SUBAGENT}`)).toBe(true)
-    expect(MultiAgent.subagent(undefined, [MultiAgent.ROLE])).toBe(true)
-    expect(MultiAgent.subagent("instructions")).toBe(false)
+  test("Teammate marker identifies team sessions", () => {
+    expect(Teammate.session(`instructions\n${Teammate.MARKER}`)).toBe(true)
+    expect(Teammate.session(undefined, [Teammate.ROLE])).toBe(true)
+    expect(Teammate.session("instructions\n<multi_agent_subagent>")).toBe(true)
+    expect(Teammate.session(undefined, [{ permission: "multiagent", pattern: "*" }])).toBe(true)
+    expect(Teammate.session("instructions")).toBe(false)
   })
 
   test("skills output is sorted by name and stable across calls", async () => {

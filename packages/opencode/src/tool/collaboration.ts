@@ -1,9 +1,8 @@
 import z from "zod"
-import { MultiAgent } from "@/agent/multi-agent"
+import { Teammate } from "@/teammate/teammate"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
-import { PermissionNext } from "@/permission"
 import { Instance } from "@/project/instance"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Session } from "@/session"
@@ -15,12 +14,14 @@ import { defer } from "@/util/defer"
 import { Tool } from "./tool"
 
 export namespace Collaboration {
-  const DELEGATED_AGENT_INSTRUCTION = [
-    MultiAgent.SUBAGENT,
-    "You are a delegated subagent, not the coordinating root agent.",
-    "Complete the assigned task yourself and return a concise result to your parent.",
-    "Do not spawn another agent merely to hand off, repeat, or parallelize this assigned task.",
-    "Only delegate when a genuinely independent subtask is necessary to complete your own assignment.",
+  const TEAMMATE_INSTRUCTION = [
+    Teammate.MARKER,
+    "You are a delegated Teammate running the Build Agent, not the coordinating root.",
+    "Own and complete your assigned workstream, integrate supporting results, and return a concise outcome to your parent.",
+    "Never pass your assigned workstream, or most of it, to another Teammate or create a delegation chain for the same work.",
+    "Use ordinary task subagents for bounded exploration, verification, and small one-shot supporting tasks.",
+    "Only spawn a Teammate for a newly discovered, substantial workstream with a distinct deliverable and no current owner.",
+    "Communicate dependencies, decisions, progress, conflicts, and shared-file ownership with the team.",
   ].join(" ")
 
   type Status = "running" | "completed" | "failed" | "interrupted"
@@ -124,11 +125,11 @@ export namespace Collaboration {
   }
 
   function limit(rootID: SessionID) {
-    const agents = running(rootID)
+    const peers = running(rootID)
       .map((entry) => `${entry.agent} "${entry.description}" (${entry.id})`)
       .join(", ")
     return new Error(
-      `Multi-agent concurrency limit reached (${MultiAgent.MAX} active across the session tree). Active agents: ${agents}`,
+      `Teammate concurrency limit reached (${Teammate.MAX} active across the session tree). Active Teammates: ${peers}`,
     )
   }
 
@@ -148,7 +149,7 @@ export namespace Collaboration {
         void finish(entry, finalizing)
       }
     }
-    if (active(entry.root) >= MultiAgent.MAX) throw limit(entry.root)
+    if (active(entry.root) >= Teammate.MAX) throw limit(entry.root)
     const previous = entry.status
     const run = ++entry.run
     entry.pending = 1
@@ -201,8 +202,8 @@ export namespace Collaboration {
 
   async function find(sessionID: SessionID, taskID: string) {
     const entry = state().entries.get(SessionID.make(taskID))
-    if (!entry) throw new Error(`Unknown agent task: ${taskID}`)
-    if (entry.root !== (await root(sessionID))) throw new Error(`Agent task ${taskID} belongs to another session tree`)
+    if (!entry) throw new Error(`Unknown Teammate task: ${taskID}`)
+    if (entry.root !== (await root(sessionID))) throw new Error(`Teammate task ${taskID} belongs to another team`)
     return entry
   }
 
@@ -268,7 +269,7 @@ export namespace Collaboration {
           model: entry.model,
           agent: entry.agent,
           variant: entry.variant,
-          system: DELEGATED_AGENT_INSTRUCTION,
+          system: TEAMMATE_INSTRUCTION,
           tools: {
             todowrite: false,
             todoread: false,
@@ -293,14 +294,14 @@ export namespace Collaboration {
   }
 
   function available(signal: AbortSignal) {
-    if (signal.aborted) throw new Error("Agent operation interrupted")
+    if (signal.aborted) throw new Error("Teammate operation interrupted")
   }
 
   async function authorize(ctx: Tool.Context, entries: Entry[]) {
     const patterns = [...new Set(entries.map((entry) => entry.agent))]
     if (patterns.length === 0) return
     await ctx.ask({
-      permission: "task",
+      permission: "teammate",
       patterns,
       always: ["*"],
       metadata: {
@@ -319,77 +320,63 @@ export namespace Collaboration {
     })
     using _ = defer(cleanup)
     await Promise.race([promise, abort])
-    if (signal.aborted) throw new Error("Agent operation interrupted")
+    if (signal.aborted) throw new Error("Teammate operation interrupted")
   }
 
   const spawn = z.object({
-    description: z.string().describe("A short description of the delegated task"),
-    prompt: z.string().describe("Detailed instructions and expected output for the subagent"),
-    subagent_type: z.string().describe("The specialized subagent type to run"),
+    description: z.string().describe("A short description of the Teammate's workstream"),
+    prompt: z.string().describe("Detailed workstream instructions and expected output for the Teammate"),
   })
 
-  export const SpawnAgentTool = Tool.define("spawn_agent", async (ctx) => {
-    const agents = await Agent.list().then((items) => items.filter((agent) => agent.mode !== "primary"))
-    const caller = ctx?.agent
-    const visible = caller
-      ? agents.filter((agent) => PermissionNext.evaluate("task", agent.name, caller.permission).action !== "deny")
-      : agents
+  export const SpawnTeammateTool = Tool.define("spawn_teammate", async () => {
     return {
-      description: [
-        "Start a subagent in the background for independent, bounded work. The call returns immediately; use wait_agent to collect results.",
-        "Available subagents:",
-        ...visible.map((agent) => `- ${agent.name}: ${agent.description ?? "User-defined subagent"}`),
-      ].join("\n"),
+      description:
+        "Start a Build Teammate in the background for a separate, substantial workstream with a clear deliverable and owner. Do not use this for exploration, verification, or small one-shot work; use the task tool instead. The call returns immediately; use wait_teammate to collect results.",
       parameters: spawn,
       async execute(params: z.infer<typeof spawn>, ctx) {
         if (!ctx.extra?.bypassAgentCheck) {
           await ctx.ask({
-            permission: "task",
-            patterns: [params.subagent_type],
+            permission: "teammate",
+            patterns: ["build"],
             always: ["*"],
             metadata: {
               description: params.description,
-              subagent_type: params.subagent_type,
             },
           })
         }
         available(ctx.abort)
-        const requested = await Agent.get(params.subagent_type)
-        if (!requested || requested.mode === "primary") {
-          throw new Error(`Unknown subagent type: ${params.subagent_type}`)
-        }
+        const agent = await Agent.get("build")
+        if (!agent) throw new Error("Build agent is unavailable")
         const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-        if (msg.info.role !== "assistant") throw new Error("Agent spawning requires an assistant message")
+        if (msg.info.role !== "assistant") throw new Error("Teammate spawning requires an assistant message")
         const rootID = await root(ctx.sessionID)
         const rootMessage = (await Session.messages({ sessionID: rootID })).findLast(
           (message) => message.info.role === "user",
         )
         if (!rootMessage || rootMessage.info.role !== "user") {
-          throw new Error("Unable to resolve the root multi-agent runtime")
+          throw new Error("Unable to resolve the root Teammate runtime")
         }
-        const agent = await Agent.get(rootMessage.info.agent)
-        if (!agent) throw new Error(`Unknown root agent: ${rootMessage.info.agent}`)
         const model = rootMessage.info.model
         const variant = rootMessage.info.variant
         prune(rootID)
-        if (active(rootID) >= MultiAgent.MAX) {
+        if (active(rootID) >= Teammate.MAX) {
           throw limit(rootID)
         }
         available(ctx.abort)
         const session = await Session.create({
           parentID: ctx.sessionID,
-          title: params.description + ` (@${agent.name} agent)`,
+          title: params.description + ` (@${agent.name} teammate)`,
           permission: [
-            MultiAgent.ROLE,
+            Teammate.ROLE,
             { permission: "todowrite", pattern: "*", action: "deny" },
             { permission: "todoread", pattern: "*", action: "deny" },
           ],
         })
         if (ctx.abort.aborted) {
           await Session.remove(session.id)
-          throw new Error("Agent operation interrupted")
+          throw new Error("Teammate operation interrupted")
         }
-        if (active(rootID) >= MultiAgent.MAX) {
+        if (active(rootID) >= Teammate.MAX) {
           await Session.remove(session.id)
           throw limit(rootID)
         }
@@ -417,19 +404,19 @@ export namespace Collaboration {
             model,
             status: entry.status,
           },
-          output: [`Spawned ${agent.name} agent.`, `task_id: ${entry.id}`].join("\n"),
+          output: [`Spawned Build Teammate.`, `task_id: ${entry.id}`].join("\n"),
         }
       },
     }
   })
 
   const target = z.object({
-    task_id: z.string().describe("The task ID returned by spawn_agent"),
+    task_id: z.string().describe("The task ID returned by spawn_teammate"),
     message: z.string().describe("The message or additional context to send"),
   })
 
   export const SendMessageTool = Tool.define("send_message", {
-    description: "Queue a message for an existing subagent. It runs as the next turn after its current work.",
+    description: "Queue a message for an existing Teammate. It runs as the next turn after its current work.",
     parameters: target,
     async execute(params, ctx) {
       const entry = await find(ctx.sessionID, params.task_id)
@@ -445,7 +432,7 @@ export namespace Collaboration {
   })
 
   export const FollowupTaskTool = Tool.define("followup_task", {
-    description: "Give an existing subagent another task while preserving its context.",
+    description: "Give an existing Teammate follow-up work in its workstream while preserving its context.",
     parameters: target,
     async execute(params, ctx) {
       const entry = await find(ctx.sessionID, params.task_id)
@@ -462,19 +449,22 @@ export namespace Collaboration {
   })
 
   const wait = z.object({
-    task_ids: z.array(z.string()).optional().describe("Task IDs to wait for; omit to wait for any agent in this tree"),
+    task_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Task IDs to wait for; omit to wait for any Teammate in this team"),
     timeout_ms: z.number().int().min(0).max(3_600_000).optional().describe("Maximum wait time in milliseconds"),
   })
 
-  export const WaitAgentTool = Tool.define("wait_agent", {
-    description: "Wait for subagent progress and return the latest statuses and completed results.",
+  export const WaitTeammateTool = Tool.define("wait_teammate", {
+    description: "Wait for Teammate progress and return the latest statuses and completed results.",
     parameters: wait,
     async execute(params, ctx) {
       const rootID = await root(ctx.sessionID)
       const entries = params.task_ids?.length
         ? await Promise.all(params.task_ids.map((id) => find(ctx.sessionID, id)))
         : [...state().entries.values()].filter((entry) => entry.root === rootID)
-      if (entries.length === 0) throw new Error("No subagents to wait for")
+      if (entries.length === 0) throw new Error("No Teammates to wait for")
       await authorize(ctx, entries)
       const running = entries.filter((entry) => entry.status === "running")
       if (running.length > 0) {
@@ -484,7 +474,7 @@ export namespace Collaboration {
         )
       }
       return {
-        title: "Agent results",
+        title: "Teammate results",
         metadata: { count: entries.length },
         output: JSON.stringify(
           entries.map((entry) => view(entry)),
@@ -496,11 +486,11 @@ export namespace Collaboration {
   })
 
   const task = z.object({
-    task_id: z.string().describe("The task ID returned by spawn_agent"),
+    task_id: z.string().describe("The task ID returned by spawn_teammate"),
   })
 
-  export const InterruptAgentTool = Tool.define("interrupt_agent", {
-    description: "Stop a running subagent while preserving its session for a later follow-up.",
+  export const InterruptTeammateTool = Tool.define("interrupt_teammate", {
+    description: "Stop a running Teammate while preserving its session for a later follow-up.",
     parameters: task,
     async execute(params, ctx) {
       const entry = await find(ctx.sessionID, params.task_id)
@@ -509,13 +499,13 @@ export namespace Collaboration {
       return {
         title: `Interrupt ${entry.agent}`,
         metadata: { sessionId: entry.id, status: entry.status },
-        output: entry.status === "interrupted" ? "Agent interrupted." : `Agent is already ${entry.status}.`,
+        output: entry.status === "interrupted" ? "Teammate interrupted." : `Teammate is already ${entry.status}.`,
       }
     },
   })
 
-  export const ListAgentsTool = Tool.define("list_agents", {
-    description: "List subagents in the current session tree with their tasks and statuses.",
+  export const ListTeammatesTool = Tool.define("list_teammates", {
+    description: "List Teammates in the current team with their workstreams and statuses.",
     parameters: z.object({}),
     async execute(_params, ctx) {
       const rootID = await root(ctx.sessionID)
@@ -523,7 +513,7 @@ export namespace Collaboration {
       const entries = [...state().entries.values()].filter((entry) => entry.root === rootID)
       await authorize(ctx, entries)
       return {
-        title: "Agent tree",
+        title: "Teammates",
         metadata: { count: entries.length },
         output: JSON.stringify(
           entries.map((entry) => view(entry, false)),
@@ -535,11 +525,11 @@ export namespace Collaboration {
   })
 
   export const tools = [
-    SpawnAgentTool,
+    SpawnTeammateTool,
     SendMessageTool,
     FollowupTaskTool,
-    WaitAgentTool,
-    InterruptAgentTool,
-    ListAgentsTool,
+    WaitTeammateTool,
+    InterruptTeammateTool,
+    ListTeammatesTool,
   ]
 }

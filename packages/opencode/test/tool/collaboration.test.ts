@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
-import { MultiAgent } from "../../src/agent/multi-agent"
+import { Teammate } from "../../src/teammate/teammate"
 import { Instance } from "../../src/project/instance"
 import { ModelsDev } from "../../src/provider/models"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -95,7 +95,7 @@ afterAll(() => {
 })
 
 describe("tool.collaboration", () => {
-  test("spawns a background agent and returns its result through wait_agent", async () => {
+  test("spawns a background Teammate and returns its result through wait_teammate", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
 
@@ -171,10 +171,13 @@ describe("tool.collaboration", () => {
           time: { created: Date.now() },
         } satisfies MessageV2.Assistant)
         const build = await Agent.get("build")
-        const spawn = await Collaboration.SpawnAgentTool.init({ agent: build })
+        const spawn = await Collaboration.SpawnTeammateTool.init({ agent: build })
         const send = await Collaboration.SendMessageTool.init({ agent: build })
         const followup = await Collaboration.FollowupTaskTool.init({ agent: build })
-        const wait = await Collaboration.WaitAgentTool.init({ agent: build })
+        const wait = await Collaboration.WaitTeammateTool.init({ agent: build })
+        expect(spawn.description).toContain("Start a Build Teammate")
+        expect(spawn.description).toContain("separate, substantial workstream")
+        expect(spawn.description).toContain("use the task tool instead")
         let asks = 0
         const ctx = {
           sessionID: session.id,
@@ -184,7 +187,7 @@ describe("tool.collaboration", () => {
           messages: [],
           metadata: () => {},
           ask: async (request: { permission: string }) => {
-            expect(request.permission).toBe("task")
+            expect(request.permission).toBe("teammate")
             asks++
           },
         }
@@ -193,13 +196,12 @@ describe("tool.collaboration", () => {
           {
             description: "Research child",
             prompt: "Return child result.",
-            subagent_type: "general",
           },
           ctx,
         )
         const taskID = started.metadata.sessionId
         const result = await wait.execute({ task_ids: [taskID], timeout_ms: 5_000 }, ctx)
-        const agents = JSON.parse(result.output) as Array<{
+        const teammates = JSON.parse(result.output) as Array<{
           task_id: string
           parent_id: string
           agent: string
@@ -208,7 +210,7 @@ describe("tool.collaboration", () => {
           result?: string
         }>
 
-        expect(agents).toEqual([
+        expect(teammates).toEqual([
           {
             task_id: taskID,
             parent_id: session.id,
@@ -220,7 +222,7 @@ describe("tool.collaboration", () => {
         ])
         expect(await Session.get(taskID)).toMatchObject({
           parentID: session.id,
-          title: "Research child (@build agent)",
+          title: "Research child (@build teammate)",
         })
         expect((await Session.messages({ sessionID: taskID }))[0]?.info).toMatchObject({
           agent: "build",
@@ -228,7 +230,10 @@ describe("tool.collaboration", () => {
           variant: "ultra",
         })
         expect(asks).toBe(2)
-        expect(JSON.stringify(state.requests[0])).toContain("You are a delegated subagent")
+        const body = JSON.stringify(state.requests[0])
+        expect(body).toContain("You are a delegated Teammate")
+        expect(body).toContain("Never pass your assigned workstream")
+        expect(body).toContain("Use ordinary task subagents")
 
         const queuedReplies = ["queued base result", "queued message result"]
         state.reply = () => response(queuedReplies.shift() ?? "unexpected queued result")
@@ -236,7 +241,6 @@ describe("tool.collaboration", () => {
           {
             description: "Queued message child",
             prompt: "Return the queued base result.",
-            subagent_type: "general",
           },
           ctx,
         )
@@ -267,7 +271,6 @@ describe("tool.collaboration", () => {
           {
             description: "Interrupt child",
             prompt: "Wait before responding.",
-            subagent_type: "general",
           },
           { ...ctx, extra: { bypassAgentCheck: true } },
         )
@@ -294,7 +297,6 @@ describe("tool.collaboration", () => {
           {
             description: "Queue follow-up",
             prompt: "Return the initial result.",
-            subagent_type: "general",
           },
           ctx,
         )
@@ -322,7 +324,6 @@ describe("tool.collaboration", () => {
               {
                 description: `Held child ${i}`,
                 prompt: "Wait for release.",
-                subagent_type: "general",
               },
               ctx,
             ),
@@ -334,11 +335,10 @@ describe("tool.collaboration", () => {
             {
               description: "Rejected fourth child",
               prompt: "This should not start.",
-              subagent_type: "explore",
             },
             ctx,
           ),
-        ).rejects.toThrow('3 active across the session tree). Active agents: build "Held child 1"')
+        ).rejects.toThrow('3 active across the session tree). Active Teammates: build "Held child 1"')
         release()
 
         const ids = held.map((item) => item.metadata.sessionId)
@@ -381,9 +381,9 @@ describe("tool.collaboration", () => {
         await direct
         const directResult = await directWait
         const directBody = JSON.stringify(state.requests.at(-1))
-        expect(directBody).toContain("You are an agent in a team of agents")
+        expect(directBody).toContain("You are a Teammate running the Build Agent")
         expect(directBody).not.toContain("You are `/root`")
-        expect((await Session.get(taskID)).permission).toContainEqual(MultiAgent.ROLE)
+        expect((await Session.get(taskID)).permission).toContainEqual(Teammate.ROLE)
         expect(JSON.parse(directResult.output)[0]).toMatchObject({
           status: "completed",
           result: "direct interaction result",

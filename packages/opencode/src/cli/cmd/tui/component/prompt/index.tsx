@@ -251,8 +251,8 @@ export function Prompt(props: PromptProps) {
             ? "Disable Ultra mode"
             : "Enable Ultra mode",
         description: Variant.available(selectedAgent())
-          ? "Toggle proactive multi-agent mode"
-          : "Switch to Build to enable proactive multi-agent mode",
+          ? "Toggle proactive Teammate collaboration"
+          : "Switch to Build to enable proactive Teammate collaboration",
         value: "mode.ultra",
         category: "Mode",
         enabled: !props.agent && local.model.ultra.supported(),

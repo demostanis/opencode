@@ -1502,11 +1502,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           </Show>
         </box>
       </Show>
-      <Show when={props.parts.some((x) => x.type === "tool" && ["task", "spawn_agent"].includes(x.tool))}>
+      <Show
+        when={props.parts.some((x) => x.type === "tool" && ["task", "spawn_teammate", "spawn_agent"].includes(x.tool))}
+      >
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}> view subagents</span>
+            <span style={{ fg: theme.textMuted }}> view teammates / subagents</span>
           </text>
         </box>
       </Show>
@@ -1712,7 +1714,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "task"}>
           <Task {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "spawn_agent"}>
+        <Match when={["spawn_teammate", "spawn_agent"].includes(props.part.tool)}>
           <Task {...toolprops} />
         </Match>
         <Match when={props.part.tool === "apply_patch"}>
@@ -2127,7 +2129,7 @@ function WebSearch(props: ToolProps<any>) {
   )
 }
 
-function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration.SpawnAgentTool>) {
+function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration.SpawnTeammateTool>) {
   const { theme } = useTheme()
   const keybind = useKeybind()
   const { navigate } = useRoute()
@@ -2168,7 +2170,7 @@ function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration
 
   const content = createMemo(() => {
     if (!props.input.description) return ""
-    const label = props.tool === "spawn_agent" ? "Agent" : "Task"
+    const label = ["spawn_teammate", "spawn_agent"].includes(props.tool) ? "Teammate" : "Task"
     let content = [`${label} ${props.input.description}`]
 
     if (isRunning() && tools().length > 0) {
@@ -2181,7 +2183,7 @@ function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration
       content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}`)
     }
 
-    if (props.tool === "spawn_agent" && props.metadata.sessionId) {
+    if (["spawn_teammate", "spawn_agent"].includes(props.tool) && props.metadata.sessionId) {
       content.push("↳ click to inspect and interact")
     }
 

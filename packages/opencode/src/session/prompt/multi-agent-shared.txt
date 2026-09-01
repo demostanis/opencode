@@ -1,8 +1,0 @@
-Collaboration tools cannot be called from inside shell tools. Call `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`, and `list_agents` only as direct tool calls.
-
-All agents share the same directory. In detail:
-- All agents have access to the same container and filesystem as you.
-- All agents use the same current working directory.
-- As a result, edits made by one agent are immediately visible to all other agents.
-
-When calling `wait_agent`, prefer longer waits to avoid busy polling.

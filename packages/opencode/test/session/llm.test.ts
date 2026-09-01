@@ -766,7 +766,7 @@ describe("session.llm.stream", () => {
     })
   })
 
-  test("maps Ultra to max and enables collaboration tools only for Ultra", async () => {
+  test("maps Ultra to max and enables collaboration tools only for Teammate sessions", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
 
@@ -853,9 +853,10 @@ describe("session.llm.stream", () => {
         })
 
         for (const item of [
-          { id: "ultra-root", variant: "ultra", subagent: false },
-          { id: "medium-root", variant: "medium", subagent: false },
-          { id: "ultra-subagent", variant: "ultra", subagent: true },
+          { id: "ultra-root", variant: "ultra", teammate: false },
+          { id: "medium-root", variant: "medium", teammate: false },
+          { id: "ultra-teammate", variant: "ultra", teammate: true },
+          { id: "ultra-subagent", variant: "ultra", teammate: undefined },
         ] as const) {
           const request = waitRequest("/responses", response())
           const user = {
@@ -870,13 +871,13 @@ describe("session.llm.stream", () => {
           const stream = await LLM.stream({
             user,
             sessionID: user.sessionID,
-            subagent: item.subagent,
+            teammate: item.teammate,
             model: resolved,
             agent,
             system: [],
             abort: new AbortController().signal,
             messages: [{ role: "user", content: "Work" }],
-            tools: { bash: noop, spawn_agent: noop, task: noop },
+            tools: { bash: noop, spawn_teammate: noop, task: noop },
           })
 
           for await (const _ of stream.fullStream) {
@@ -886,21 +887,18 @@ describe("session.llm.stream", () => {
           const names = (body.tools as Array<{ name?: string; function?: { name?: string } }> | undefined)?.map(
             (item) => item.name ?? item.function?.name,
           )
+          const team = item.variant === "ultra" && item.teammate !== undefined
           expect(names).toContain("bash")
-          expect(names?.includes("spawn_agent")).toBe(item.variant === "ultra")
+          expect(names?.includes("spawn_teammate")).toBe(team)
           expect(names).toContain("task")
-          expect(JSON.stringify(body).includes("Proactive multi-agent delegation is active")).toBe(
-            item.variant === "ultra",
+          expect(JSON.stringify(body).includes("Proactive Teammate collaboration is active")).toBe(team)
+          expect(JSON.stringify(body).includes("You are `/root`, the coordinator of a team of Teammates")).toBe(
+            team && !item.teammate,
           )
-          expect(JSON.stringify(body).includes("You are `/root`, the primary agent")).toBe(
-            item.variant === "ultra" && !item.subagent,
+          expect(JSON.stringify(body).includes("You are a Teammate running the Build Agent")).toBe(
+            team && item.teammate === true,
           )
-          expect(JSON.stringify(body).includes("You are an agent in a team of agents")).toBe(
-            item.variant === "ultra" && item.subagent,
-          )
-          expect(JSON.stringify(body).includes("There are 4 available concurrency slots")).toBe(
-            item.variant === "ultra",
-          )
+          expect(JSON.stringify(body).includes("There are 4 available concurrency slots")).toBe(team)
           expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe(
             item.variant === "ultra" ? "max" : "medium",
           )

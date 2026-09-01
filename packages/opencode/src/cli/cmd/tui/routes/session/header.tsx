@@ -86,7 +86,7 @@ export function Header() {
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
-  const sessionType = createMemo(() => (parse(session()?.title ?? "").type === "agent" ? "Agent" : "Subagent"))
+  const sessionType = createMemo(() => (parse(session()?.title ?? "").type === "teammate" ? "Teammate" : "Subagent"))
 
   return (
     <box flexShrink={0}>

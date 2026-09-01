@@ -70,7 +70,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
       })
       .toSorted((a, b) => a.id.localeCompare(b.id))
   })
-  const agents = createMemo(() => workers().filter((worker) => worker.type === "agent"))
+  const teammates = createMemo(() => workers().filter((worker) => worker.type === "teammate"))
   const subagents = createMemo(() => workers().filter((worker) => worker.type === "subagent"))
 
   const [expanded, setExpanded] = createStore({
@@ -80,7 +80,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     images: true,
     lsp: true,
     pty: true,
-    agents: true,
+    teammates: true,
     subagents: true,
   })
 
@@ -202,38 +202,40 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
             </box>
           </Show>
 
-          <Show when={agents().length > 0}>
+          <Show when={teammates().length > 0}>
             <box>
-              <box flexDirection="row" gap={1} onMouseDown={() => setExpanded("agents", !expanded.agents)}>
-                <text fg={theme.text}>{expanded.agents ? "▼" : "▶"}</text>
+              <box flexDirection="row" gap={1} onMouseDown={() => setExpanded("teammates", !expanded.teammates)}>
+                <text fg={theme.text}>{expanded.teammates ? "▼" : "▶"}</text>
                 <text fg={theme.text}>
-                  <b>Multi-agent team</b>
+                  <b>Teammates</b>
                 </text>
-                <text fg={theme.textMuted}>({agents().filter((agent) => agent.status !== "idle").length} active)</text>
+                <text fg={theme.textMuted}>
+                  ({teammates().filter((teammate) => teammate.status !== "idle").length} active)
+                </text>
               </box>
-              <Show when={expanded.agents}>
-                <For each={agents()}>
-                  {(agent) => (
+              <Show when={expanded.teammates}>
+                <For each={teammates()}>
+                  {(teammate) => (
                     <box
-                      paddingLeft={agent.level * 2}
+                      paddingLeft={teammate.level * 2}
                       flexDirection="row"
                       gap={1}
-                      onMouseUp={() => navigate({ type: "session", sessionID: agent.id })}
+                      onMouseUp={() => navigate({ type: "session", sessionID: teammate.id })}
                     >
                       <Show
-                        when={agent.status !== "idle"}
+                        when={teammate.status !== "idle"}
                         fallback={
-                          <text flexShrink={0} fg={agent.id === props.sessionID ? theme.primary : theme.textMuted}>
+                          <text flexShrink={0} fg={teammate.id === props.sessionID ? theme.primary : theme.textMuted}>
                             •
                           </text>
                         }
                       >
                         <spinner color={theme.info} interval={80} />
                       </Show>
-                      <text fg={agent.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
-                        {agent.title}
-                        <Show when={agent.agent}>
-                          <span style={{ fg: theme.textMuted }}> @{agent.agent}</span>
+                      <text fg={teammate.id === props.sessionID ? theme.primary : theme.text} wrapMode="none">
+                        {teammate.title}
+                        <Show when={teammate.agent}>
+                          <span style={{ fg: theme.textMuted }}> @{teammate.agent}</span>
                         </Show>
                       </text>
                     </box>

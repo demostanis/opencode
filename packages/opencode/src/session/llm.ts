@@ -16,7 +16,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
-import { MultiAgent } from "@/agent/multi-agent"
+import { Teammate } from "@/teammate/teammate"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
@@ -41,7 +41,7 @@ export namespace LLM {
     tools: Record<string, Tool>
     retries?: number
     toolChoice?: "auto" | "required" | "none"
-    subagent?: boolean
+    teammate?: boolean
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -67,6 +67,7 @@ export namespace LLM {
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
     const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
+    const team = ultra && input.teammate !== undefined
 
     const system = [
       [
@@ -80,7 +81,7 @@ export namespace LLM {
       ]
         .filter((x) => x)
         .join("\n"),
-      ...(ultra ? SystemPrompt.multiagent(input.subagent) : []),
+      ...(team ? SystemPrompt.teammate(input.teammate) : []),
     ]
 
     const header = system[0]
@@ -253,14 +254,17 @@ export namespace LLM {
     })
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "model" | "permission" | "user">) {
+  async function resolveTools(
+    input: Pick<StreamInput, "tools" | "agent" | "model" | "permission" | "user" | "teammate">,
+  ) {
     const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
+    const team = ultra && input.teammate !== undefined
     const disabled = PermissionNext.disabled(
       Object.keys(input.tools),
       PermissionNext.merge(input.agent.permission, input.permission ?? []),
     )
     for (const tool of Object.keys(input.tools)) {
-      if (input.user.tools?.[tool] === false || disabled.has(tool) || (MultiAgent.tool(tool) && !ultra)) {
+      if (input.user.tools?.[tool] === false || disabled.has(tool) || (Teammate.tool(tool) && !team)) {
         delete input.tools[tool]
       }
     }

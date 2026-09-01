@@ -41,7 +41,7 @@ Combined source plus live target workflow:
 - Use source findings to guide dynamic testing, and use runtime anomalies to focus code review.
 - Validate suspected code issues against the live or locally running in-scope service whenever this is safe and permitted.
 
-Multi-agent coordination:
+Subagent coordination:
 - For complex assessments, use the Task tool to launch focused subagents with narrow, non-overlapping responsibilities.
 - Good subagent scopes include reconnaissance, route/API mapping, auth and access control review, injection review, client-side/XSS review, dependency/config review, exploit validation, and remediation review.
 - Avoid generic "test everything" subagents. Each subagent should have one clear objective and return evidence, checked areas, confirmed findings, false positives, and limitations.

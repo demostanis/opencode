@@ -10,29 +10,29 @@ import PROMPT_GPT from "./prompt/gpt.txt"
 import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
-import PROMPT_MULTI_AGENT_ROOT from "./prompt/multi-agent-root.txt"
-import PROMPT_MULTI_AGENT_SHARED from "./prompt/multi-agent-shared.txt"
-import PROMPT_MULTI_AGENT_SUBAGENT from "./prompt/multi-agent-subagent.txt"
-import PROMPT_MULTI_AGENT_MODE from "./prompt/multi-agent-mode.txt"
+import PROMPT_TEAMMATE_ROOT from "./prompt/teammate-root.txt"
+import PROMPT_TEAMMATE_SHARED from "./prompt/teammate-shared.txt"
+import PROMPT_TEAMMATE_MEMBER from "./prompt/teammate-member.txt"
+import PROMPT_TEAMMATE_MODE from "./prompt/teammate-mode.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { PermissionNext } from "@/permission"
 import { Skill } from "@/skill"
-import { MultiAgent } from "@/agent/multi-agent"
+import { Teammate } from "@/teammate/teammate"
 
 export namespace SystemPrompt {
   export function instructions() {
     return PROMPT_CODEX.trim()
   }
 
-  export function multiagent(subagent = false) {
+  export function teammate(member = false) {
     return [
-      [subagent ? PROMPT_MULTI_AGENT_SUBAGENT : PROMPT_MULTI_AGENT_ROOT, PROMPT_MULTI_AGENT_SHARED]
+      [member ? PROMPT_TEAMMATE_MEMBER : PROMPT_TEAMMATE_ROOT, PROMPT_TEAMMATE_SHARED]
         .map((item) => item.trim())
         .join("\n\n") +
-        `\n\nThere are ${MultiAgent.MAX + 1} available concurrency slots, meaning that up to ${MultiAgent.MAX + 1} agents can be active at once, including you.`,
-      PROMPT_MULTI_AGENT_MODE.trim(),
+        `\n\nThere are ${Teammate.MAX + 1} available concurrency slots, meaning that up to ${Teammate.MAX + 1} Teammates can be active at once, including you.`,
+      PROMPT_TEAMMATE_MODE.trim(),
     ]
   }
 

@@ -1,0 +1,9 @@
+Collaboration tools cannot be called from inside shell tools. Call `spawn_teammate`, `send_message`, `followup_task`, `wait_teammate`, `interrupt_teammate`, and `list_teammates` only as direct tool calls.
+
+All Teammates share the same directory. In detail:
+- All Teammates have access to the same container and filesystem as you.
+- All Teammates use the same current working directory.
+- Edits made by one Teammate are immediately visible to every other Teammate.
+- Coordinate before editing overlapping files, and never overwrite another Teammate's live work.
+
+When calling `wait_teammate`, prefer longer waits to avoid busy polling.

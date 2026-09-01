@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { parse, rename, writable } from "../../../src/cli/cmd/tui/routes/session/worker"
 
 describe("session worker", () => {
-  test("parses multi-agent and subagent titles", () => {
-    expect(parse("Research child (@build agent)")).toEqual({
+  test("parses Teammate and subagent titles", () => {
+    expect(parse("Research child (@build teammate)")).toEqual({
       agent: "build",
-      type: "agent",
+      type: "teammate",
       title: "Research child",
     })
     expect(parse("Research child (@general subagent)")).toEqual({
@@ -13,14 +13,19 @@ describe("session worker", () => {
       type: "subagent",
       title: "Research child",
     })
-    expect(parse("Research child (@code review agent)")).toEqual({
+    expect(parse("Research child (@code review teammate)")).toEqual({
       agent: "code review",
-      type: "agent",
+      type: "teammate",
       title: "Research child",
     })
-    expect(parse("Research child (@code (review) agent)")).toEqual({
+    expect(parse("Research child (@code (review) teammate)")).toEqual({
       agent: "code (review)",
-      type: "agent",
+      type: "teammate",
+      title: "Research child",
+    })
+    expect(parse("Research child (@build agent)")).toEqual({
+      agent: "build",
+      type: "teammate",
       title: "Research child",
     })
     expect(parse("Renamed child")).toEqual({
@@ -30,9 +35,10 @@ describe("session worker", () => {
     })
   })
 
-  test("only roots and multi-agent children are writable", () => {
+  test("only roots and Teammate children are writable", () => {
     expect(writable()).toBe(false)
     expect(writable({ title: "Root" })).toBe(true)
+    expect(writable({ parentID: "root", title: "Research (@build teammate)" })).toBe(true)
     expect(writable({ parentID: "root", title: "Research (@build agent)" })).toBe(true)
     expect(writable({ parentID: "root", title: "Research (@general subagent)" })).toBe(false)
     expect(writable({ parentID: "root", title: "Renamed child" })).toBe(false)
@@ -40,10 +46,13 @@ describe("session worker", () => {
 
   test("preserves child type when renaming", () => {
     expect(rename({ title: "Root" }, "Renamed root")).toBe("Renamed root")
-    expect(rename({ parentID: "root", title: "Research (@build agent)" }, "Renamed")).toBe("Renamed (@build agent)")
-    expect(rename({ parentID: "root", title: "Research (@general subagent)" }, "Renamed (@build agent)")).toBe(
-      "Renamed (@build agent) (@general subagent)",
+    expect(rename({ parentID: "root", title: "Research (@build teammate)" }, "Renamed")).toBe(
+      "Renamed (@build teammate)",
     )
-    expect(rename({ parentID: "root", title: "Legacy child" }, "Renamed (@build agent)")).toBe("Renamed")
+    expect(rename({ parentID: "root", title: "Research (@build agent)" }, "Renamed")).toBe("Renamed (@build teammate)")
+    expect(rename({ parentID: "root", title: "Research (@general subagent)" }, "Renamed (@build teammate)")).toBe(
+      "Renamed (@build teammate) (@general subagent)",
+    )
+    expect(rename({ parentID: "root", title: "Legacy child" }, "Renamed (@build teammate)")).toBe("Renamed")
   })
 })
