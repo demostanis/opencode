@@ -4,15 +4,34 @@ import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { SystemPrompt } from "../../src/session/system"
 import { tmpdir } from "../fixture/fixture"
+import { MultiAgent } from "../../src/agent/multi-agent"
 
 describe("session.system", () => {
-  test("multi-agent prompt enables proactive bounded delegation", () => {
-    const prompt = SystemPrompt.multiagent()
+  test("multi-agent prompt describes root collaboration", () => {
+    const [usage, mode] = SystemPrompt.multiagent()
 
-    expect(prompt).toContain("Proactive multi-agent delegation is active")
-    expect(prompt).toContain("spawn_agent")
-    expect(prompt).toContain("wait_agent")
-    expect(prompt).toContain("At most three subagents")
+    expect(usage).toContain("You are `/root`, the primary agent")
+    expect(usage).toContain("spawn_agent")
+    expect(usage).toContain("wait_agent")
+    expect(usage).toContain("All agents share the same directory")
+    expect(usage).toContain("There are 4 available concurrency slots")
+    expect(mode).toContain("Proactive multi-agent delegation is active")
+    expect(mode).toContain("no matter if you are root or subagent")
+  })
+
+  test("multi-agent prompt describes delegated agents", () => {
+    const [usage, mode] = SystemPrompt.multiagent(true)
+
+    expect(usage).toContain("You are an agent in a team of agents")
+    expect(usage).toContain("available to your parent agent through the collaboration tools")
+    expect(usage).not.toContain("You are `/root`")
+    expect(mode).toContain("Proactive multi-agent delegation is active")
+  })
+
+  test("multi-agent marker identifies delegated sessions", () => {
+    expect(MultiAgent.subagent(`instructions\n${MultiAgent.SUBAGENT}`)).toBe(true)
+    expect(MultiAgent.subagent(undefined, [MultiAgent.ROLE])).toBe(true)
+    expect(MultiAgent.subagent("instructions")).toBe(false)
   })
 
   test("skills output is sorted by name and stable across calls", async () => {

@@ -16,6 +16,7 @@ import { Tool } from "./tool"
 
 export namespace Collaboration {
   const DELEGATED_AGENT_INSTRUCTION = [
+    MultiAgent.SUBAGENT,
     "You are a delegated subagent, not the coordinating root agent.",
     "Complete the assigned task yourself and return a concise result to your parent.",
     "Do not spawn another agent merely to hand off, repeat, or parallelize this assigned task.",
@@ -379,6 +380,7 @@ export namespace Collaboration {
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} agent)`,
           permission: [
+            MultiAgent.ROLE,
             { permission: "todowrite", pattern: "*", action: "deny" },
             { permission: "todoread", pattern: "*", action: "deny" },
           ],

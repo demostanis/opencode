@@ -13,6 +13,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util/filesystem"
+import { Variant } from "../util/variant"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
@@ -112,12 +113,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           modelID: string
         }[]
         variant: Record<string, string | undefined>
+        ultra: Record<string, boolean | undefined>
       }>({
         ready: false,
         model: {},
         recent: [],
         favorite: [],
         variant: {},
+        ultra: {},
       })
 
       const filePath = path.join(Global.Path.state, "model.json")
@@ -135,6 +138,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           recent: modelStore.recent,
           favorite: modelStore.favorite,
           variant: modelStore.variant,
+          ultra: modelStore.ultra,
         })
       }
 
@@ -142,7 +146,17 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         .then((x: any) => {
           if (Array.isArray(x.recent)) setModelStore("recent", x.recent)
           if (Array.isArray(x.favorite)) setModelStore("favorite", x.favorite)
-          if (typeof x.variant === "object" && x.variant !== null) setModelStore("variant", x.variant)
+          if (
+            (typeof x.variant === "object" && x.variant !== null) ||
+            (typeof x.ultra === "object" && x.ultra !== null)
+          ) {
+            const state = Variant.load(
+              typeof x.variant === "object" && x.variant !== null ? x.variant : undefined,
+              typeof x.ultra === "object" && x.ultra !== null ? x.ultra : undefined,
+            )
+            setModelStore("variant", state.variant)
+            setModelStore("ultra", state.ultra)
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -333,29 +347,48 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             const provider = sync.data.provider.find((x) => x.id === m.providerID)
             const info = provider?.models[m.modelID]
             if (!info?.variants) return []
-            return Object.keys(info.variants)
+            return Variant.list(info.variants)
           },
           set(value: string | undefined) {
             const m = currentModel()
             if (!m) return
             const key = `${m.providerID}/${m.modelID}`
+            if (value === Variant.ULTRA) {
+              setModelStore("ultra", key, true)
+              save()
+              return
+            }
             setModelStore("variant", key, value)
+            setModelStore("ultra", key, false)
             save()
           },
           cycle() {
             const variants = this.list()
             if (variants.length === 0) return
-            const current = this.current()
-            if (!current) {
-              this.set(variants[0])
-              return
-            }
-            const index = variants.indexOf(current)
-            if (index === -1 || index === variants.length - 1) {
-              this.set(undefined)
-              return
-            }
-            this.set(variants[index + 1])
+            const m = currentModel()!
+            setModelStore("variant", `${m.providerID}/${m.modelID}`, Variant.next(variants, this.current()))
+            save()
+          },
+        },
+        ultra: {
+          active() {
+            const m = currentModel()
+            if (!m) return false
+            const provider = sync.data.provider.find((x) => x.id === m.providerID)
+            if (!Variant.supports(provider?.models[m.modelID]?.variants, Variant.ULTRA)) return false
+            return modelStore.ultra[`${m.providerID}/${m.modelID}`] === true
+          },
+          supported() {
+            const m = currentModel()
+            if (!m) return false
+            const provider = sync.data.provider.find((x) => x.id === m.providerID)
+            return Variant.supports(provider?.models[m.modelID]?.variants, Variant.ULTRA)
+          },
+          set(value: boolean) {
+            const m = currentModel()
+            if (!m) return
+            setModelStore("ultra", `${m.providerID}/${m.modelID}`, value)
+            save()
           },
         },
       }

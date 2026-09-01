@@ -41,6 +41,7 @@ export namespace LLM {
     tools: Record<string, Tool>
     retries?: number
     toolChoice?: "auto" | "required" | "none"
+    subagent?: boolean
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -67,8 +68,7 @@ export namespace LLM {
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
     const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
 
-    const system = []
-    system.push(
+    const system = [
       [
         // use agent prompt otherwise provider prompt
         // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
@@ -77,11 +77,11 @@ export namespace LLM {
         ...input.system,
         // any custom prompt from last user message
         ...(input.user.system ? [input.user.system] : []),
-        ...(ultra ? [SystemPrompt.multiagent()] : []),
       ]
         .filter((x) => x)
         .join("\n"),
-    )
+      ...(ultra ? SystemPrompt.multiagent(input.subagent) : []),
+    ]
 
     const header = system[0]
     await Plugin.trigger(

@@ -852,20 +852,25 @@ describe("session.llm.stream", () => {
           execute: async () => ({ output: "" }),
         })
 
-        for (const variant of ["ultra", "medium"] as const) {
+        for (const item of [
+          { id: "ultra-root", variant: "ultra", subagent: false },
+          { id: "medium-root", variant: "medium", subagent: false },
+          { id: "ultra-subagent", variant: "ultra", subagent: true },
+        ] as const) {
           const request = waitRequest("/responses", response())
           const user = {
-            id: MessageID.make(`user-${variant}`),
-            sessionID: SessionID.make(`session-${variant}`),
+            id: MessageID.make(`user-${item.id}`),
+            sessionID: SessionID.make(`session-${item.id}`),
             role: "user",
             time: { created: Date.now() },
             agent: agent.name,
             model: { providerID: ProviderID.openai, modelID: resolved.id },
-            variant,
+            variant: item.variant,
           } satisfies MessageV2.User
           const stream = await LLM.stream({
             user,
             sessionID: user.sessionID,
+            subagent: item.subagent,
             model: resolved,
             agent,
             system: [],
@@ -882,11 +887,22 @@ describe("session.llm.stream", () => {
             (item) => item.name ?? item.function?.name,
           )
           expect(names).toContain("bash")
-          expect(names?.includes("spawn_agent")).toBe(variant === "ultra")
+          expect(names?.includes("spawn_agent")).toBe(item.variant === "ultra")
           expect(names).toContain("task")
-          expect(JSON.stringify(body).includes("Proactive multi-agent delegation is active")).toBe(variant === "ultra")
+          expect(JSON.stringify(body).includes("Proactive multi-agent delegation is active")).toBe(
+            item.variant === "ultra",
+          )
+          expect(JSON.stringify(body).includes("You are `/root`, the primary agent")).toBe(
+            item.variant === "ultra" && !item.subagent,
+          )
+          expect(JSON.stringify(body).includes("You are an agent in a team of agents")).toBe(
+            item.variant === "ultra" && item.subagent,
+          )
+          expect(JSON.stringify(body).includes("There are 4 available concurrency slots")).toBe(
+            item.variant === "ultra",
+          )
           expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe(
-            variant === "ultra" ? "max" : "medium",
+            item.variant === "ultra" ? "max" : "medium",
           )
         }
       },

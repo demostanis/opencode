@@ -51,6 +51,7 @@ import { Truncate } from "@/tool/truncate"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
 import { AgentGraph } from "@/memory/agentgraph"
+import { MultiAgent } from "@/agent/multi-agent"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -191,7 +192,8 @@ export namespace SessionPrompt {
 
     // this is backwards compatibility for allowing `tools` to be specified when
     // prompting
-    const permissions: PermissionNext.Ruleset = []
+    const permissions: PermissionNext.Ruleset =
+      session.permission?.filter((rule) => rule.permission === MultiAgent.ROLE.permission) ?? []
     for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
       permissions.push({
         permission: tool,
@@ -199,7 +201,7 @@ export namespace SessionPrompt {
         pattern: "*",
       })
     }
-    if (permissions.length > 0) {
+    if (Object.keys(input.tools ?? {}).length > 0) {
       session.permission = permissions
       await Session.setPermission({ sessionID: session.id, permission: permissions })
     }
@@ -940,6 +942,7 @@ export namespace SessionPrompt {
         permission: session.permission,
         abort,
         sessionID,
+        subagent: MultiAgent.subagent(lastUser.system, session.permission),
         system,
         messages: [
           ...MessageV2.toModelMessages(msgs, model),

@@ -1,4 +1,4 @@
-import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
+import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, RGBA, t, dim, fg } from "@opentui/core"
 import {
   createEffect,
   createMemo,
@@ -49,6 +49,7 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { hydrate } from "./session"
+import { Variant } from "@tui/util/variant"
 
 export type PromptProps = {
   sessionID?: string
@@ -96,7 +97,13 @@ export function Prompt(props: PromptProps) {
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
   const selectedAgent = createMemo(() => props.agent ?? local.agent.current().name)
   const selectedModel = createMemo(() => props.model ?? local.model.current())
-  const selectedVariant = createMemo(() => (props.agent ? props.variant : local.model.variant.current()))
+  const selectedVariant = createMemo(() =>
+    props.agent
+      ? props.variant
+      : Variant.available(selectedAgent()) && local.model.ultra.active()
+        ? Variant.ULTRA
+        : local.model.variant.current(),
+  )
   const selectedModelInfo = createMemo(() => {
     const model = selectedModel()
     if (!model) return local.model.parsed()
@@ -121,6 +128,31 @@ export function Prompt(props: PromptProps) {
   const [memory, setMemory] = kv.signal<"none" | "remember" | "readonly" | "full">("memory_mode", "none")
   const modes = ["none", "remember", "readonly", "full"] as const
   const label = (mode: (typeof modes)[number]) => (mode === "full" ? "remember+read" : mode)
+  const [ultra, setUltra] = createSignal<number>()
+  let timer: ReturnType<typeof setInterval> | undefined
+
+  function stopUltra() {
+    if (timer) clearInterval(timer)
+    timer = undefined
+    setUltra(undefined)
+  }
+
+  function animateUltra() {
+    stopUltra()
+    if (!kv.get("animations_enabled", true)) return
+    let frame = 0
+    setUltra(frame)
+    timer = setInterval(() => {
+      frame++
+      if (frame < Variant.FRAMES) {
+        setUltra(frame)
+        return
+      }
+      stopUltra()
+    }, 20)
+  }
+
+  onCleanup(stopUltra)
 
   function promptModelWarning() {
     toast.show({
@@ -207,11 +239,39 @@ export function Prompt(props: PromptProps) {
     syncedSessionID = value.id
     local.agent.set(value.msg.agent)
     if (value.msg.model) local.model.set(value.msg.model)
-    if (value.msg.variant) local.model.variant.set(value.msg.variant)
+    local.model.variant.set(value.msg.variant)
   })
 
   command.register(() => {
     return [
+      {
+        title: !Variant.available(selectedAgent())
+          ? "Ultra mode requires Build agent"
+          : selectedVariant() === Variant.ULTRA
+            ? "Disable Ultra mode"
+            : "Enable Ultra mode",
+        description: Variant.available(selectedAgent())
+          ? "Toggle proactive multi-agent mode"
+          : "Switch to Build to enable proactive multi-agent mode",
+        value: "mode.ultra",
+        category: "Mode",
+        enabled: !props.agent && local.model.ultra.supported(),
+        slash: {
+          name: "ultra",
+        },
+        onSelect: (dialog) => {
+          if (!Variant.available(selectedAgent())) {
+            dialog.clear()
+            toast.show({ variant: "warning", message: "Ultra mode is only available with the Build agent" })
+            return
+          }
+          const enabled = selectedVariant() !== Variant.ULTRA
+          local.model.ultra.set(enabled)
+          if (enabled) animateUltra()
+          if (!enabled) stopUltra()
+          dialog.clear()
+        },
+      },
       {
         title: "Permission mode",
         value: "permission.auto_accept.list",
@@ -685,6 +745,11 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
+    if (/^\/[^\s]+$/.test(trimmed) && command.triggerSlash(trimmed.slice(1))) {
+      clear(false)
+      props.onSubmit?.()
+      return
+    }
     const model = selectedModel()
     const agent = selectedAgent()
     if (!model) {
@@ -926,6 +991,7 @@ export function Prompt(props: PromptProps) {
 
   const showVariant = createMemo(() => {
     if (props.agent) return props.variant !== undefined
+    if (selectedVariant() === Variant.ULTRA) return true
     const variants = local.model.variant.list()
     if (variants.length === 0) return false
     const current = local.model.variant.current()
@@ -936,9 +1002,10 @@ export function Prompt(props: PromptProps) {
     return [
       showVariant()
         ? {
-            text: selectedVariant(),
-            fg: theme.warning,
+            text: Variant.label(selectedVariant()),
+            fg: selectedVariant() === Variant.ULTRA ? theme.success : theme.warning,
             bold: true,
+            ultra: selectedVariant() === Variant.ULTRA,
           }
         : undefined,
       memory() !== "none"
@@ -946,10 +1013,30 @@ export function Prompt(props: PromptProps) {
             text: label(memory()),
             fg: theme.info,
             bold: true,
+            ultra: false,
           }
         : undefined,
     ].filter((item) => item !== undefined)
   })
+
+  function ultraColor(index: number) {
+    const frame = ultra()
+    if (frame === undefined) return theme.success
+    const mix = (to: RGBA, ratio: number) =>
+      RGBA.fromInts(
+        Math.round((theme.success.r + (to.r - theme.success.r) * ratio) * 255),
+        Math.round((theme.success.g + (to.g - theme.success.g) * ratio) * 255),
+        Math.round((theme.success.b + (to.b - theme.success.b) * ratio) * 255),
+      )
+    const from = theme.success
+    const to = mix(theme.text, 0.82)
+    const ratio = Variant.gradient(frame, index)
+    return RGBA.fromInts(
+      Math.round((from.r + (to.r - from.r) * ratio) * 255),
+      Math.round((from.g + (to.g - from.g) * ratio) * 255),
+      Math.round((from.b + (to.b - from.b) * ratio) * 255),
+    )
+  }
 
   const placeholderText = createMemo(() => {
     if (props.sessionID) return undefined
@@ -1207,7 +1294,14 @@ export function Prompt(props: PromptProps) {
                         <>
                           <text fg={theme.textMuted}>·</text>
                           <text>
-                            <span style={{ fg: item.fg, bold: item.bold }}>{item.text}</span>
+                            <Show
+                              when={item.ultra}
+                              fallback={<span style={{ fg: item.fg, bold: item.bold }}>{item.text}</span>}
+                            >
+                              <For each={Variant.LABEL.split("")}>
+                                {(char, index) => <span style={{ fg: ultraColor(index()), bold: true }}>{char}</span>}
+                              </For>
+                            </Show>
                           </text>
                         </>
                       )}

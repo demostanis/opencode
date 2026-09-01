@@ -80,6 +80,17 @@ function init() {
         }
       }
     },
+    triggerSlash(name: string) {
+      for (const option of entries()) {
+        if (!isVisible(option)) continue
+        const slash = option.slash
+        if (!slash) continue
+        if (slash.name !== name && !slash.aliases?.includes(name)) continue
+        option.onSelect?.(dialog)
+        return true
+      }
+      return false
+    },
     slashes() {
       return visibleOptions().flatMap((option) => {
         const slash = option.slash

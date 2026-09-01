@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
+import { MultiAgent } from "../../src/agent/multi-agent"
 import { Instance } from "../../src/project/instance"
 import { ModelsDev } from "../../src/provider/models"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -371,6 +372,7 @@ describe("tool.collaboration", () => {
           },
           agent: "build",
           variant: "ultra",
+          tools: { bash: false },
           parts: await SessionPrompt.resolvePromptParts("Continue directly in the child session."),
         })
         await directRequested
@@ -378,6 +380,10 @@ describe("tool.collaboration", () => {
         directRelease()
         await direct
         const directResult = await directWait
+        const directBody = JSON.stringify(state.requests.at(-1))
+        expect(directBody).toContain("You are an agent in a team of agents")
+        expect(directBody).not.toContain("You are `/root`")
+        expect((await Session.get(taskID)).permission).toContainEqual(MultiAgent.ROLE)
         expect(JSON.parse(directResult.output)[0]).toMatchObject({
           status: "completed",
           result: "direct interaction result",
