@@ -2358,6 +2358,28 @@ describe("ProviderTransform.variants", () => {
       })
       expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
+
+    test("gpt-6-astra exposes high and max efforts with Ultra mode", () => {
+      const model = createMockModel({
+        id: "gpt-6-astra",
+        providerID: "openai",
+        api: {
+          id: "gpt-6-astra",
+          url: "https://api.openai.com",
+          npm: "@ai-sdk/openai",
+        },
+      })
+
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["high", "max", "ultra"])
+      expect(result.max).toEqual({
+        reasoningEffort: "max",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+      expect(result.ultra).toEqual(result.max)
+      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
+    })
   })
 
   describe("@ai-sdk/anthropic", () => {

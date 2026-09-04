@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import type { PluginInput } from "@opencode-ai/plugin"
 import type { AddressInfo } from "node:net"
 import WebSocket, { WebSocketServer } from "ws"
 import {
   CODEX_WEBSOCKET_MODELS,
   CODEX_WEBSOCKET_MAX_BYTES,
   CODEX_MODELS,
+  CodexAuthPlugin,
   codexWebsocket,
   parseJwtClaims,
   extractAccountIdFromClaims,
@@ -39,6 +41,28 @@ function createTestJwt(payload: object): string {
 describe("plugin.codex", () => {
   test("allows every GPT-5.6 model available in Codex", () => {
     expect([...CODEX_MODELS]).toEqual(expect.arrayContaining(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]))
+  })
+
+  test("allows GPT-6 Astra in Codex", () => {
+    expect(CODEX_MODELS.has("gpt-6-astra")).toBe(true)
+  })
+
+  test("adds GPT-6 Astra when the model catalog is stale", async () => {
+    const hooks = await CodexAuthPlugin({} as PluginInput)
+    const loader = hooks.auth?.loader
+    expect(loader).toBeDefined()
+    const provider = { models: {} } as Parameters<NonNullable<typeof loader>>[1]
+    await loader!(
+      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+      provider,
+    )
+
+    expect(provider.models["gpt-6-astra"]).toMatchObject({
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+      variants: { high: expect.anything(), max: expect.anything(), ultra: expect.anything() },
+    })
   })
 
   test("routes only GPT-5.6 Luna over WebSocket", () => {
