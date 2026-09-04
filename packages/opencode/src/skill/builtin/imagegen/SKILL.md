@@ -30,7 +30,6 @@ Generates or edits images for the current project, for example website assets, g
 - Do not call an edit with neither argument. If the source is not available, locate it or ask the user for it instead of recreating it from a text description.
 - Attach style, composition, or subject references for new-image generation through the same arguments; prompt text alone does not provide their image data either.
 - For each follow-up edit, replace the prior edit target with the latest generated output and reattach it using `reference_image`, or place it first in `reference_images` before any still-needed supporting references. Each tool call is independent.
-- Prefer `input_fidelity: "high"` when unchanged regions, identity, geometry, or fine details must be preserved.
 
 Single-image edit:
 
@@ -38,8 +37,7 @@ Single-image edit:
 {
   "prompt": "Replace only the background with a warm sunset gradient. Keep the product and its edges unchanged.",
   "short_name": "sunset-background",
-  "reference_image": "/absolute/path/product.png",
-  "input_fidelity": "high"
+  "reference_image": "/absolute/path/product.png"
 }
 ```
 
@@ -49,8 +47,7 @@ Multi-image edit:
 {
   "prompt": "Image 1 is the edit target. Apply the lighting and palette from Image 2 while preserving Image 1's subject and composition.",
   "short_name": "relit-product",
-  "reference_images": ["/absolute/path/product.png", "/absolute/path/style.jpg"],
-  "input_fidelity": "high"
+  "reference_images": ["/absolute/path/product.png", "/absolute/path/style.jpg"]
 }
 ```
 

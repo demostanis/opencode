@@ -117,35 +117,6 @@ describe("tool.image", () => {
     expect(body).not.toHaveProperty("tools.0.action")
   })
 
-  test("allows reference-image fidelity to be overridden", async () => {
-    let body: unknown
-
-    await auth(async () => {
-      await intercept(
-        async (_input, init) => {
-          body = JSON.parse(init?.body as string)
-          return response()
-        },
-        async () => {
-          const tool = await ImageGenerateTool.init()
-          await tool.execute(
-            {
-              prompt: "Make the background blue",
-              short_name: "edited-low-fidelity",
-              reference_image: `data:image/png;base64,${png.toString("base64")}`,
-              input_fidelity: "low",
-            },
-            ctx,
-          )
-        },
-      )
-    })
-
-    expect(body).toMatchObject({
-      tools: [{ type: "image_generation", input_fidelity: "low" }],
-    })
-  })
-
   test("keeps generation requests free of edit inputs", async () => {
     let body: unknown
 
