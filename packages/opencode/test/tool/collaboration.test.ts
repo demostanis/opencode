@@ -289,16 +289,18 @@ describe("tool.collaboration", () => {
         expect(delivered.output).toBe("Message queued for coordinator.")
         expect(state.requests).toHaveLength(baseline + 1)
         const pending = (await Session.messages({ sessionID: session.id })).findLast(
-          (message) => message.info.role === "user" && message.info.deferred,
+          (message) =>
+            message.info.role === "user" &&
+            message.parts.some((part) => part.type === "text" && part.text.includes("Backend contract is ready")),
         )
         if (!pending || pending.info.role !== "user") throw new Error("Missing queued coordinator message")
         expect(pending.info).toMatchObject({
           agent: "build",
           model: { providerID: "openai", modelID: model.id },
           variant: "ultra",
-          deferred: true,
           tools: { bash: false },
         })
+        expect(pending.info.deferred).toBeUndefined()
         const update = pending.parts.find((part) => part.type === "text")?.text ?? ""
         expect(update).toContain(`sender_session_id: ${taskID}`)
         expect(update).toContain("sender_agent: build")
@@ -339,9 +341,14 @@ describe("tool.collaboration", () => {
         await send.execute({ task_id: session.id, message: "Tests are ready for final review." }, source)
         await idleactive
         const idle = (await Session.messages({ sessionID: session.id })).findLast(
-          (message) => message.info.role === "user" && message.info.deferred,
+          (message) =>
+            message.info.role === "user" &&
+            message.parts.some(
+              (part) => part.type === "text" && part.text.includes("Tests are ready for final review"),
+            ),
         )
         if (!idle || idle.info.role !== "user") throw new Error("Missing idle coordinator message")
+        expect(idle.info.deferred).toBeUndefined()
         idleopen()
         await idlefinished
         expect(state.requests).toHaveLength(idlebase + 1)

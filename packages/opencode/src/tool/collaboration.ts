@@ -349,7 +349,6 @@ export namespace Collaboration {
       format: user.info.format,
       tools: user.info.tools,
       noReply: true,
-      deferred: true,
       parts,
     })
     void SessionPrompt.loop({ sessionID: rootID }).catch((err) =>
