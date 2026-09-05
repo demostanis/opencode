@@ -1100,13 +1100,13 @@ export namespace Config {
                 .int()
                 .positive()
                 .describe(
-                  "Total timeout in milliseconds for each provider request, including streaming. Defaults to 900000 (15 minutes) for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.",
+                  "Total timeout in milliseconds for each provider request, including streaming. Disabled by default for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.",
                 ),
-              z.literal(false).describe("Disable timeout for this provider entirely."),
+              z.literal(false).describe("Disable the total request timeout for this provider."),
             ])
             .optional()
             .describe(
-              "Total timeout in milliseconds for each provider request, including streaming. Defaults to 900000 (15 minutes) for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.",
+              "Total timeout in milliseconds for each provider request, including streaming. Disabled by default for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.",
             ),
           chunkTimeout: z
             .number()

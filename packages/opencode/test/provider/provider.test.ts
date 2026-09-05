@@ -285,7 +285,7 @@ test("env variable takes precedence, config merges options", async () => {
   })
 })
 
-test("OpenAI OAuth auth defaults to 15-minute requests and 1-minute chunk timeouts", async () => {
+test("OpenAI OAuth auth disables total request timeouts but keeps 1-minute chunk timeouts", async () => {
   const auth = await Auth.get("openai")
   await Auth.set("openai", {
     type: "oauth",
@@ -310,7 +310,7 @@ test("OpenAI OAuth auth defaults to 15-minute requests and 1-minute chunk timeou
       fn: async () => {
         const providers = await Provider.list()
         expect(providers[ProviderID.openai]).toBeDefined()
-        expect(providers[ProviderID.openai].options.timeout).toBe(900_000)
+        expect(providers[ProviderID.openai].options.timeout).toBe(false)
         expect(providers[ProviderID.openai].options.chunkTimeout).toBe(60_000)
       },
     })

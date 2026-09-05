@@ -1091,7 +1091,7 @@ export type ProviderConfig = {
      */
     setCacheKey?: boolean
     /**
-     * Total timeout in milliseconds for each provider request, including streaming. Defaults to 900000 (15 minutes) for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.
+     * Total timeout in milliseconds for each provider request, including streaming. Disabled by default for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.
      */
     timeout?: number | false
     [key: string]: unknown | string | boolean | (number | false) | undefined
