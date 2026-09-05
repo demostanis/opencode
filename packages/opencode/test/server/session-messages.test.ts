@@ -117,7 +117,7 @@ describe("session messages endpoint", () => {
     })
   })
 
-  test("promotes a pending deferred message", async () => {
+  test("moves a pending deferred message to the end of the queue with its parts", async () => {
     await Instance.provide({
       directory: root,
       fn: async () => {
@@ -127,16 +127,48 @@ describe("session messages endpoint", () => {
           id,
           sessionID: session.id,
           role: "user",
-          time: { created: Date.now() },
+          time: { created: 1 },
           agent: "test",
           model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
           deferred: true,
+          variant: "test",
         })
+        await Session.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: id,
+          type: "text",
+          text: "deferred prompt",
+        })
+        await Session.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: id,
+          type: "file",
+          mime: "image/png",
+          filename: "image.png",
+          url: "data:image/png;base64,dGVzdA==",
+        })
+        const original = await MessageV2.get({ sessionID: session.id, messageID: id })
+        if (original.info.role !== "user") throw new Error("Expected a user message")
+        const ids = await fill(session.id, 2, () => Date.now())
 
         const res = await Server.Default().request(`/session/${session.id}/message/${id}/queue`, { method: "POST" })
         expect(res.status).toBe(204)
-        const msg = await MessageV2.get({ sessionID: session.id, messageID: id })
+        const messages = await Session.messages({ sessionID: session.id })
+        expect(messages).toHaveLength(3)
+        expect(messages.slice(0, 2).map((msg) => msg.info.id)).toEqual(ids)
+        const msg = messages[2]
+        expect(msg.info.id > ids[1]).toBe(true)
+        expect(msg.info.time.created).toBeGreaterThan(1)
         expect(msg.info.role === "user" && msg.info.deferred).toBeUndefined()
+        expect(msg.info).toMatchObject({ agent: "test", model: original.info.model, variant: "test" })
+        expect(msg.parts).toHaveLength(original.parts.length)
+        msg.parts.forEach((part, index) => {
+          expect(part.id).not.toBe(original.parts[index].id)
+          expect(part).toEqual({ ...original.parts[index], id: part.id, messageID: msg.info.id })
+        })
+        expect(messages.some((msg) => msg.info.id === id)).toBe(false)
 
         SessionPrompt.cancel(session.id)
         await Session.remove(session.id)

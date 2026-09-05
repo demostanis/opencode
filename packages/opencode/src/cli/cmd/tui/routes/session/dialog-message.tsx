@@ -36,7 +36,7 @@ export function DialogMessage(props: {
               {
                 title: "Queue now",
                 value: "session.queue",
-                description: "move to the normal message queue",
+                description: "move to the end of the normal message queue",
                 onSelect: async (dialog: DialogContext) => {
                   const queued = await sdk.client.session
                     .queue(

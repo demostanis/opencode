@@ -85,6 +85,7 @@ import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 import { useTuiConfig } from "../../context/tui-config"
 import { writable } from "./worker"
+import { order } from "./messages"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
@@ -148,23 +149,7 @@ export function Session() {
     return sync.data.session.filter((item) => ids.has(item.id))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
-  const display = createMemo(() => {
-    const list = messages()
-    const deferred = list.filter((msg) => msg.role === "user" && msg.deferred)
-    if (deferred.length === 0) return list
-    const ids = new Set(deferred.map((msg) => msg.id))
-    const main = list.filter((msg) => !ids.has(msg.id))
-    for (const msg of deferred) {
-      const reply = main.findIndex((item) => item.role === "assistant" && item.parentID === msg.id)
-      if (reply !== -1) {
-        main.splice(reply, 0, msg)
-        continue
-      }
-      const last = main.findLastIndex((item) => item.role === "assistant")
-      main.splice(last + 1, 0, msg)
-    }
-    return main
-  })
+  const display = createMemo(() => order(messages()))
   const permissions = createMemo(() => {
     return branch().flatMap((item) => sync.data.permission[item.id] ?? [])
   })

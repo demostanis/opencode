@@ -294,11 +294,6 @@ export namespace SessionPrompt {
   }
 
   /** @internal Exported for testing */
-  export function shouldDefer(input: { user?: MessageV2.User; assistant: MessageV2.Assistant }) {
-    return !!input.user && input.user.id < input.assistant.id
-  }
-
-  /** @internal Exported for testing */
   export function memoryPrompt(input: { messages: MessageV2.WithParts[]; added: string[] }) {
     const nodes = AgentGraph.nodes()
     return [
@@ -490,6 +485,18 @@ export namespace SessionPrompt {
     return
   }
 
+  async function enqueue(info: MessageV2.User, parts: MessageV2.Part[]) {
+    // Message IDs determine both prompt order and the TUI's queued state.
+    const msg = { ...info, id: MessageID.ascending(), time: { created: Date.now() } }
+    delete msg.deferred
+    await Session.updateMessage(msg)
+    for (const part of parts) {
+      await Session.updatePart({ ...part, id: PartID.ascending(), messageID: msg.id })
+    }
+    await Session.removeMessage({ sessionID: info.sessionID, messageID: info.id })
+    return msg
+  }
+
   export const QueueInput = z.object({
     sessionID: SessionID.zod,
     messageID: MessageID.zod,
@@ -501,9 +508,7 @@ export namespace SessionPrompt {
     const msgs = await Session.messages({ sessionID: input.sessionID })
     if (msgs.some((msg) => msg.info.role === "assistant" && msg.info.parentID === input.messageID)) return false
 
-    const msg = { ...target.info }
-    delete msg.deferred
-    await Session.updateMessage(msg)
+    const msg = await enqueue(target.info, target.parts)
     const active = !!state()[input.sessionID]
 
     void (async () => {
@@ -512,7 +517,7 @@ export namespace SessionPrompt {
         .catch((err) => isCancelled(err, "user"))
       if (!active || stopped) return
       const next = await Session.messages({ sessionID: input.sessionID })
-      if (next.some((item) => item.info.role === "assistant" && item.info.parentID === input.messageID)) return
+      if (next.some((item) => item.info.role === "assistant" && item.info.parentID === msg.id)) return
       await loop({ sessionID: input.sessionID })
     })().catch((err) =>
       log.error("failed to queue message", { sessionID: input.sessionID, messageID: input.messageID, err }),
@@ -572,9 +577,15 @@ export namespace SessionPrompt {
       const assistants = msgs.flatMap((msg) => (msg.info.role === "assistant" ? [msg.info as MessageV2.Assistant] : []))
       const deferred = msgs.flatMap((msg) =>
         msg.info.role === "user" && msg.info.deferred && !assistants.some((item) => item.parentID === msg.info.id)
-          ? [msg.info as MessageV2.User]
+          ? [{ info: msg.info, parts: msg.parts }]
           : [],
       )
+      if (done && deferred.length && task?.type !== "compaction") {
+        for (const msg of deferred) {
+          await enqueue(msg.info, msg.parts)
+        }
+        continue
+      }
       const parent = lastAssistant
         ? (msgs.find((msg) => msg.info.id === lastAssistant.parentID)?.info as MessageV2.User | undefined)
         : undefined
@@ -583,8 +594,6 @@ export namespace SessionPrompt {
         lastUser = owner.info as MessageV2.User
       } else if (!done && parent && shouldResume({ user: lastUser, assistant: lastAssistant! })) {
         lastUser = parent
-      } else if (done && deferred.length && shouldDefer({ user: lastUser, assistant: lastAssistant! })) {
-        lastUser = deferred[0]
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
@@ -592,7 +601,7 @@ export namespace SessionPrompt {
         log.info("exiting loop", { sessionID })
         break
       }
-      const visible = order(msgs, task?.type === "compaction" ? undefined : done ? lastUser.id : undefined)
+      const visible = order(msgs)
 
       step++
       if (step === 1)
@@ -1708,20 +1717,14 @@ export namespace SessionPrompt {
     }
   }
 
-  function order(msgs: MessageV2.WithParts[], active?: string) {
+  function order(msgs: MessageV2.WithParts[]) {
     const deferred = msgs.filter((msg) => msg.info.role === "user" && msg.info.deferred)
     if (deferred.length === 0) return msgs
     const ids = new Set(deferred.map((msg) => msg.info.id))
     const main = msgs.filter((msg) => !ids.has(msg.info.id))
     for (const msg of deferred) {
       const reply = main.findIndex((item) => item.info.role === "assistant" && item.info.parentID === msg.info.id)
-      if (reply !== -1) {
-        main.splice(reply, 0, msg)
-        continue
-      }
-      if (msg.info.id !== active) continue
-      const last = main.findLastIndex((item) => item.info.role === "assistant")
-      main.splice(last + 1, 0, msg)
+      if (reply !== -1) main.splice(reply, 0, msg)
     }
     return main
   }

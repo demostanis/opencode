@@ -594,13 +594,4 @@ describe("session.prompt resume", () => {
 
     expect(SessionPrompt.shouldResume({ user, assistant })).toBe(true)
   })
-
-  test("waits to process deferred user until the current turn finishes", () => {
-    const deferred = { id: MessageID.ascending(), deferred: true } as MessageV2.User
-    const compacted = { id: MessageID.ascending(), finish: "stop" } as MessageV2.Assistant
-    const continuation = { id: MessageID.ascending() } as MessageV2.User
-
-    expect(SessionPrompt.shouldDefer({ user: deferred, assistant: compacted })).toBe(true)
-    expect(SessionPrompt.shouldDefer({ user: continuation, assistant: compacted })).toBe(false)
-  })
 })
