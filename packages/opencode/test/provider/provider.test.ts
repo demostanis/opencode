@@ -7,7 +7,6 @@ import { Provider } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
 import { Auth } from "../../src/auth"
-import { CODEX_CHUNK_TIMEOUT, CODEX_TIMEOUT } from "../../src/plugin/codex"
 
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
@@ -286,7 +285,7 @@ test("env variable takes precedence, config merges options", async () => {
   })
 })
 
-test("OpenAI OAuth auth defaults request and chunk timeouts", async () => {
+test("OpenAI OAuth auth defaults to 15-minute requests and 1-minute chunk timeouts", async () => {
   const auth = await Auth.get("openai")
   await Auth.set("openai", {
     type: "oauth",
@@ -311,8 +310,8 @@ test("OpenAI OAuth auth defaults request and chunk timeouts", async () => {
       fn: async () => {
         const providers = await Provider.list()
         expect(providers[ProviderID.openai]).toBeDefined()
-        expect(providers[ProviderID.openai].options.timeout).toBe(CODEX_TIMEOUT)
-        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(CODEX_CHUNK_TIMEOUT)
+        expect(providers[ProviderID.openai].options.timeout).toBe(900_000)
+        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(60_000)
       },
     })
   } finally {
