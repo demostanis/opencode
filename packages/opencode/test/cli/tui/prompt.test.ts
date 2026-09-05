@@ -45,10 +45,16 @@ describe("prompt variants", () => {
     expect(Variant.label("max")).toBe("max")
   })
 
-  test("limits Ultra to the Build agent", () => {
-    expect(Variant.available("build")).toBe(true)
-    expect(Variant.available("plan")).toBe(false)
-    expect(Variant.available("browser")).toBe(false)
+  test("requires model support for Ultra", () => {
+    expect(Variant.supports(variants, Variant.ULTRA)).toBe(true)
+    expect(Variant.supports({ medium: {}, max: {} }, Variant.ULTRA)).toBe(false)
+    expect(Variant.supports(undefined, Variant.ULTRA)).toBe(false)
+  })
+
+  test("requires agent permission for Ultra", () => {
+    expect(Variant.available({ ultra_mode_allowed: true })).toBe(true)
+    expect(Variant.available({ ultra_mode_allowed: false })).toBe(false)
+    expect(Variant.available(undefined)).toBe(false)
   })
 
   test("migrates Ultra out of persisted thinking variants", () => {

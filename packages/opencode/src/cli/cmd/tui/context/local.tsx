@@ -354,6 +354,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             if (!m) return
             const key = `${m.providerID}/${m.modelID}`
             if (value === Variant.ULTRA) {
+              if (!agent.current().ultra_mode_allowed) return
               setModelStore("ultra", key, true)
               save()
               return
@@ -372,6 +373,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         },
         ultra: {
           active() {
+            if (!agent.current().ultra_mode_allowed) return false
             const m = currentModel()
             if (!m) return false
             const provider = sync.data.provider.find((x) => x.id === m.providerID)
@@ -379,12 +381,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             return modelStore.ultra[`${m.providerID}/${m.modelID}`] === true
           },
           supported() {
+            if (!agent.current().ultra_mode_allowed) return false
             const m = currentModel()
             if (!m) return false
             const provider = sync.data.provider.find((x) => x.id === m.providerID)
             return Variant.supports(provider?.models[m.modelID]?.variants, Variant.ULTRA)
           },
           set(value: boolean) {
+            if (value && !agent.current().ultra_mode_allowed) return
             const m = currentModel()
             if (!m) return
             setModelStore("ultra", `${m.providerID}/${m.modelID}`, value)

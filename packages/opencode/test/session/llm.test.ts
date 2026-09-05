@@ -395,6 +395,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         } satisfies Agent.Info
@@ -503,6 +504,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
@@ -604,6 +606,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "question", pattern: "*", action: "deny" }],
         } satisfies Agent.Info
@@ -722,6 +725,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.2,
@@ -766,7 +770,12 @@ describe("session.llm.stream", () => {
     })
   })
 
-  test("maps Ultra to max and enables collaboration tools only for Teammate sessions", async () => {
+  test.each([
+    ["build", true],
+    ["plan", false],
+    ["browser", true],
+    ["custom", false],
+  ] as const)("respects Ultra collaboration policy for the %s agent", async (name, allowed) => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
 
@@ -841,8 +850,9 @@ describe("session.llm.stream", () => {
       fn: async () => {
         const resolved = await Provider.getModel(ProviderID.openai, ModelID.make(model.id))
         const agent = {
-          name: "test",
+          name,
           mode: "primary",
+          ultra_mode_allowed: allowed,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         } satisfies Agent.Info
@@ -887,7 +897,7 @@ describe("session.llm.stream", () => {
           const names = (body.tools as Array<{ name?: string; function?: { name?: string } }> | undefined)?.map(
             (item) => item.name ?? item.function?.name,
           )
-          const team = item.variant === "ultra" && item.teammate !== undefined
+          const team = allowed && item.variant === "ultra" && item.teammate !== undefined
           expect(names).toContain("bash")
           expect(names?.includes("spawn_teammate")).toBe(team)
           expect(names).toContain("task")
@@ -895,12 +905,12 @@ describe("session.llm.stream", () => {
           expect(JSON.stringify(body).includes("You are `/root`, the coordinator of a team of Teammates")).toBe(
             team && !item.teammate,
           )
-          expect(JSON.stringify(body).includes("You are a Teammate running the Build Agent")).toBe(
+          expect(JSON.stringify(body).includes(`You are a Teammate running the same \`${name}\` agent mode`)).toBe(
             team && item.teammate === true,
           )
           expect(JSON.stringify(body).includes("There are 11 available concurrency slots")).toBe(team)
           expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe(
-            item.variant === "ultra" ? "max" : "medium",
+            item.variant === "ultra" && allowed ? "max" : "medium",
           )
         }
       },
@@ -985,6 +995,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
@@ -1086,6 +1097,7 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          ultra_mode_allowed: false,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.3,

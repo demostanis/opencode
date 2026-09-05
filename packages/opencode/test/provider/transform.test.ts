@@ -2333,6 +2333,22 @@ describe("ProviderTransform.variants", () => {
       expect(ProviderTransform.ultra(model, "max")).toBe(false)
     })
 
+    test("custom models can declare an Ultra variant", () => {
+      const model = createMockModel({
+        id: "custom-model",
+        providerID: "custom-provider",
+        api: {
+          id: "custom-model",
+          url: "https://api.custom.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+        variants: { ultra: {} },
+      })
+
+      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
+      expect(ProviderTransform.ultra(model, "high")).toBe(false)
+    })
+
     test("gpt-5.6-terra exposes medium, max, and Ultra", () => {
       const model = createMockModel({
         id: "gpt-5.6-terra",

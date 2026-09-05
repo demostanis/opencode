@@ -96,13 +96,12 @@ export function Prompt(props: PromptProps) {
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
   const selectedAgent = createMemo(() => props.agent ?? local.agent.current().name)
+  const ultraAllowed = createMemo(() =>
+    Variant.available(sync.data.agent.find((item) => item.name === selectedAgent())),
+  )
   const selectedModel = createMemo(() => props.model ?? local.model.current())
   const selectedVariant = createMemo(() =>
-    props.agent
-      ? props.variant
-      : Variant.available(selectedAgent()) && local.model.ultra.active()
-        ? Variant.ULTRA
-        : local.model.variant.current(),
+    props.agent ? props.variant : local.model.ultra.active() ? Variant.ULTRA : local.model.variant.current(),
   )
   const selectedModelInfo = createMemo(() => {
     const model = selectedModel()
@@ -245,24 +244,24 @@ export function Prompt(props: PromptProps) {
   command.register(() => {
     return [
       {
-        title: !Variant.available(selectedAgent())
-          ? "Ultra mode requires Build agent"
+        title: !ultraAllowed()
+          ? `Ultra mode unavailable for ${Locale.titlecase(selectedAgent())}`
           : selectedVariant() === Variant.ULTRA
             ? "Disable Ultra mode"
             : "Enable Ultra mode",
-        description: Variant.available(selectedAgent())
+        description: ultraAllowed()
           ? "Toggle proactive Teammate collaboration"
-          : "Switch to Build to enable proactive Teammate collaboration",
+          : "Set ultra_mode_allowed to true for this agent",
         value: "mode.ultra",
         category: "Mode",
-        enabled: !props.agent && local.model.ultra.supported(),
+        enabled: !props.agent && ultraAllowed() && local.model.ultra.supported(),
         slash: {
           name: "ultra",
         },
         onSelect: (dialog) => {
-          if (!Variant.available(selectedAgent())) {
+          if (!ultraAllowed()) {
             dialog.clear()
-            toast.show({ variant: "warning", message: "Ultra mode is only available with the Build agent" })
+            toast.show({ variant: "warning", message: `Ultra mode is not allowed for ${selectedAgent()}` })
             return
           }
           const enabled = selectedVariant() !== Variant.ULTRA

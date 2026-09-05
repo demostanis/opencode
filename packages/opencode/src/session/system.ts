@@ -26,11 +26,10 @@ export namespace SystemPrompt {
     return PROMPT_CODEX.trim()
   }
 
-  export function teammate(member = false) {
+  export function teammate(agent: string, member = false) {
+    const prompt = (member ? PROMPT_TEAMMATE_MEMBER : PROMPT_TEAMMATE_ROOT).replaceAll("{{agent}}", () => agent)
     return [
-      [member ? PROMPT_TEAMMATE_MEMBER : PROMPT_TEAMMATE_ROOT, PROMPT_TEAMMATE_SHARED]
-        .map((item) => item.trim())
-        .join("\n\n") +
+      [prompt, PROMPT_TEAMMATE_SHARED].map((item) => item.trim()).join("\n\n") +
         `\n\nThere are ${Teammate.MAX + 1} available concurrency slots, meaning that up to ${Teammate.MAX + 1} Teammates can be active at once, including you.`,
       PROMPT_TEAMMATE_MODE.trim(),
     ]

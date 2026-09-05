@@ -66,7 +66,10 @@ export namespace LLM {
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
-    const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
+    const ultra =
+      input.agent.ultra_mode_allowed &&
+      input.user.variant === "ultra" &&
+      ProviderTransform.ultra(input.model, input.user.variant)
     const team = ultra && input.teammate !== undefined
 
     const system = [
@@ -81,7 +84,7 @@ export namespace LLM {
       ]
         .filter((x) => x)
         .join("\n"),
-      ...(team ? SystemPrompt.teammate(input.teammate) : []),
+      ...(team ? SystemPrompt.teammate(input.agent.name, input.teammate) : []),
     ]
 
     const header = system[0]
@@ -98,7 +101,12 @@ export namespace LLM {
     }
 
     const variant =
-      !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
+      !input.small &&
+      input.model.variants &&
+      input.user.variant &&
+      (input.user.variant !== "ultra" || input.agent.ultra_mode_allowed)
+        ? input.model.variants[input.user.variant]
+        : {}
     const base = input.small
       ? ProviderTransform.smallOptions(input.model)
       : ProviderTransform.options({
@@ -257,7 +265,10 @@ export namespace LLM {
   async function resolveTools(
     input: Pick<StreamInput, "tools" | "agent" | "model" | "permission" | "user" | "teammate">,
   ) {
-    const ultra = input.user.variant === "ultra" && ProviderTransform.ultra(input.model, input.user.variant)
+    const ultra =
+      input.agent.ultra_mode_allowed &&
+      input.user.variant === "ultra" &&
+      ProviderTransform.ultra(input.model, input.user.variant)
     const team = ultra && input.teammate !== undefined
     const disabled = PermissionNext.disabled(
       Object.keys(input.tools),

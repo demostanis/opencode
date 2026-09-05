@@ -27,6 +27,7 @@ test("returns default native agents when no config", async () => {
       expect(names).toContain("compaction")
       expect(names).toContain("title")
       expect(names).toContain("summary")
+      expect(agents.every((agent) => agent.ultra_mode_allowed === (agent.name === "build"))).toBe(true)
     },
   })
 })
@@ -40,6 +41,7 @@ test("build agent has correct default properties", async () => {
       expect(build).toBeDefined()
       expect(build?.mode).toBe("primary")
       expect(build?.native).toBe(true)
+      expect(build?.ultra_mode_allowed).toBe(true)
       expect(evalPerm(build, "edit")).toBe("ask")
       expect(evalPerm(build, "bash")).toBe("allow")
     },
@@ -185,6 +187,27 @@ test("custom agent from config creates new agent", async () => {
       expect(custom?.topP).toBe(0.9)
       expect(custom?.native).toBe(false)
       expect(custom?.mode).toBe("all")
+      expect(custom?.ultra_mode_allowed).toBe(false)
+    },
+  })
+})
+
+test("agent config overrides Ultra mode defaults", async () => {
+  await using tmp = await tmpdir({
+    config: {
+      agent: {
+        build: { ultra_mode_allowed: false },
+        plan: { ultra_mode_allowed: true },
+        reviewer: { ultra_mode_allowed: true },
+      },
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      expect((await Agent.get("build"))?.ultra_mode_allowed).toBe(false)
+      expect((await Agent.get("plan"))?.ultra_mode_allowed).toBe(true)
+      expect((await Agent.get("reviewer"))?.ultra_mode_allowed).toBe(true)
     },
   })
 })

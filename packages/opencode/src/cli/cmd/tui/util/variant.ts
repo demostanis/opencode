@@ -11,8 +11,8 @@ export namespace Variant {
     return Object.hasOwn(input ?? {}, value)
   }
 
-  export function available(agent: string) {
-    return agent === "build"
+  export function available(agent: { ultra_mode_allowed?: boolean } | undefined) {
+    return agent?.ultra_mode_allowed === true
   }
 
   export function label(value?: string) {

@@ -43,6 +43,7 @@ const model = {
 const agent = {
   name: "test",
   mode: "primary",
+  ultra_mode_allowed: false,
   options: {},
   permission: [{ permission: "*", pattern: "*", action: "allow" }],
 } satisfies Agent.Info

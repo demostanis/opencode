@@ -1109,7 +1109,7 @@ export namespace ACP {
         })
     }
 
-    private async loadAvailableModes(directory: string): Promise<ModeOption[]> {
+    private async loadAvailableModes(directory: string) {
       const agents = await this.config.sdk.app
         .agents(
           {
@@ -1119,20 +1119,20 @@ export namespace ACP {
         )
         .then((resp) => resp.data!)
 
-      return agents
-        .filter((agent) => agent.mode !== "subagent" && !agent.hidden)
-        .map((agent) => ({
+      const visible = agents.filter((agent) => agent.mode !== "subagent" && !agent.hidden)
+      return {
+        modes: visible.map((agent) => ({
           id: agent.name,
           name: agent.name,
           description: agent.description,
-        }))
+        })),
+        ultra: new Set(visible.filter((agent) => agent.ultra_mode_allowed).map((agent) => agent.name)),
+      }
     }
 
-    private async resolveModeState(
-      directory: string,
-      sessionId: string,
-    ): Promise<{ availableModes: ModeOption[]; currentModeId?: string }> {
-      const availableModes = await this.loadAvailableModes(directory)
+    private async resolveModeState(directory: string, sessionId: string) {
+      const loaded = await this.loadAvailableModes(directory)
+      const availableModes = loaded.modes
       const currentModeId =
         this.sessionManager.get(sessionId).modeId ||
         (await (async () => {
@@ -1144,7 +1144,7 @@ export namespace ACP {
           return resolvedModeId
         })())
 
-      return { availableModes, currentModeId }
+      return { availableModes, currentModeId, ultra: loaded.ultra }
     }
 
     private async loadSessionMode(params: LoadSessionRequest) {
@@ -1152,15 +1152,18 @@ export namespace ACP {
       const model = await defaultModel(this.config, directory)
       const sessionId = params.sessionId
 
+      const modeState = await this.resolveModeState(directory, sessionId)
       const providers = await this.sdk.config.providers({ directory }).then((x) => x.data!.providers)
       const entries = sortProvidersByName(providers)
-      const availableVariants = modelVariantsFromProviders(entries, model)
+      const allowed = !!modeState.currentModeId && modeState.ultra.has(modeState.currentModeId)
+      const availableVariants = modelVariantsFromProviders(entries, model).filter(
+        (variant) => allowed || variant !== "ultra",
+      )
       const currentVariant = this.sessionManager.getVariant(sessionId)
       if (currentVariant && !availableVariants.includes(currentVariant)) {
         this.sessionManager.setVariant(sessionId, undefined)
       }
-      const availableModels = buildAvailableModels(entries, { includeVariants: true })
-      const modeState = await this.resolveModeState(directory, sessionId)
+      const availableModels = buildAvailableModels(entries, { includeVariants: true, ultra: allowed })
       const currentModeId = modeState.currentModeId
       const modes = currentModeId
         ? {
@@ -1261,11 +1264,19 @@ export namespace ACP {
         .then((x) => x.data!.providers)
 
       const selection = parseModelSelection(params.modelId, providers)
+      const modes = await this.resolveModeState(session.cwd, session.id)
+      const mode = this.sessionManager.get(session.id).modeId
+      const allowed = !!mode && modes.ultra.has(mode)
+      if (selection.variant === "ultra" && !allowed) {
+        throw RequestError.invalidParams(`Ultra mode is not allowed for agent "${mode}"`)
+      }
       this.sessionManager.setModel(session.id, selection.model)
       this.sessionManager.setVariant(session.id, selection.variant)
 
       const entries = sortProvidersByName(providers)
-      const availableVariants = modelVariantsFromProviders(entries, selection.model)
+      const availableVariants = modelVariantsFromProviders(entries, selection.model).filter(
+        (variant) => allowed || variant !== "ultra",
+      )
 
       return {
         _meta: buildVariantMeta({
@@ -1278,11 +1289,26 @@ export namespace ACP {
 
     async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse | void> {
       const session = this.sessionManager.get(params.sessionId)
-      const availableModes = await this.loadAvailableModes(session.cwd)
-      if (!availableModes.some((mode) => mode.id === params.modeId)) {
+      const loaded = await this.loadAvailableModes(session.cwd)
+      if (!loaded.modes.some((mode) => mode.id === params.modeId)) {
         throw new Error(`Agent not found: ${params.modeId}`)
       }
       this.sessionManager.setMode(params.sessionId, params.modeId)
+      const allowed = loaded.ultra.has(params.modeId)
+      if (session.variant === "ultra" && !allowed) this.sessionManager.setVariant(params.sessionId, undefined)
+      const model = session.model ?? (await defaultModel(this.config, session.cwd))
+      const providers = await this.sdk.config
+        .providers({ directory: session.cwd }, { throwOnError: true })
+        .then((x) => x.data!.providers)
+      return {
+        _meta: buildVariantMeta({
+          model,
+          variant: this.sessionManager.getVariant(params.sessionId),
+          availableVariants: modelVariantsFromProviders(providers, model).filter(
+            (variant) => allowed || variant !== "ultra",
+          ),
+        }),
+      }
     }
 
     async prompt(params: PromptRequest) {
@@ -1660,7 +1686,7 @@ export namespace ACP {
 
   function buildAvailableModels(
     providers: Array<{ id: string; name: string; models: Record<string, any> }>,
-    options: { includeVariants?: boolean } = {},
+    options: { includeVariants?: boolean; ultra?: boolean } = {},
   ): ModelOption[] {
     const includeVariants = options.includeVariants ?? false
     return providers.flatMap((provider) => {
@@ -1674,7 +1700,9 @@ export namespace ACP {
           name: `${provider.name}/${model.name}`,
         }
         if (!includeVariants || !model.variants) return [base]
-        const variants = Object.keys(model.variants).filter((variant) => variant !== DEFAULT_VARIANT_VALUE)
+        const variants = Object.keys(model.variants).filter(
+          (variant) => variant !== DEFAULT_VARIANT_VALUE && (variant !== "ultra" || options.ultra),
+        )
         const variantOptions = variants.map((variant) => ({
           modelId: `${provider.id}/${model.id}/${variant}`,
           name: `${provider.name}/${model.name} (${variant})`,

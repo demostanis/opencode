@@ -68,6 +68,55 @@ describe("session messages endpoint", () => {
     })
   })
 
+  test("rejects forbidden Ultra prompts before accepting them", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({})
+        const body = JSON.stringify({
+          agent: "plan",
+          model: { providerID: "openai", modelID: "gpt-5.6-sol" },
+          variant: "ultra",
+          noReply: true,
+          parts: [{ type: "text", text: "denied" }],
+        })
+
+        for (const path of ["message", "prompt_async"]) {
+          const res = await Server.Default().request(`/session/${session.id}/${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          })
+          expect(res.status).toBe(400)
+          expect(await res.json()).toMatchObject({
+            name: "UltraModeError",
+            data: { message: 'Ultra mode is not allowed for agent "plan"' },
+          })
+        }
+
+        const command = await Server.Default().request(`/session/${session.id}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: "plan",
+            model: "openai/gpt-5.6-sol",
+            variant: "ultra",
+            command: "security",
+            arguments: "denied",
+          }),
+        })
+        expect(command.status).toBe(400)
+        expect(await command.json()).toMatchObject({
+          name: "UltraModeError",
+          data: { message: 'Ultra mode is not allowed for agent "plan"' },
+        })
+
+        expect(await Session.messages({ sessionID: session.id })).toHaveLength(0)
+        await Session.remove(session.id)
+      },
+    })
+  })
+
   test("promotes a pending deferred message", async () => {
     await Instance.provide({
       directory: root,

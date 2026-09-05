@@ -832,11 +832,12 @@ export const SessionRoutes = lazy(() =>
       ),
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        await SessionPrompt.validate({ ...body, sessionID })
         c.status(200)
         c.header("Content-Type", "application/json")
         return stream(c, async (stream) => {
-          const sessionID = c.req.valid("param").sessionID
-          const body = c.req.valid("json")
           const release = Collaboration.guard(sessionID)
           const msg = await SessionPrompt.prompt({ ...body, sessionID }).catch((error) => {
             release()
@@ -871,11 +872,12 @@ export const SessionRoutes = lazy(() =>
       ),
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        await SessionPrompt.validate({ ...body, sessionID })
         c.status(204)
         c.header("Content-Type", "application/json")
         return stream(c, async () => {
-          const sessionID = c.req.valid("param").sessionID
-          const body = c.req.valid("json")
           const release = Collaboration.guard(sessionID)
           SessionPrompt.prompt({ ...body, sessionID })
             .then(() => {

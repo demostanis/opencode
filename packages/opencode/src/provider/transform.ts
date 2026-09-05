@@ -332,9 +332,9 @@ export namespace ProviderTransform {
   const ASTRA_EFFORTS = ["high", "max"]
 
   export function ultra(model: Provider.Model, variant?: string) {
-    const supported = [model.id, model.api.id].some((id) =>
-      ["gpt-5.6", "gpt-6-astra"].some((name) => id.toLowerCase().includes(name)),
-    )
+    const supported =
+      Object.hasOwn(model.variants ?? {}, "ultra") ||
+      [model.id, model.api.id].some((id) => ["gpt-5.6", "gpt-6-astra"].some((name) => id.toLowerCase().includes(name)))
     return variant === undefined ? supported : supported && variant === "ultra"
   }
 

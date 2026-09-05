@@ -402,6 +402,7 @@ test("treats agent variant as model-scoped setting (not provider option)", async
           test_agent: {
             model: "openai/gpt-5.2",
             variant: "xhigh",
+            ultra_mode_allowed: true,
             max_tokens: 123,
           },
         },
@@ -416,10 +417,12 @@ test("treats agent variant as model-scoped setting (not provider option)", async
       const agent = config.agent?.["test_agent"]
 
       expect(agent?.variant).toBe("xhigh")
+      expect(agent?.ultra_mode_allowed).toBe(true)
       expect(agent?.options).toMatchObject({
         max_tokens: 123,
       })
       expect(agent?.options).not.toHaveProperty("variant")
+      expect(agent?.options).not.toHaveProperty("ultra_mode_allowed")
     },
   })
 })

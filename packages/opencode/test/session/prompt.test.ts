@@ -210,6 +210,80 @@ describe("session.prompt agent variant", () => {
       else process.env.OPENAI_API_KEY = prev
     }
   })
+
+  test("enforces the agent Ultra mode policy", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        provider: {
+          test: {
+            name: "Test",
+            npm: "@ai-sdk/openai-compatible",
+            options: { apiKey: "test" },
+            models: {
+              ultra: { name: "Ultra", variants: { ultra: {} } },
+              plain: { name: "Plain" },
+            },
+          },
+        },
+        agent: {
+          build: { ultra_mode_allowed: false },
+          browser: { mode: "primary", ultra_mode_allowed: true },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const model = { providerID: ProviderID.make("test"), modelID: ModelID.make("ultra") }
+        const parts = [{ type: "text" as const, text: "hello" }]
+
+        await expect(
+          SessionPrompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model,
+            variant: "ultra",
+            noReply: true,
+            parts,
+          }),
+        ).rejects.toMatchObject({ data: { message: 'Ultra mode is not allowed for agent "build"' } })
+        await expect(
+          SessionPrompt.prompt({
+            sessionID: session.id,
+            agent: "plan",
+            model,
+            variant: "ultra",
+            noReply: true,
+            parts,
+          }),
+        ).rejects.toMatchObject({ data: { message: 'Ultra mode is not allowed for agent "plan"' } })
+
+        const allowed = await SessionPrompt.prompt({
+          sessionID: session.id,
+          agent: "browser",
+          model,
+          variant: "ultra",
+          noReply: true,
+          parts,
+        })
+        expect(allowed.info).toMatchObject({ agent: "browser", variant: "ultra", model })
+        await expect(
+          SessionPrompt.validate({
+            sessionID: session.id,
+            agent: "browser",
+            model: { providerID: ProviderID.make("test"), modelID: ModelID.make("plain") },
+            variant: "ultra",
+            noReply: true,
+            parts,
+          }),
+        ).rejects.toMatchObject({
+          data: { message: 'Ultra mode is not supported by model "test/plain"' },
+        })
+      },
+    })
+  })
 })
 
 describe("session.prompt agent model", () => {

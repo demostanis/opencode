@@ -8,10 +8,11 @@ import { Teammate } from "../../src/teammate/teammate"
 
 describe("session.system", () => {
   test("Teammate prompt describes root collaboration", () => {
-    const [usage, mode] = SystemPrompt.teammate()
+    const [usage, mode] = SystemPrompt.teammate("reviewer")
 
     expect(usage).toContain("You are `/root`, the coordinator of a team of Teammates")
-    expect(usage).toContain("Every Teammate runs the Build Agent")
+    expect(usage).toContain("A Teammate you spawn runs the same `reviewer` agent mode as you")
+    expect(usage).toContain("any nested Teammate inherits its spawning parent's agent mode")
     expect(usage).toContain("spawn_teammate")
     expect(usage).toContain("wait_teammate")
     expect(usage).toContain("All Teammates share the same directory")
@@ -26,9 +27,9 @@ describe("session.system", () => {
   })
 
   test("Teammate prompt requires members to own their workstreams", () => {
-    const [usage, mode] = SystemPrompt.teammate(true)
+    const [usage, mode] = SystemPrompt.teammate("reviewer", true)
 
-    expect(usage).toContain("You are a Teammate running the Build Agent in a collaborative team")
+    expect(usage).toContain("same `reviewer` agent mode as the parent that spawned you")
     expect(usage).toContain("Own and complete the distinct workstream assigned to you")
     expect(usage).toContain("Do not pass your assigned workstream")
     expect(usage).toContain("Use ordinary `task` subagents for bounded exploration")

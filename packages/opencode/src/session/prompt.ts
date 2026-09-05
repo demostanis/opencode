@@ -68,6 +68,10 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+  export const UltraModeError = NamedError.create(
+    "UltraModeError",
+    z.object({ message: z.string(), agent: z.string(), model: z.string().optional() }),
+  )
   class Cancelled extends Error {
     constructor(readonly reason: "cleanup" | "user") {
       super("Session cancelled")
@@ -1276,8 +1280,10 @@ export namespace SessionPrompt {
     })
   }
 
-  async function createUserMessage(input: PromptInput) {
-    const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
+  async function resolve(input: PromptInput) {
+    const name = input.agent ?? (await Agent.defaultAgent())
+    const agent = await Agent.get(name)
+    if (!agent) throw new Error(`Agent not found: ${name}`)
 
     const model = await iife(async () => {
       if (input.model) return input.model
@@ -1292,6 +1298,31 @@ export namespace SessionPrompt {
         ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
         : undefined
     const variant = input.variant ?? (agent.variant && full?.variants?.[agent.variant] ? agent.variant : undefined)
+    if (variant === "ultra" && !agent.ultra_mode_allowed) {
+      throw new UltraModeError({ message: `Ultra mode is not allowed for agent "${agent.name}"`, agent: agent.name })
+    }
+    if (variant === "ultra") {
+      const info = full ?? (await Provider.getModel(model.providerID, model.modelID))
+      if (!ProviderTransform.ultra(info, variant)) {
+        throw new UltraModeError({
+          message: `Ultra mode is not supported by model "${model.providerID}/${model.modelID}"`,
+          agent: agent.name,
+          model: `${model.providerID}/${model.modelID}`,
+        })
+      }
+    }
+    return { agent, model, variant }
+  }
+
+  export async function validate(input: PromptInput) {
+    await resolve(input)
+  }
+
+  async function createUserMessage(input: PromptInput) {
+    const runtime = await resolve(input)
+    const agent = runtime.agent
+    const model = runtime.model
+    const variant = runtime.variant
 
     const info: MessageV2.Info = {
       id: input.messageID ?? MessageID.ascending(),
@@ -2092,20 +2123,6 @@ You should build your plan incrementally by writing to or editing this file. NOT
       template = template + "\n\n" + input.arguments
     }
 
-    const shellMatches = ConfigMarkdown.shell(template)
-    if (shellMatches.length > 0) {
-      const sh = Shell.preferred()
-      const results = await Promise.all(
-        shellMatches.map(async ([, cmd]) => {
-          const out = await Process.text([cmd], { shell: sh, nothrow: true })
-          return out.text
-        }),
-      )
-      let index = 0
-      template = template.replace(bashRegex, () => results[index++])
-    }
-    template = template.trim()
-
     const agent = await Agent.get(agentName)
     if (!agent) {
       const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
@@ -2130,6 +2147,19 @@ You should build your plan incrementally by writing to or editing this file. NOT
       if (!Agent.lightweight(agent.name)) return last
       return (await Provider.getLightweightModelID(last.providerID)) ?? last
     })()
+    const userAgent = isSubtask ? (input.agent ?? (await Agent.defaultAgent())) : agentName
+    const userModel = isSubtask
+      ? input.model
+        ? Provider.parseModel(input.model)
+        : await lastModel(input.sessionID)
+      : taskModel
+    await validate({
+      sessionID: input.sessionID,
+      agent: userAgent,
+      model: userModel,
+      variant: input.variant,
+      parts: [],
+    })
 
     try {
       await Provider.getModel(taskModel.providerID, taskModel.modelID)
@@ -2144,6 +2174,19 @@ You should build your plan incrementally by writing to or editing this file. NOT
       }
       throw e
     }
+    const shellMatches = ConfigMarkdown.shell(template)
+    if (shellMatches.length > 0) {
+      const sh = Shell.preferred()
+      const results = await Promise.all(
+        shellMatches.map(async ([, cmd]) => {
+          const out = await Process.text([cmd], { shell: sh, nothrow: true })
+          return out.text
+        }),
+      )
+      let index = 0
+      template = template.replace(bashRegex, () => results[index++])
+    }
+    template = template.trim()
     const templateParts = await resolvePromptParts(template)
     const parts = isSubtask
       ? [
@@ -2161,13 +2204,6 @@ You should build your plan incrementally by writing to or editing this file. NOT
           },
         ]
       : [...templateParts, ...(input.parts ?? [])]
-
-    const userAgent = isSubtask ? (input.agent ?? (await Agent.defaultAgent())) : agentName
-    const userModel = isSubtask
-      ? input.model
-        ? Provider.parseModel(input.model)
-        : await lastModel(input.sessionID)
-      : taskModel
 
     await Plugin.trigger(
       "command.execute.before",

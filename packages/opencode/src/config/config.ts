@@ -789,6 +789,10 @@ export namespace Config {
         .string()
         .optional()
         .describe("Default model variant for this agent (applies only when using the agent's configured model)."),
+      ultra_mode_allowed: z
+        .boolean()
+        .optional()
+        .describe("Allow this agent to use Ultra mode. Defaults to true for build and false for all other agents."),
       temperature: z.number().optional(),
       top_p: z.number().optional(),
       prompt: z.string().optional(),
@@ -824,6 +828,7 @@ export namespace Config {
         "model",
         "subagent_model",
         "variant",
+        "ultra_mode_allowed",
         "prompt",
         "description",
         "temperature",

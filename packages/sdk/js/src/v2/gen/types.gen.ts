@@ -1108,6 +1108,10 @@ export type AgentConfig = {
    * Default model variant for this agent (applies only when using the agent's configured model).
    */
   variant?: string
+  /**
+   * Allow this agent to use Ultra mode. Defaults to true for build and false for all other agents.
+   */
+  ultra_mode_allowed?: boolean
   temperature?: number
   top_p?: number
   prompt?: string
@@ -1146,11 +1150,11 @@ export type AgentConfig = {
   [key: string]:
     | unknown
     | string
+    | boolean
     | number
     | {
         [key: string]: boolean
       }
-    | boolean
     | "subagent"
     | "primary"
     | "all"
@@ -1961,6 +1965,7 @@ export type Agent = {
     providerID: string
   }
   variant?: string
+  ultra_mode_allowed: boolean
   prompt?: string
   options: {
     [key: string]: unknown

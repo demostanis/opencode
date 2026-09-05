@@ -42,6 +42,7 @@ export namespace Agent {
       model: Model.optional(),
       subagentModel: Model.optional(),
       variant: z.string().optional(),
+      ultra_mode_allowed: z.boolean(),
       prompt: z.string().optional(),
       options: z.record(z.string(), z.any()),
       steps: z.number().int().positive().optional(),
@@ -94,6 +95,7 @@ export namespace Agent {
         ),
         mode: "primary",
         native: true,
+        ultra_mode_allowed: true,
       },
       plan: {
         name: "plan",
@@ -117,6 +119,7 @@ export namespace Agent {
         ),
         mode: "primary",
         native: true,
+        ultra_mode_allowed: false,
       },
       general: {
         name: "general",
@@ -132,6 +135,7 @@ export namespace Agent {
         options: {},
         mode: "subagent",
         native: true,
+        ultra_mode_allowed: false,
       },
       lightweight: {
         name: "lightweight",
@@ -148,6 +152,7 @@ export namespace Agent {
         options: {},
         mode: "subagent",
         native: true,
+        ultra_mode_allowed: false,
       },
       explore: {
         name: "explore",
@@ -176,6 +181,7 @@ export namespace Agent {
         options: {},
         mode: "subagent",
         native: true,
+        ultra_mode_allowed: false,
       },
       security: {
         name: "security",
@@ -195,12 +201,14 @@ export namespace Agent {
         mode: "subagent",
         hidden: true,
         native: true,
+        ultra_mode_allowed: false,
       },
       compaction: {
         name: "compaction",
         mode: "primary",
         native: true,
         hidden: true,
+        ultra_mode_allowed: false,
         prompt: PROMPT_COMPACTION,
         permission: PermissionNext.merge(
           defaults,
@@ -217,6 +225,7 @@ export namespace Agent {
         options: {},
         native: true,
         hidden: true,
+        ultra_mode_allowed: false,
         temperature: 0.5,
         permission: PermissionNext.merge(
           defaults,
@@ -233,6 +242,7 @@ export namespace Agent {
         options: {},
         native: true,
         hidden: true,
+        ultra_mode_allowed: false,
         permission: PermissionNext.merge(
           defaults,
           PermissionNext.fromConfig({
@@ -257,10 +267,12 @@ export namespace Agent {
           permission: PermissionNext.merge(defaults, user),
           options: {},
           native: false,
+          ultra_mode_allowed: false,
         }
       if (value.model) item.model = parse(value.model)
       if (value.subagent_model) item.subagentModel = parse(value.subagent_model)
       item.variant = value.variant ?? item.variant
+      item.ultra_mode_allowed = value.ultra_mode_allowed ?? item.ultra_mode_allowed
       item.prompt = value.prompt ?? item.prompt
       item.description = value.description ?? item.description
       item.temperature = value.temperature ?? item.temperature
