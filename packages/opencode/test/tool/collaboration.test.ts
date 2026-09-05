@@ -97,7 +97,7 @@ afterAll(() => {
 })
 
 describe("tool.collaboration", () => {
-  test("spawns a background Teammate and returns its result through wait_teammate", async () => {
+  test("spawns a background Teammate with the coordinator agent and returns its result", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
 
@@ -111,6 +111,11 @@ describe("tool.collaboration", () => {
       name: "GPT-5.6 Sol",
       release_date: "2026-07-09",
     }
+    const other = {
+      ...model,
+      id: "gpt-5.6-terra",
+      name: "GPT-5.6 Terra",
+    }
 
     await using tmp = await tmpdir({
       init: async (dir) => {
@@ -118,13 +123,20 @@ describe("tool.collaboration", () => {
           path.join(dir, "opencode.json"),
           JSON.stringify({
             enabled_providers: ["openai"],
+            agent: {
+              reviewer: {
+                mode: "primary",
+                description: "Reviews changes",
+                ultra_mode_allowed: true,
+              },
+            },
             provider: {
               openai: {
                 name: "OpenAI",
                 env: ["OPENAI_API_KEY"],
                 npm: "@ai-sdk/openai",
                 api: "https://api.openai.com/v1",
-                models: { [model.id]: model },
+                models: { [model.id]: model, [other.id]: other },
                 options: {
                   apiKey: "test-openai-key",
                   baseURL: `${server.url.origin}/v1`,
@@ -145,7 +157,7 @@ describe("tool.collaboration", () => {
           sessionID: session.id,
           role: "user",
           time: { created: Date.now() },
-          agent: "build",
+          agent: "reviewer",
           model: {
             providerID: ProviderID.openai,
             modelID: ModelID.make(model.id),
@@ -157,8 +169,8 @@ describe("tool.collaboration", () => {
           parentID: user.id,
           sessionID: session.id,
           role: "assistant",
-          mode: "build",
-          agent: "build",
+          mode: "reviewer",
+          agent: "reviewer",
           variant: "ultra",
           path: { cwd: tmp.path, root: tmp.path },
           cost: 0,
@@ -173,24 +185,25 @@ describe("tool.collaboration", () => {
           finish: "stop",
           time: { created: Date.now() },
         } satisfies MessageV2.Assistant)
-        const build = await Agent.get("build")
-        const spawn = await Collaboration.SpawnTeammateTool.init({ agent: build })
-        const send = await Collaboration.SendMessageTool.init({ agent: build })
-        const followup = await Collaboration.FollowupTaskTool.init({ agent: build })
-        const wait = await Collaboration.WaitTeammateTool.init({ agent: build })
-        expect(spawn.description).toContain("Start a Build Teammate")
+        const reviewer = await Agent.get("reviewer")
+        const spawn = await Collaboration.SpawnTeammateTool.init({ agent: reviewer })
+        const send = await Collaboration.SendMessageTool.init({ agent: reviewer })
+        const followup = await Collaboration.FollowupTaskTool.init({ agent: reviewer })
+        const wait = await Collaboration.WaitTeammateTool.init({ agent: reviewer })
+        expect(spawn.description).toContain("using the same agent mode as you")
         expect(spawn.description).toContain("separate, substantial workstream")
         expect(spawn.description).toContain("use the task tool instead")
         let asks = 0
         const ctx = {
           sessionID: session.id,
           messageID: assistant.id,
-          agent: "build",
+          agent: "reviewer",
           abort: new AbortController().signal,
           messages: [],
           metadata: () => {},
-          ask: async (request: { permission: string }) => {
+          ask: async (request: { permission: string; patterns: string[] }) => {
             expect(request.permission).toBe("teammate")
+            expect(request.patterns).toEqual(["reviewer"])
             asks++
           },
         }
@@ -203,6 +216,7 @@ describe("tool.collaboration", () => {
           ctx,
         )
         const taskID = started.metadata.sessionId
+        expect(started.output).toContain("Spawned reviewer Teammate.")
         const result = await wait.execute({ task_ids: [taskID], timeout_ms: 5_000 }, ctx)
         const teammates = JSON.parse(result.output) as Array<{
           task_id: string
@@ -219,7 +233,7 @@ describe("tool.collaboration", () => {
             task_id: taskID,
             parent_id: session.id,
             coordinator_id: session.id,
-            agent: "build",
+            agent: "reviewer",
             description: "Research child",
             status: "completed",
             result: "child result",
@@ -227,16 +241,17 @@ describe("tool.collaboration", () => {
         ])
         expect(await Session.get(taskID)).toMatchObject({
           parentID: session.id,
-          title: "Research child (@build teammate)",
+          title: "Research child (@reviewer teammate)",
         })
         expect((await Session.messages({ sessionID: taskID }))[0]?.info).toMatchObject({
-          agent: "build",
+          agent: "reviewer",
           model: { providerID: "openai", modelID: model.id },
           variant: "ultra",
         })
         expect(asks).toBe(2)
         const body = JSON.stringify(state.requests[0])
         expect(body).toContain("You are a delegated Teammate")
+        expect(body).toContain("same `reviewer` agent mode as the parent that spawned you")
         expect(body).toContain("Never pass your assigned workstream")
         expect(body).toContain("Use ordinary task subagents")
 
@@ -264,7 +279,7 @@ describe("tool.collaboration", () => {
             providerID: ProviderID.openai,
             modelID: ModelID.make(model.id),
           },
-          agent: "build",
+          agent: "reviewer",
           variant: "ultra",
           tools: { bash: false },
           parts: await SessionPrompt.resolvePromptParts("Continue coordinating the team."),
@@ -278,8 +293,9 @@ describe("tool.collaboration", () => {
           ...ctx,
           sessionID: taskID,
           messageID: child.info.id,
-          ask: async (request: { permission: string }) => {
+          ask: async (request: { permission: string; patterns: string[] }) => {
             expect(request.permission).toBe("teammate")
+            expect(request.patterns).toEqual(["reviewer"])
           },
         }
         const delivered = await send.execute(
@@ -295,7 +311,7 @@ describe("tool.collaboration", () => {
         )
         if (!pending || pending.info.role !== "user") throw new Error("Missing queued coordinator message")
         expect(pending.info).toMatchObject({
-          agent: "build",
+          agent: "reviewer",
           model: { providerID: "openai", modelID: model.id },
           variant: "ultra",
           tools: { bash: false },
@@ -303,7 +319,7 @@ describe("tool.collaboration", () => {
         expect(pending.info.deferred).toBeUndefined()
         const update = pending.parts.find((part) => part.type === "text")?.text ?? ""
         expect(update).toContain(`sender_session_id: ${taskID}`)
-        expect(update).toContain("sender_agent: build")
+        expect(update).toContain("sender_agent: reviewer")
         expect(update).toContain(`sender_message_id: ${child.info.id}`)
         expect(update).toContain("sender_workstream: Research child")
         expect(update).toContain("Backend contract is ready for integration.")
@@ -357,9 +373,19 @@ describe("tool.collaboration", () => {
             .find((message) => message.info.role === "assistant" && message.info.parentID === idle.info.id)
             ?.parts.find((part) => part.type === "text")?.text,
         ).toBe("idle coordinator received update")
+        ctx.messageID = (await Session.messages({ sessionID: session.id })).findLast(
+          (message) => message.info.role === "assistant",
+        )!.info.id
 
         const queuedReplies = ["queued base result", "queued message result"]
-        state.reply = () => response(queuedReplies.shift() ?? "unexpected queued result")
+        const receiving = Promise.withResolvers<void>()
+        const received = Promise.withResolvers<void>()
+        state.reply = async () => {
+          const text = queuedReplies.shift() ?? "unexpected queued result"
+          receiving.resolve()
+          await received.promise
+          return response(text)
+        }
         const messaged = await spawn.execute(
           {
             description: "Queued message child",
@@ -367,7 +393,9 @@ describe("tool.collaboration", () => {
           },
           ctx,
         )
+        await receiving.promise
         await send.execute({ task_id: messaged.metadata.sessionId, message: "Return the queued message result." }, ctx)
+        received.resolve()
         const messagedResult = await wait.execute({ task_ids: [messaged.metadata.sessionId], timeout_ms: 5_000 }, ctx)
         expect(JSON.parse(messagedResult.output)[0]).toMatchObject({
           status: "completed",
@@ -433,10 +461,13 @@ describe("tool.collaboration", () => {
         expect(asks).toBe(11)
 
         let release = () => {}
+        const ready = Promise.withResolvers<void>()
+        let count = 0
         const gate = new Promise<void>((resolve) => {
           release = resolve
         })
         state.reply = async () => {
+          if (++count === Teammate.MAX) ready.resolve()
           await gate
           return response("held result")
         }
@@ -461,8 +492,78 @@ describe("tool.collaboration", () => {
             },
             ctx,
           ),
-        ).rejects.toThrow('10 active across the session tree). Active Teammates: build "Held child 1"')
+        ).rejects.toThrow('10 active across the session tree). Active Teammates: reviewer "Held child 1"')
+        await ready.promise
+
+        const controller = new AbortController()
+        const caller = (await Session.messages({ sessionID: held[2].metadata.sessionId })).findLast(
+          (message) => message.info.role === "assistant",
+        )!
+        const unrelated = wait
+          .execute(
+            { task_ids: [held[1].metadata.sessionId], timeout_ms: 60_000 },
+            {
+              ...ctx,
+              sessionID: held[2].metadata.sessionId,
+              messageID: caller.info.id,
+              abort: controller.signal,
+            },
+          )
+          .then(
+            () => "woke",
+            (err: Error) => err.message,
+          )
+        const authorized = Promise.withResolvers<void>()
+        const waiting = wait.execute(
+          { task_ids: [held[0].metadata.sessionId], timeout_ms: 60_000 },
+          {
+            ...ctx,
+            abort: AbortSignal.timeout(2_000),
+            ask: async () => authorized.resolve(),
+          },
+        )
+        await authorized.promise
+        await send.execute({ task_id: session.id, message: "Progress while you are waiting." }, source)
+        expect(JSON.parse((await waiting).output)[0].status).toBe("running")
+
+        // A message queued before wait starts must also prevent blocking.
+        const unread = await wait.execute(
+          { task_ids: [held[0].metadata.sessionId], timeout_ms: 60_000 },
+          { ...ctx, abort: AbortSignal.timeout(2_000) },
+        )
+        expect(JSON.parse(unread.output)[0].status).toBe("running")
+
+        const recipient = held[0].metadata.sessionId
+        const latest = (await Session.messages({ sessionID: recipient })).findLast(
+          (message) => message.info.role === "assistant",
+        )!
+        await followup.execute({ task_id: recipient, message: "Follow-up after the current work." }, source)
+        const listening = Promise.withResolvers<void>()
+        const incoming = wait.execute(
+          { task_ids: [held[1].metadata.sessionId], timeout_ms: 60_000 },
+          {
+            ...ctx,
+            sessionID: recipient,
+            messageID: latest.info.id,
+            abort: AbortSignal.timeout(2_000),
+            ask: async () => listening.resolve(),
+          },
+        )
+        await listening.promise
+        await send.execute({ task_id: recipient, message: "Peer update while you are waiting." }, source)
+        expect(JSON.parse((await incoming).output)[0].status).toBe("running")
+        expect(
+          (await Session.messages({ sessionID: recipient })).some((message) =>
+            message.parts.some((part) => part.type === "text" && part.text === "Peer update while you are waiting."),
+          ),
+        ).toBe(true)
+        controller.abort()
+        expect(await unrelated).toBe("Teammate operation interrupted")
         release()
+        await SessionPrompt.loop({ sessionID: session.id })
+        ctx.messageID = (await Session.messages({ sessionID: session.id })).findLast(
+          (message) => message.info.role === "assistant",
+        )!.info.id
 
         const ids = held.map((item) => item.metadata.sessionId)
         let statuses: string[] = []
@@ -493,7 +594,7 @@ describe("tool.collaboration", () => {
             providerID: ProviderID.openai,
             modelID: ModelID.make(model.id),
           },
-          agent: "build",
+          agent: "reviewer",
           variant: "ultra",
           tools: { bash: false },
           parts: await SessionPrompt.resolvePromptParts("Continue directly in the child session."),
@@ -504,13 +605,120 @@ describe("tool.collaboration", () => {
         await direct
         const directResult = await directWait
         const directBody = JSON.stringify(state.requests.at(-1))
-        expect(directBody).toContain("You are a Teammate running the Build Agent")
+        expect(directBody).toContain("You are a Teammate running the same `reviewer` agent mode")
         expect(directBody).not.toContain("You are `/root`")
         expect((await Session.get(taskID)).permission).toContainEqual(Teammate.ROLE)
         expect(JSON.parse(directResult.output)[0]).toMatchObject({
           status: "completed",
           result: "direct interaction result",
         })
+
+        await Session.updateMessage({
+          id: MessageID.ascending(),
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "build",
+          model: {
+            providerID: ProviderID.openai,
+            modelID: ModelID.make(other.id),
+          },
+          variant: "medium",
+        } satisfies MessageV2.User)
+        const nested = await spawn.execute(
+          {
+            description: "Nested child",
+            prompt: "Return the nested result.",
+          },
+          source,
+        )
+        const nestedResult = await wait.execute({ task_ids: [nested.metadata.sessionId], timeout_ms: 5_000 }, source)
+        expect(JSON.parse(nestedResult.output)[0]).toMatchObject({
+          parent_id: taskID,
+          coordinator_id: session.id,
+          agent: "reviewer",
+          status: "completed",
+        })
+        expect(nested.metadata.model).toEqual({
+          providerID: ProviderID.openai,
+          modelID: ModelID.make(model.id),
+        })
+        expect(await Session.get(nested.metadata.sessionId)).toMatchObject({
+          parentID: taskID,
+          title: "Nested child (@reviewer teammate)",
+        })
+        expect((await Session.messages({ sessionID: nested.metadata.sessionId }))[0]?.info).toMatchObject({
+          agent: "reviewer",
+          model: { providerID: "openai", modelID: model.id },
+          variant: "ultra",
+        })
+      },
+    })
+  })
+
+  test("rejects Teammate spawning when the agent disallows Ultra", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        agent: {
+          reviewer: { mode: "primary" },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({ title: "Denied coordination" })
+        const user = await Session.updateMessage({
+          id: MessageID.ascending(),
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "reviewer",
+          model: { providerID: ProviderID.openai, modelID: ModelID.make("gpt-5.6-sol") },
+          variant: "ultra",
+        } satisfies MessageV2.User)
+        const assistant = await Session.updateMessage({
+          id: MessageID.ascending(),
+          parentID: user.id,
+          sessionID: session.id,
+          role: "assistant",
+          mode: "reviewer",
+          agent: "reviewer",
+          variant: "ultra",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ModelID.make("gpt-5.6-sol"),
+          providerID: ProviderID.openai,
+          time: { created: Date.now() },
+        } satisfies MessageV2.Assistant)
+        const reviewer = await Agent.get("reviewer")
+        const spawn = await Collaboration.SpawnTeammateTool.init({ agent: reviewer })
+        const ctx = {
+          sessionID: session.id,
+          messageID: assistant.id,
+          agent: "reviewer",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => {},
+          ask: async () => {
+            throw new Error("Permission should not be requested")
+          },
+        }
+
+        await expect(spawn.execute({ description: "Denied child", prompt: "Do not run." }, ctx)).rejects.toMatchObject({
+          data: { message: 'Ultra mode is not allowed for agent "reviewer"' },
+        })
+        const list = await Collaboration.ListTeammatesTool.init({ agent: reviewer })
+        await expect(list.execute({}, ctx)).rejects.toMatchObject({
+          data: { message: 'Ultra mode is not allowed for agent "reviewer"' },
+        })
+        const send = await Collaboration.SendMessageTool.init({ agent: reviewer })
+        await expect(send.execute({ task_id: session.id, message: "Denied" }, ctx)).rejects.toMatchObject({
+          data: { message: 'Ultra mode is not allowed for agent "reviewer"' },
+        })
+        expect(state.requests).toHaveLength(0)
       },
     })
   })

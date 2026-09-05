@@ -4,7 +4,9 @@ import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
+import { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { ProviderTransform } from "@/provider/transform"
 import { Session } from "@/session"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
@@ -16,15 +18,16 @@ import { Tool } from "./tool"
 
 export namespace Collaboration {
   const log = Log.create({ service: "tool.collaboration" })
-  const TEAMMATE_INSTRUCTION = [
-    Teammate.MARKER,
-    "You are a delegated Teammate running the Build Agent, not the coordinating root.",
-    "Own and complete your assigned workstream, integrate supporting results, and return a concise outcome to your parent.",
-    "Never pass your assigned workstream, or most of it, to another Teammate or create a delegation chain for the same work.",
-    "Use ordinary task subagents for bounded exploration, verification, and small one-shot supporting tasks.",
-    "Only spawn a Teammate for a newly discovered, substantial workstream with a distinct deliverable and no current owner.",
-    "Communicate dependencies, decisions, progress, conflicts, and shared-file ownership with the team.",
-  ].join(" ")
+  const instruction = (agent: string) =>
+    [
+      Teammate.MARKER,
+      `You are a delegated Teammate running the same \`${agent}\` agent mode as the parent that spawned you.`,
+      "Own and complete your assigned workstream, integrate supporting results, and return a concise outcome to your parent.",
+      "Never pass your assigned workstream, or most of it, to another Teammate or create a delegation chain for the same work.",
+      "Use ordinary task subagents for bounded exploration, verification, and small one-shot supporting tasks.",
+      "Only spawn a Teammate for a newly discovered, substantial workstream with a distinct deliverable and no current owner.",
+      "Communicate dependencies, decisions, progress, conflicts, and shared-file ownership with the team.",
+    ].join(" ")
 
   type Status = "running" | "completed" | "failed" | "interrupted"
   type External = {
@@ -53,6 +56,7 @@ export namespace Collaboration {
     activity: number
     pending: number
     promise: Promise<void>
+    queue?: Promise<MessageV2.WithParts | undefined>
     external?: External
     finalizing?: {
       external: External
@@ -63,8 +67,11 @@ export namespace Collaboration {
   const state = Instance.state(
     () => {
       const entries = new Map<SessionID, Entry>()
+      const messages = new Map<SessionID, MessageID>()
+      const waiters = new Map<SessionID, Set<() => void>>()
       const removed = Bus.subscribe(Session.Event.Deleted, (event) => {
         stop(event.properties.info.id)
+        messages.delete(event.properties.info.id)
         const entry = entries.get(event.properties.info.id)
         if (!entry) return
         entries.delete(entry.id)
@@ -96,6 +103,8 @@ export namespace Collaboration {
       })
       return {
         entries,
+        messages,
+        waiters,
         unsub() {
           removed()
           cancelled()
@@ -251,35 +260,61 @@ export namespace Collaboration {
     }
   }
 
-  function launch(entry: Entry, prompt: string) {
+  function notify(session: SessionID, message: MessageID) {
+    if ((state().messages.get(session) ?? "") < message) state().messages.set(session, message)
+    for (const wake of state().waiters.get(session) ?? []) wake()
+  }
+
+  function enqueue(entry: Entry, prompt: string) {
+    const run = entry.run
+    const previous = entry.queue
+    const queued = (async () => {
+      await previous
+      if (entry.run !== run) return
+      const config = await Config.get()
+      const parts = await SessionPrompt.resolvePromptParts(prompt)
+      if (entry.run !== run) return
+      return SessionPrompt.prompt({
+        sessionID: entry.id,
+        messageID: MessageID.ascending(),
+        model: entry.model,
+        agent: entry.agent,
+        variant: entry.variant,
+        system: instruction(entry.agent),
+        tools: {
+          todowrite: false,
+          todoread: false,
+          ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((tool) => [tool, false])),
+        },
+        noReply: true,
+        parts,
+      })
+    })()
+    entry.queue = queued.catch(() => undefined)
+    return queued
+  }
+
+  function launch(entry: Entry, prompt: string, message = false) {
     const run = entry.run
     const prior = entry.promise
     entry.pending++
     entry.status = "running"
+    const queued = message ? enqueue(entry, prompt) : undefined
     entry.promise = (async () => {
-      await prior
-      if (entry.run !== run) return
-      entry.time = { start: Date.now() }
-      delete entry.result
-      delete entry.error
       try {
-        const config = await Config.get()
-        const parts = await SessionPrompt.resolvePromptParts(prompt)
+        if (queued) {
+          const msg = await queued
+          if (entry.run !== run) return
+          if (msg) notify(entry.id, msg.info.id)
+        }
+        await prior
         if (entry.run !== run) return
-        const result = await SessionPrompt.prompt({
-          sessionID: entry.id,
-          messageID: MessageID.ascending(),
-          model: entry.model,
-          agent: entry.agent,
-          variant: entry.variant,
-          system: TEAMMATE_INSTRUCTION,
-          tools: {
-            todowrite: false,
-            todoread: false,
-            ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((tool) => [tool, false])),
-          },
-          parts,
-        })
+        entry.time = { start: Date.now() }
+        delete entry.result
+        delete entry.error
+        if (!queued) await enqueue(entry, prompt)
+        if (entry.run !== run) return
+        const result = await SessionPrompt.loop({ sessionID: entry.id })
         if (entry.run !== run) return
         entry.pending--
         entry.status = entry.pending === 0 ? "completed" : "running"
@@ -300,6 +335,31 @@ export namespace Collaboration {
     if (signal.aborted) throw new Error("Teammate operation interrupted")
   }
 
+  async function runtime(ctx: Tool.Context) {
+    available(ctx.abort)
+    const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+    if (msg.info.role !== "assistant") throw new Error("Teammate tools require an assistant message")
+    const info = msg.info
+    const agent = await Agent.get(info.agent)
+    if (!agent) throw new Error(`Agent is unavailable: ${info.agent}`)
+    if (info.variant !== "ultra" || !agent.ultra_mode_allowed) {
+      throw new SessionPrompt.UltraModeError({
+        message: `Ultra mode is not allowed for agent "${agent.name}"`,
+        agent: agent.name,
+      })
+    }
+    const model = await Provider.getModel(info.providerID, info.modelID)
+    if (!ProviderTransform.ultra(model, info.variant)) {
+      throw new SessionPrompt.UltraModeError({
+        message: `Ultra mode is not supported by model "${info.providerID}/${info.modelID}"`,
+        agent: agent.name,
+        model: `${info.providerID}/${info.modelID}`,
+      })
+    }
+    available(ctx.abort)
+    return { msg: info, agent }
+  }
+
   async function authorize(ctx: Tool.Context, entries: Entry[]) {
     const patterns = [...new Set(entries.map((entry) => entry.agent))]
     if (patterns.length === 0) return
@@ -315,15 +375,16 @@ export namespace Collaboration {
 
   async function coordinator(ctx: Tool.Context, rootID: SessionID, message: string) {
     if (ctx.sessionID === rootID) throw new Error("The root coordinator cannot message itself")
+    const user = (await Session.messages({ sessionID: rootID })).findLast((item) => item.info.role === "user")
+    if (!user || user.info.role !== "user") throw new Error("Unable to resolve the root coordinator runtime")
+    available(ctx.abort)
     await ctx.ask({
       permission: "teammate",
-      patterns: ["build"],
+      patterns: [user.info.agent],
       always: ["*"],
       metadata: { task_ids: [rootID] },
     })
     available(ctx.abort)
-    const user = (await Session.messages({ sessionID: rootID })).findLast((item) => item.info.role === "user")
-    if (!user || user.info.role !== "user") throw new Error("Unable to resolve the root coordinator runtime")
     const sender = state().entries.get(ctx.sessionID)
     const parts = await SessionPrompt.resolvePromptParts(
       [
@@ -351,6 +412,7 @@ export namespace Collaboration {
       noReply: true,
       parts,
     })
+    notify(rootID, queued.info.id)
     void SessionPrompt.loop({ sessionID: rootID }).catch((err) =>
       log.error("failed to deliver Teammate message", {
         sessionID: rootID,
@@ -382,13 +444,18 @@ export namespace Collaboration {
   export const SpawnTeammateTool = Tool.define("spawn_teammate", async () => {
     return {
       description:
-        "Start a Build Teammate in the background for a separate, substantial workstream with a clear deliverable and owner. Do not use this for exploration, verification, or small one-shot work; use the task tool instead. The call returns immediately; use wait_teammate to collect results.",
+        "Start a Teammate in the background using the same agent mode as you for a separate, substantial workstream with a clear deliverable and owner. Do not use this for exploration, verification, or small one-shot work; use the task tool instead. The call returns immediately; use wait_teammate to collect results.",
       parameters: spawn,
       async execute(params: z.infer<typeof spawn>, ctx) {
+        const current = await runtime(ctx)
+        const msg = current.msg
+        const agent = current.agent
+        const rootID = await root(ctx.sessionID)
+        available(ctx.abort)
         if (!ctx.extra?.bypassAgentCheck) {
           await ctx.ask({
             permission: "teammate",
-            patterns: ["build"],
+            patterns: [agent.name],
             always: ["*"],
             metadata: {
               description: params.description,
@@ -396,19 +463,8 @@ export namespace Collaboration {
           })
         }
         available(ctx.abort)
-        const agent = await Agent.get("build")
-        if (!agent) throw new Error("Build agent is unavailable")
-        const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-        if (msg.info.role !== "assistant") throw new Error("Teammate spawning requires an assistant message")
-        const rootID = await root(ctx.sessionID)
-        const rootMessage = (await Session.messages({ sessionID: rootID })).findLast(
-          (message) => message.info.role === "user",
-        )
-        if (!rootMessage || rootMessage.info.role !== "user") {
-          throw new Error("Unable to resolve the root Teammate runtime")
-        }
-        const model = rootMessage.info.model
-        const variant = rootMessage.info.variant
+        const model = { providerID: msg.providerID, modelID: msg.modelID }
+        const variant = msg.variant
         prune(rootID)
         if (active(rootID) >= Teammate.MAX) {
           throw limit(rootID)
@@ -455,7 +511,7 @@ export namespace Collaboration {
             model,
             status: entry.status,
           },
-          output: [`Spawned Build Teammate.`, `task_id: ${entry.id}`].join("\n"),
+          output: [`Spawned ${agent.name} Teammate.`, `task_id: ${entry.id}`].join("\n"),
         }
       },
     }
@@ -470,9 +526,10 @@ export namespace Collaboration {
 
   export const SendMessageTool = Tool.define("send_message", {
     description:
-      "Queue a message for an existing Teammate or the root coordinator. It runs as the next turn after the target's current work.",
+      "Queue a message for an existing Teammate or the root coordinator. It becomes available on the target's next turn and wakes wait_teammate.",
     parameters: target,
     async execute(params, ctx) {
+      await runtime(ctx)
       const rootID = await root(ctx.sessionID)
       if (params.task_id === rootID) {
         await coordinator(ctx, rootID, params.message)
@@ -485,7 +542,7 @@ export namespace Collaboration {
       const entry = await find(ctx.sessionID, params.task_id)
       await authorize(ctx, [entry])
       available(ctx.abort)
-      launch(entry, params.message)
+      launch(entry, params.message, true)
       return {
         title: `Message ${entry.agent}`,
         metadata: { sessionId: entry.id, status: entry.status },
@@ -498,6 +555,7 @@ export namespace Collaboration {
     description: "Give an existing Teammate follow-up work in its workstream while preserving its context.",
     parameters: target,
     async execute(params, ctx) {
+      await runtime(ctx)
       const entry = await find(ctx.sessionID, params.task_id)
       await authorize(ctx, [entry])
       if (entry.status === "interrupted") await settle(entry.promise, ctx.abort)
@@ -520,19 +578,35 @@ export namespace Collaboration {
   })
 
   export const WaitTeammateTool = Tool.define("wait_teammate", {
-    description: "Wait for Teammate progress and return the latest statuses and completed results.",
+    description:
+      "Wait for Teammate progress or an incoming message and return the latest statuses and completed results. Queued messages are available on your next turn.",
     parameters: wait,
     async execute(params, ctx) {
+      await runtime(ctx)
+      const current = state()
+      const message = Promise.withResolvers<void>()
+      const waiters = current.waiters.get(ctx.sessionID) ?? new Set<() => void>()
+      current.waiters.set(ctx.sessionID, waiters)
+      waiters.add(message.resolve)
+      using _ = defer(() => {
+        waiters.delete(message.resolve)
+        if (waiters.size === 0) current.waiters.delete(ctx.sessionID)
+      })
       const rootID = await root(ctx.sessionID)
       const entries = params.task_ids?.length
         ? await Promise.all(params.task_ids.map((id) => find(ctx.sessionID, id)))
         : [...state().entries.values()].filter((entry) => entry.root === rootID)
       if (entries.length === 0) throw new Error("No Teammates to wait for")
       await authorize(ctx, entries)
+      available(ctx.abort)
       const running = entries.filter((entry) => entry.status === "running")
-      if (running.length > 0) {
+      if (running.length > 0 && (current.messages.get(ctx.sessionID) ?? "") <= ctx.messageID) {
         await settle(
-          Promise.race([Promise.race(running.map((entry) => entry.promise)), Bun.sleep(params.timeout_ms ?? 30_000)]),
+          Promise.race([
+            Promise.race(running.map((entry) => entry.promise)),
+            message.promise,
+            Bun.sleep(params.timeout_ms ?? 30_000),
+          ]),
           ctx.abort,
         )
       }
@@ -556,6 +630,7 @@ export namespace Collaboration {
     description: "Stop a running Teammate while preserving its session for a later follow-up.",
     parameters: task,
     async execute(params, ctx) {
+      await runtime(ctx)
       const entry = await find(ctx.sessionID, params.task_id)
       await authorize(ctx, [entry])
       stop(entry.id)
@@ -571,6 +646,7 @@ export namespace Collaboration {
     description: "List Teammates with their workstreams, statuses, and root coordinator ID.",
     parameters: z.object({}),
     async execute(_params, ctx) {
+      await runtime(ctx)
       const rootID = await root(ctx.sessionID)
       prune(rootID)
       const entries = [...state().entries.values()].filter((entry) => entry.root === rootID)
