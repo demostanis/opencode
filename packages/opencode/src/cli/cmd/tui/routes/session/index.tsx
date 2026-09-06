@@ -1260,6 +1260,11 @@ function UserMessage(props: {
   const sync = useSync()
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
+  const sdk = useSDK()
+  const toast = useToast()
+  const renderer = useRenderer()
+  const [removing, setRemoving] = createSignal(false)
+  const [highlight, setHighlight] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
   const deferred = createMemo(
     () =>
@@ -1330,11 +1335,39 @@ function UserMessage(props: {
                 </Show>
               }
             >
-              <text fg={theme.textMuted}>
-                <span style={{ bg: color(), fg: queuedFg(), bold: true }}>
-                  {deferred() ? " DEFERRED " : " QUEUED "}
-                </span>
-              </text>
+              <box flexDirection="row" gap={1}>
+                <text fg={theme.textMuted}>
+                  <span style={{ bg: color(), fg: queuedFg(), bold: true }}>
+                    {deferred() ? " DEFERRED " : " QUEUED "}
+                  </span>
+                </text>
+                <Show when={writable(sync.session.get(props.message.sessionID))}>
+                  <text
+                    fg={highlight() ? theme.error : theme.textMuted}
+                    onMouseOver={() => setHighlight(true)}
+                    onMouseOut={() => setHighlight(false)}
+                    onMouseUp={async (evt) => {
+                      evt.stopPropagation()
+                      if (evt.button !== 0 || renderer.getSelection()?.getSelectedText() || removing()) return
+                      setRemoving(true)
+                      await sdk.client.session
+                        .deleteMessage(
+                          { sessionID: props.message.sessionID, messageID: props.message.id },
+                          { throwOnError: true },
+                        )
+                        .catch(() => {
+                          toast.show({
+                            message: "Failed to remove message. It may already be processing.",
+                            variant: "error",
+                          })
+                        })
+                        .finally(() => setRemoving(false))
+                    }}
+                  >
+                    {removing() ? "Removing..." : "[Remove]"}
+                  </text>
+                </Show>
+              </box>
             </Show>
           </box>
         </box>

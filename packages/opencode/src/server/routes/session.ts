@@ -720,8 +720,7 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const params = c.req.valid("param")
-        SessionPrompt.assertNotBusy(params.sessionID)
-        await Session.removeMessage({
+        await SessionPrompt.remove({
           sessionID: params.sessionID,
           messageID: params.messageID,
         })

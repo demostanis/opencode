@@ -52,6 +52,7 @@ import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
 import { AgentGraph } from "@/memory/agentgraph"
 import { Teammate } from "@/teammate/teammate"
+import { Lock } from "@/util/lock"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -98,6 +99,7 @@ export namespace SessionPrompt {
         string,
         {
           abort: AbortController
+          claimed: Set<MessageID>
           callbacks: {
             resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
@@ -457,6 +459,7 @@ export namespace SessionPrompt {
     const controller = new AbortController()
     s[sessionID] = {
       abort: controller,
+      claimed: new Set(),
       callbacks: [],
     }
     return controller.signal
@@ -486,6 +489,12 @@ export namespace SessionPrompt {
   }
 
   async function enqueue(info: MessageV2.User, parts: MessageV2.Part[]) {
+    using _ = await Lock.write(`session.messages.${info.sessionID}`)
+    const target = await MessageV2.get({ sessionID: info.sessionID, messageID: info.id }).catch((err) => {
+      if (NotFoundError.isInstance(err)) return
+      throw err
+    })
+    if (!target) return
     // Message IDs determine both prompt order and the TUI's queued state.
     const msg = { ...info, id: MessageID.ascending(), time: { created: Date.now() } }
     delete msg.deferred
@@ -501,6 +510,26 @@ export namespace SessionPrompt {
     sessionID: SessionID.zod,
     messageID: MessageID.zod,
   })
+  export const remove = fn(QueueInput, async (input) => {
+    using _ = await Lock.write(`session.messages.${input.sessionID}`)
+    const active = state()[input.sessionID]
+    if (active) {
+      const msgs = await Session.messages({ sessionID: input.sessionID })
+      const target = msgs.find((msg) => msg.info.id === input.messageID)?.info
+      const assistants = msgs.flatMap((msg) => (msg.info.role === "assistant" ? [msg.info] : []))
+      const latest = assistants.at(-1)
+      if (
+        target?.role !== "user" ||
+        active.claimed.has(input.messageID) ||
+        assistants.some((msg) => msg.parentID === input.messageID) ||
+        (!target.deferred && (!latest || target.id <= latest.id))
+      ) {
+        throw new Session.BusyError(input.sessionID)
+      }
+    }
+    return Session.removeMessage(input)
+  })
+
   export const queue = fn(QueueInput, async (input) => {
     const target = await MessageV2.get(input)
     if (target.info.role !== "user" || !target.info.deferred) return false
@@ -509,6 +538,7 @@ export namespace SessionPrompt {
     if (msgs.some((msg) => msg.info.role === "assistant" && msg.info.parentID === input.messageID)) return false
 
     const msg = await enqueue(target.info, target.parts)
+    if (!msg) return false
     const active = !!state()[input.sessionID]
 
     void (async () => {
@@ -553,7 +583,16 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
-      let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      let msgs = await iife(async () => {
+        // Claim the snapshot before deletion can race with preparing the next request.
+        using _ = await Lock.write(`session.messages.${sessionID}`)
+        const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+        const active = state()[sessionID]
+        for (const msg of msgs) {
+          if (msg.info.role === "user" && !msg.info.deferred) active?.claimed.add(msg.info.id)
+        }
+        return msgs
+      })
 
       let lastUser: MessageV2.User | undefined
       let lastAssistant: MessageV2.Assistant | undefined
@@ -597,6 +636,7 @@ export namespace SessionPrompt {
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+      state()[sessionID]?.claimed.add(lastUser.id)
       if (done && lastUser.id < lastAssistant!.id && !deferred.length) {
         log.info("exiting loop", { sessionID })
         break
