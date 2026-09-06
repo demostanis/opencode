@@ -103,6 +103,7 @@ export namespace Collaboration {
       })
       return {
         entries,
+        restored: new Map<SessionID, Promise<void>>(),
         messages,
         waiters,
         unsub() {
@@ -127,6 +128,70 @@ export namespace Collaboration {
     return root(session.parentID)
   }
 
+  async function restore(sessionID: SessionID) {
+    const id = await root(sessionID)
+    const current = state()
+    const previous = current.restored.get(id)
+    if (previous) {
+      await previous
+      return id
+    }
+    const pending = (async () => {
+      async function visit(parent: SessionID): Promise<void> {
+        await Promise.all(
+          (await Session.children(parent)).map(async (session) => {
+            await visit(session.id)
+            if (current.entries.has(session.id)) return
+            const history = [] as MessageV2.WithParts[]
+            for await (const message of MessageV2.stream(session.id)) {
+              history.push(message)
+              if (message.info.role === "user") break
+            }
+            const user = history.find((message) => message.info.role === "user")?.info
+            if (!user || user.role !== "user" || !Teammate.session(user.system, session.permission)) return
+            const last = history[0]
+            const assistant = last?.info.role === "assistant" ? last.info : undefined
+            const error = assistant?.error
+            const status =
+              error?.name === "MessageAbortedError"
+                ? "interrupted"
+                : error
+                  ? "failed"
+                  : assistant?.time.completed &&
+                      assistant.finish &&
+                      !["tool-calls", "unknown"].includes(assistant.finish)
+                    ? "completed"
+                    : "interrupted"
+            current.entries.set(session.id, {
+              id: session.id,
+              root: id,
+              parent,
+              agent: user.agent,
+              description: session.title.replace(/ \(@.* (?:teammate|agent)\)$/, ""),
+              model: user.model,
+              variant: user.variant,
+              status,
+              result: assistant ? last.parts.findLast((part) => part.type === "text")?.text : undefined,
+              error: error ? (error.data?.message ?? error.name) : undefined,
+              time: { start: user.time.created, end: assistant?.time.completed ?? session.time.updated },
+              run: 0,
+              activity: 0,
+              pending: 0,
+              promise: Promise.resolve(),
+            })
+          }),
+        )
+      }
+      await visit(id)
+    })()
+    current.restored.set(id, pending)
+    await pending.catch((error) => {
+      current.restored.delete(id)
+      throw error
+    })
+    return id
+  }
+
   function running(rootID: SessionID) {
     return [...state().entries.values()].filter((entry) => entry.root === rootID && entry.status === "running")
   }
@@ -144,7 +209,8 @@ export namespace Collaboration {
     )
   }
 
-  export function guard(sessionID: SessionID) {
+  export async function guard(sessionID: SessionID) {
+    await restore(sessionID)
     const entry = state().entries.get(sessionID)
     if (!entry) return () => {}
     if (entry.status === "running") {
@@ -199,22 +265,11 @@ export namespace Collaboration {
     external.resolve()
   }
 
-  function prune(rootID: SessionID) {
-    const entries = [...state().entries.values()]
-      .filter((entry) => entry.root === rootID && entry.status !== "running")
-      .toSorted((a, b) => (b.time.end ?? b.time.start) - (a.time.end ?? a.time.start))
-    for (const entry of entries.slice(64)) state().entries.delete(entry.id)
-
-    const terminal = [...state().entries.values()]
-      .filter((entry) => entry.status !== "running")
-      .toSorted((a, b) => (b.time.end ?? b.time.start) - (a.time.end ?? a.time.start))
-    for (const entry of terminal.slice(256)) state().entries.delete(entry.id)
-  }
-
   async function find(sessionID: SessionID, taskID: string) {
+    const rootID = await restore(sessionID)
     const entry = state().entries.get(SessionID.make(taskID))
     if (!entry) throw new Error(`Unknown Teammate task: ${taskID}`)
-    if (entry.root !== (await root(sessionID))) throw new Error(`Teammate task ${taskID} belongs to another team`)
+    if (entry.root !== rootID) throw new Error(`Teammate task ${taskID} belongs to another team`)
     return entry
   }
 
@@ -450,7 +505,7 @@ export namespace Collaboration {
         const current = await runtime(ctx)
         const msg = current.msg
         const agent = current.agent
-        const rootID = await root(ctx.sessionID)
+        const rootID = await restore(ctx.sessionID)
         available(ctx.abort)
         if (!ctx.extra?.bypassAgentCheck) {
           await ctx.ask({
@@ -465,7 +520,6 @@ export namespace Collaboration {
         available(ctx.abort)
         const model = { providerID: msg.providerID, modelID: msg.modelID }
         const variant = msg.variant
-        prune(rootID)
         if (active(rootID) >= Teammate.MAX) {
           throw limit(rootID)
         }
@@ -530,7 +584,7 @@ export namespace Collaboration {
     parameters: target,
     async execute(params, ctx) {
       await runtime(ctx)
-      const rootID = await root(ctx.sessionID)
+      const rootID = await restore(ctx.sessionID)
       if (params.task_id === rootID) {
         await coordinator(ctx, rootID, params.message)
         return {
@@ -592,7 +646,7 @@ export namespace Collaboration {
         waiters.delete(message.resolve)
         if (waiters.size === 0) current.waiters.delete(ctx.sessionID)
       })
-      const rootID = await root(ctx.sessionID)
+      const rootID = await restore(ctx.sessionID)
       const entries = params.task_ids?.length
         ? await Promise.all(params.task_ids.map((id) => find(ctx.sessionID, id)))
         : [...state().entries.values()].filter((entry) => entry.root === rootID)
@@ -647,8 +701,7 @@ export namespace Collaboration {
     parameters: z.object({}),
     async execute(_params, ctx) {
       await runtime(ctx)
-      const rootID = await root(ctx.sessionID)
-      prune(rootID)
+      const rootID = await restore(ctx.sessionID)
       const entries = [...state().entries.values()].filter((entry) => entry.root === rootID)
       await authorize(ctx, entries)
       return {

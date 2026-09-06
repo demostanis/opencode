@@ -31,6 +31,7 @@ import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
 import { Pty } from "@/pty"
 import type { Workspace } from "@opencode-ai/sdk/v2"
+import { tree } from "./session-tree"
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -425,6 +426,17 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const exit = useExit()
     const args = useArgs()
 
+    function sessions(items: Session[]) {
+      setStore(
+        "session",
+        reconcile(
+          [...new Map([...store.session, ...items].map((item) => [item.id, item])).values()].toSorted((a, b) =>
+            a.id.localeCompare(b.id),
+          ),
+        ),
+      )
+    }
+
     async function bootstrap() {
       console.log("bootstrapping")
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
@@ -464,7 +476,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             const providerList = responses[1]
             const agents = responses[2]
             const config = responses[3]
-            const sessions = responses[4]
+            const items = responses[4]
 
             batch(() => {
               setStore("provider", reconcile(providers.providers))
@@ -472,7 +484,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setStore("provider_next", reconcile(providerList))
               setStore("agent", reconcile(agents))
               setStore("config", reconcile(config))
-              if (sessions !== undefined) setStore("session", reconcile(sessions))
+              if (items !== undefined) sessions(items)
             })
           })
         })
@@ -481,7 +493,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
           Promise.all([
-            ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
+            ...(args.continue ? [] : [sessionListPromise.then(sessions)]),
             sdk.client.command.list().then((x) => setStore("command", reconcile(x.data ?? []))),
             sdk.client.lsp.status().then((x) => setStore("lsp", reconcile(x.data!))),
             sdk.client.mcp.status().then((x) => setStore("mcp", reconcile(x.data!))),
@@ -550,6 +562,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
           ])
+          const family = await tree(
+            session.data!,
+            (id) => sdk.client.session.get({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
+            (id) => sdk.client.session.children({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
+          )
+          sessions(family)
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)

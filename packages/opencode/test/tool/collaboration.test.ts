@@ -9,10 +9,12 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID } from "../../src/session/schema"
+import { MessageID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Collaboration } from "../../src/tool/collaboration"
 import { Filesystem } from "../../src/util/filesystem"
+import { Database } from "../../src/storage/db"
+import { tree } from "../../src/cli/cmd/tui/context/session-tree"
 import { tmpdir } from "../fixture/fixture"
 
 const state = {
@@ -148,7 +150,7 @@ describe("tool.collaboration", () => {
       },
     })
 
-    await Instance.provide({
+    const saved = await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const session = await Session.create({ title: "Root coordination" })
@@ -483,7 +485,7 @@ describe("tool.collaboration", () => {
             ),
           )
         }
-        expect(() => Collaboration.guard(taskID)).toThrow("10 active across the session tree")
+        await expect(Collaboration.guard(taskID)).rejects.toThrow("10 active across the session tree")
         await expect(
           spawn.execute(
             {
@@ -586,7 +588,7 @@ describe("tool.collaboration", () => {
           await directGate
           return response("direct interaction result")
         }
-        expect(() => Collaboration.guard(taskID)).not.toThrow()
+        await Collaboration.guard(taskID)
         const direct = SessionPrompt.prompt({
           sessionID: taskID,
           messageID: MessageID.ascending(),
@@ -652,6 +654,101 @@ describe("tool.collaboration", () => {
           model: { providerID: "openai", modelID: model.id },
           variant: "ultra",
         })
+        const unfinished = await Session.create({
+          parentID: taskID,
+          title: "Unfinished child (@reviewer teammate)",
+          permission: [Teammate.ROLE],
+        })
+        await Session.updateMessage({
+          ...user,
+          id: MessageID.ascending(),
+          sessionID: unfinished.id,
+        })
+        const failed = await Session.create({
+          parentID: session.id,
+          title: "Failed child (@reviewer teammate)",
+          permission: [Teammate.ROLE],
+        })
+        const request = await Session.updateMessage({ ...user, id: MessageID.ascending(), sessionID: failed.id })
+        if (assistant.role !== "assistant") throw new Error("Missing coordinator response")
+        await Session.updateMessage({
+          ...assistant,
+          id: MessageID.ascending(),
+          parentID: request.id,
+          sessionID: failed.id,
+          error: { name: "UnknownError", data: { message: "Saved failure" } },
+          time: { created: Date.now(), completed: Date.now() },
+        })
+        await Session.create({ parentID: session.id, title: "Ordinary child (@general subagent)" })
+        await Instance.dispose()
+        return { ctx, task: taskID, nested: nested.metadata.sessionId, unfinished: unfinished.id, failed: failed.id }
+      },
+    })
+    Database.close()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const reviewer = await Agent.get("reviewer")
+        const list = await Collaboration.ListTeammatesTool.init({ agent: reviewer })
+        const wait = await Collaboration.WaitTeammateTool.init({ agent: reviewer })
+        const followup = await Collaboration.FollowupTaskTool.init({ agent: reviewer })
+        const send = await Collaboration.SendMessageTool.init({ agent: reviewer })
+        const baseline = state.requests.length
+        expect([...Session.list({ start: Date.now() + 1 })]).toEqual([])
+        const family = await tree(
+          await Session.get(saved.nested),
+          (id) => Session.get(SessionID.make(id)),
+          (id) => Session.children(SessionID.make(id)),
+        )
+        expect(family.map((session) => session.id)).toEqual(
+          expect.arrayContaining([saved.ctx.sessionID, saved.task, saved.nested, saved.unfinished]),
+        )
+        const release = await Collaboration.guard(saved.task)
+        release()
+        const listed = JSON.parse((await list.execute({}, saved.ctx)).output)
+        expect(listed).toContainEqual({
+          task_id: saved.nested,
+          parent_id: saved.task,
+          coordinator_id: saved.ctx.sessionID,
+          agent: "reviewer",
+          description: "Nested child",
+          status: "completed",
+        })
+        expect(listed.some((entry: { description: string }) => entry.description.includes("Ordinary child"))).toBe(
+          false,
+        )
+        const restored = JSON.parse(
+          (await wait.execute({ task_ids: [saved.task, saved.unfinished, saved.failed] }, saved.ctx)).output,
+        )
+        expect(restored[0]).toMatchObject({ status: "completed", result: "direct interaction result" })
+        expect(restored[1]).toMatchObject({ status: "interrupted", parent_id: saved.task })
+        expect(restored[2]).toMatchObject({ status: "failed", error: "Saved failure" })
+        expect(state.requests).toHaveLength(baseline)
+        state.reply = () => response("result after restart")
+        await followup.execute({ task_id: saved.task, message: "Continue after restart." }, saved.ctx)
+        const resumed = JSON.parse(
+          (await wait.execute({ task_ids: [saved.task], timeout_ms: 5_000 }, saved.ctx)).output,
+        )
+        expect(resumed[0]).toMatchObject({ status: "completed", result: "result after restart" })
+        const body = JSON.stringify(state.requests.at(-1))
+        expect(body).toContain("Continue after restart.")
+        expect(body).toContain("direct interaction result")
+        await send.execute({ task_id: saved.unfinished, message: "Resume unfinished work." }, saved.ctx)
+        const delivered = JSON.parse(
+          (await wait.execute({ task_ids: [saved.unfinished], timeout_ms: 5_000 }, saved.ctx)).output,
+        )
+        expect(delivered[0]).toMatchObject({ status: "completed", result: "result after restart" })
+        await Session.remove(saved.nested)
+        await Instance.dispose()
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const list = await Collaboration.ListTeammatesTool.init()
+        const listed = JSON.parse((await list.execute({}, saved.ctx)).output)
+        expect(listed.some((entry: { task_id: string }) => entry.task_id === saved.nested)).toBe(false)
+        expect(listed).toContainEqual(expect.objectContaining({ task_id: saved.task, status: "completed" }))
       },
     })
   })
