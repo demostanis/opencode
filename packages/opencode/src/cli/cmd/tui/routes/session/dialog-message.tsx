@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useSDK } from "@tui/context/sdk"
@@ -8,6 +8,7 @@ import type { PromptInfo } from "@tui/component/prompt/history"
 import { strip } from "@tui/component/prompt/part"
 import type { DialogContext } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
+import { writable } from "./worker"
 
 export function DialogMessage(props: {
   messageID: string
@@ -17,7 +18,14 @@ export function DialogMessage(props: {
   const sync = useSync()
   const sdk = useSDK()
   const toast = useToast()
+  const [removing, remove] = createSignal(false)
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
+  const queued = createMemo(() => {
+    const msg = message()
+    if (msg?.role !== "user") return false
+    const active = sync.data.message[props.sessionID]?.findLast((x) => x.role === "assistant" && !x.time.completed)
+    return !!active && msg.id > active.id
+  })
   const pending = createMemo(() => {
     const msg = message()
     if (msg?.role !== "user" || !msg.deferred) return false
@@ -31,6 +39,32 @@ export function DialogMessage(props: {
     <DialogSelect
       title="Message Actions"
       options={[
+        ...((queued() || pending()) && writable(sync.session.get(props.sessionID))
+          ? [
+              {
+                title: removing() ? "Removing..." : "Remove",
+                value: "message.remove",
+                description: "remove this queued or deferred message",
+                onSelect: async (dialog: DialogContext) => {
+                  if (removing()) return
+                  remove(true)
+                  const deleted = await sdk.client.session
+                    .deleteMessage({ sessionID: props.sessionID, messageID: props.messageID }, { throwOnError: true })
+                    .then(() => true)
+                    .catch(() => false)
+                  remove(false)
+                  if (!deleted) {
+                    toast.show({
+                      message: "Failed to remove message. It may already be processing.",
+                      variant: "error",
+                    })
+                    return
+                  }
+                  dialog.clear()
+                },
+              },
+            ]
+          : []),
         ...(pending()
           ? [
               {
