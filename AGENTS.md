@@ -131,3 +131,10 @@ const table = sqliteTable("session", {
 
 This is a fork of opencode, and we only work on the TUI part, not the desktop
 part
+
+## demolinux
+
+when i say "sync demolinux", you need to push to dev, create a new -demolinux
+tag and push it, and go to /data/programming/demolinux/packages/tobuild/opencode
+to update PKGBUILD and run updpkgsums, and create a commit "packages: bump
+opencode" without pushing
