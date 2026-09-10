@@ -9,7 +9,8 @@ Generates or edits images for the current project, for example website assets, g
 
 ## Top-level rules
 
-- Use the built-in `image_generate` tool by default for normal image generation requests. It uses Codex/ChatGPT auth and does not require `OPENAI_API_KEY`.
+- Use the built-in `image_generate` tool by default for image generation, editing, and transparent-image requests. It uses Codex/ChatGPT auth and does not require `OPENAI_API_KEY`.
+- For transparent images, request a genuinely transparent background and preserve the generated alpha. Do not silently switch to `gpt-image-1.5`; ask first unless the user explicitly requested that model.
 - Every edit must attach its source, and every reference-driven generation must attach its references, through exactly one of `reference_image` or `reference_images`; prompt text and `Input images` scaffolding never attach files.
 - Do not describe or rely on OS temp as the default destination. Built-in outputs are saved under opencode's generated-images data directory.
 - Do not describe or rely on a destination-path argument on the built-in tool. If a specific location is needed, generate first and then move or copy the selected output.
@@ -105,25 +106,23 @@ Execution strategy:
 
 ## Transparent image requests
 
-Transparent-image requests should use built-in image generation first. If true model-native transparency is not available or is unreliable, create a removable chroma-key source image and then convert the key color to alpha locally.
+Ask built-in `image_generate` for a genuinely transparent background and preserve its alpha. Use `gpt-image-2` by default, including for glass, steam, hair, fur, and other complex cutouts. Do not default to chroma-key generation or local background removal.
 
 Default sequence:
 
-1. Generate the requested subject on a perfectly flat solid chroma-key background.
-2. Choose a key color that is unlikely to appear in the subject: default `#00ff00`, use `#ff00ff` for green subjects, and avoid `#0000ff` for blue subjects.
-3. Move or copy the selected source image into the workspace or `tmp/imagegen/`.
-4. Remove the chroma key with a local image-processing tool available in the project or environment.
-5. Validate that the output has an alpha channel, transparent corners, plausible subject coverage, and no obvious key-color fringe.
-6. Save the final alpha PNG/WebP in the project if the asset is project-bound.
+1. Request real alpha transparency in the prompt. Omit `background` or leave it `auto` for `gpt-image-2`: the backend rejects its explicit `background=transparent` parameter. The local tool also translates that combination into a transparency prompt with `background=auto`.
+2. Use PNG (default) or WebP, not JPEG, to preserve alpha.
+3. Validate actual alpha values, not just an RGBA mode or a checkerboard-looking preview. Check transparent background regions and plausible subject opacity; partial alpha is expected for smooth edges and translucent materials.
+4. For complex cutouts, inspect the result over contrasting backgrounds for halos, opaque holes, and lost detail. An alpha channel alone does not prove cutout quality.
+5. If the output is opaque or flawed, retry with a targeted prompt or edit using the generated image as a reference. Report persistent limitations rather than silently switching models or removing the background locally.
+6. Save the original alpha PNG/WebP in the project if the asset is project-bound. Do not flatten it onto a preview background.
 
 Prompt transparent requests like this:
 
 ```text
-Create the requested subject on a perfectly flat solid #00ff00 chroma-key background for background removal.
-The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation.
-Keep the subject fully separated from the background with crisp edges and generous padding.
-Do not use #00ff00 anywhere in the subject.
-No cast shadow, no contact shadow, no reflection, no watermark, and no text unless explicitly requested.
+Isolate the requested subject on a genuinely transparent background with real alpha, not a painted checkerboard or solid color.
+Preserve fine edges, empty holes, and partial transparency in translucent materials.
+Keep the subject fully in frame with generous padding. No backdrop, floor, text, or watermark unless requested.
 ```
 
 ## Prompt augmentation
@@ -246,7 +245,7 @@ Constraints: change only the background; keep the product and its edges unchange
 ## Model guidance
 
 - Use `gpt-image-2` by default.
-- Use `gpt-image-1.5` only when the user explicitly requests it or when its behavior is needed for a specific image-generation feature.
+- Ask before switching to `gpt-image-1.5` unless the user explicitly requested that model. Transparent output does not by itself require switching away from built-in `gpt-image-2`.
 - Use `quality: low` for fast drafts, thumbnails, and quick iterations.
 - Use `quality: medium`, `high`, or `auto` for final assets, dense text, diagrams, identity-sensitive edits, or high-resolution outputs.
 - Square images are typically fastest to generate. Use `1024x1024` for fast square drafts.

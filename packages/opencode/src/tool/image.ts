@@ -171,7 +171,7 @@ async function collectImage(response: Response): Promise<ImageItem> {
 
 export const ImageGenerateTool = Tool.define("image_generate", {
   description:
-    "Generate or edit an image using the OpenAI Codex/ChatGPT image generation tool. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
+    "Generate or edit an image using the OpenAI Codex/ChatGPT image generation tool. Request genuinely transparent backgrounds in the prompt and preserve the generated alpha. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
   parameters: z
     .object({
       prompt: z.string().describe("Detailed image prompt describing the desired image"),
@@ -202,7 +202,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
         .enum(["auto", "opaque", "transparent"])
         .optional()
         .describe(
-          "Background mode when supported by the selected image model (defaults to auto). Transparent is most likely not what you want, check the imagegen skill to know how to generate transparent images",
+          "Background mode (defaults to auto). Prefer requesting genuine transparency in the prompt. For gpt-image-2, transparent is translated into a prompt instruction with background auto; gpt-image-1.5 receives it directly.",
         ),
       output_format: OutputFormat.optional().describe("Output image format (defaults to png)"),
       output_compression: z
@@ -218,6 +218,13 @@ export const ImageGenerateTool = Tool.define("image_generate", {
       message: "Use reference_images instead of reference_image when providing multiple reference images",
     }),
   async execute(params, ctx) {
+    if (params.background === "transparent" && params.output_format === "jpeg") {
+      throw new Error("Transparent images require PNG or WebP output, not JPEG")
+    }
+    const transparent = params.background === "transparent" && (params.model ?? "gpt-image-2") === "gpt-image-2"
+    const prompt = transparent
+      ? `${params.prompt}\nReturn a genuinely transparent background with real alpha, not a painted checkerboard or solid color. Preserve fine edges and partial transparency.`
+      : params.prompt
     const refs = params.reference_images ?? (params.reference_image === undefined ? [] : [params.reference_image])
     const images: string[] = []
     // Preserve input and permission-request order for local references.
@@ -238,7 +245,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
             content: [
               {
                 type: "input_text",
-                text: `${images.length ? `Use the provided reference image${images.length > 1 ? "s in their supplied order" : ""} to create exactly one image` : "Generate exactly one image"} for this prompt using the image_generation tool. Prompt: ${params.prompt}`,
+                text: `${images.length ? `Use the provided reference image${images.length > 1 ? "s in their supplied order" : ""} to create exactly one image` : "Generate exactly one image"} for this prompt using the image_generation tool. Prompt: ${prompt}`,
               },
               ...images.map((image) => ({
                 type: "input_image",
@@ -253,7 +260,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
             model: params.model || "gpt-image-2",
             size: params.size || "auto",
             quality: params.quality || "auto",
-            background: params.background || "auto",
+            background: transparent ? "auto" : params.background || "auto",
             output_format: params.output_format || "png",
             output_compression: params.output_compression ?? 100,
             moderation: params.moderation || "auto",

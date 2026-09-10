@@ -65,6 +65,63 @@ function response() {
 }
 
 describe("tool.image", () => {
+  test.each([undefined, "gpt-image-2", "gpt-image-1.5"] as const)(
+    "routes transparent backgrounds for model %s without switching models",
+    async (model) => {
+      let body: unknown
+      await auth(async () => {
+        await intercept(
+          async (_input, init) => {
+            body = JSON.parse(init?.body as string)
+            return response()
+          },
+          async () => {
+            const tool = await ImageGenerateTool.init()
+            await tool.execute(
+              { prompt: "A glass teapot", short_name: "transparent", model, background: "transparent" },
+              ctx,
+            )
+          },
+        )
+      })
+      expect(body).toMatchObject({
+        tools: [
+          {
+            model: model ?? "gpt-image-2",
+            background: model === "gpt-image-1.5" ? "transparent" : "auto",
+            output_format: "png",
+          },
+        ],
+        input: [
+          {
+            content: [
+              {
+                text: expect.stringContaining(
+                  model === "gpt-image-1.5" ? "A glass teapot" : "genuinely transparent background with real alpha",
+                ),
+              },
+            ],
+          },
+        ],
+      })
+    },
+  )
+
+  test("rejects transparent JPEG output", async () => {
+    const tool = await ImageGenerateTool.init()
+    await expect(
+      tool.execute(
+        {
+          prompt: "A glass teapot",
+          short_name: "transparent",
+          background: "transparent",
+          output_format: "jpeg",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("Transparent images require PNG or WebP output")
+  })
+
   test("describes mutually exclusive reference arguments", async () => {
     const tool = await ImageGenerateTool.init()
     expect(tool.parameters.shape.reference_image.description).toContain("Do not provide with reference_images")
