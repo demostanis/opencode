@@ -46,7 +46,7 @@ import { GoogleAuth } from "google-auth-library"
 import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
 import { ModelID, ProviderID } from "./schema"
-import { SSE_READ_TIMEOUT } from "./timeout"
+import { CHUNK_TIMEOUT, SSE_READ_TIMEOUT } from "./timeout"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -70,7 +70,7 @@ export namespace Provider {
             const err = new Error(`SSE stream timed out after ${ms}ms without receiving a chunk`)
             err.name = SSE_READ_TIMEOUT
             ctl.abort(err)
-            void reader.cancel(err)
+            void reader.cancel(err).catch(() => {})
             reject(err)
           }, ms)
 
@@ -1028,6 +1028,7 @@ export namespace Provider {
     }
 
     for (const [id, provider] of Object.entries(providers)) {
+      provider.options.chunkTimeout ??= CHUNK_TIMEOUT
       const providerID = ProviderID.make(id)
       if (!isProviderAllowed(providerID)) {
         delete providers[providerID]

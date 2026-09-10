@@ -10215,10 +10215,18 @@
                 ]
               },
               "chunkTimeout": {
-                "description": "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
+                "description": "Timeout in milliseconds between streamed SSE chunks for this provider. Defaults to 60000 (60 seconds) for all providers. If no chunk arrives within this window, the request is aborted. Set to false to disable.",
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "boolean",
+                    "const": false
+                  }
+                ]
               }
             },
             "additionalProperties": {}

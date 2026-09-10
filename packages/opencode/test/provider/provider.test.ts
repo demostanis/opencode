@@ -31,6 +31,7 @@ test("provider loaded from env variable", async () => {
       // merge additional options.
       expect(providers[ProviderID.anthropic].source).toBe("env")
       expect(providers[ProviderID.anthropic].options.headers["anthropic-beta"]).toBeDefined()
+      expect(providers[ProviderID.anthropic].options.chunkTimeout).toBe(60_000)
     },
   })
 })
@@ -247,6 +248,7 @@ test("custom provider with npm package", async () => {
       expect(providers[ProviderID.make("custom-provider")]).toBeDefined()
       expect(providers[ProviderID.make("custom-provider")].name).toBe("Custom Provider")
       expect(providers[ProviderID.make("custom-provider")].models["custom-model"]).toBeDefined()
+      expect(providers[ProviderID.make("custom-provider")].options.chunkTimeout).toBe(60_000)
     },
   })
 })
@@ -285,7 +287,7 @@ test("env variable takes precedence, config merges options", async () => {
   })
 })
 
-test("OpenAI OAuth auth disables total request timeouts but keeps 1-minute chunk timeouts", async () => {
+test.each([undefined, false, 120_000])("OpenAI OAuth respects chunkTimeout %s", async (timeout) => {
   const auth = await Auth.get("openai")
   await Auth.set("openai", {
     type: "oauth",
@@ -300,6 +302,9 @@ test("OpenAI OAuth auth disables total request timeouts but keeps 1-minute chunk
           path.join(dir, "opencode.json"),
           JSON.stringify({
             $schema: "https://opencode.ai/config.json",
+            provider: {
+              openai: { options: { chunkTimeout: timeout } },
+            },
           }),
         )
       },
@@ -311,7 +316,7 @@ test("OpenAI OAuth auth disables total request timeouts but keeps 1-minute chunk
         const providers = await Provider.list()
         expect(providers[ProviderID.openai]).toBeDefined()
         expect(providers[ProviderID.openai].options.timeout).toBe(false)
-        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(60_000)
+        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(timeout ?? 60_000)
       },
     })
   } finally {

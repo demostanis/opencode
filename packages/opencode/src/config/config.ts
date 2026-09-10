@@ -1109,12 +1109,10 @@ export namespace Config {
               "Total timeout in milliseconds for each provider request, including streaming. Disabled by default for OpenAI ChatGPT OAuth. Set to false to disable the total timeout.",
             ),
           chunkTimeout: z
-            .number()
-            .int()
-            .positive()
+            .union([z.number().int().positive(), z.literal(false)])
             .optional()
             .describe(
-              "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.",
+              "Timeout in milliseconds between streamed SSE chunks for this provider. Defaults to 60000 (60 seconds) for all providers. If no chunk arrives within this window, the request is aborted. Set to false to disable.",
             ),
         })
         .catchall(z.any())

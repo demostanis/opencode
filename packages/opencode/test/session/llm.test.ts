@@ -241,6 +241,62 @@ function createHangingResponse(chunks: unknown[]) {
 }
 
 describe("session.llm.stream", () => {
+  test.each([
+    ["anthropic", "claude-3-5-sonnet-20241022", "/messages"],
+    ["google", "gemini-2.5-flash", "/models/gemini-2.5-flash:streamGenerateContent"],
+    ["alibaba", "qwen-plus", "/chat/completions"],
+  ])("applies chunkTimeout to %s streams", async (provider, model, endpoint) => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            enabled_providers: [provider],
+            provider: {
+              [provider]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                  chunkTimeout: 50,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const request = waitRequest(endpoint, createHangingResponse([]))
+        const language = await Provider.getLanguage(
+          await Provider.getModel(ProviderID.make(provider), ModelID.make(model)),
+        )
+        const error = await (async () => {
+          const result = await language.doStream({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            abortSignal: AbortSignal.timeout(5000),
+          })
+          const reader = result.stream.getReader()
+          while (true) {
+            const part = await reader.read()
+            if (part.done) return
+            if (part.value.type === "error") return part.value.error
+          }
+        })().catch((err) => err)
+        await request
+        expect(error).toMatchObject({
+          name: "SSEReadTimeoutError",
+          message: "SSE stream timed out after 50ms without receiving a chunk",
+        })
+      },
+    })
+  })
+
   test("retries OpenAI streams when provider SSE chunks stop", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
