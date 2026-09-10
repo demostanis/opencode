@@ -4,6 +4,8 @@ import DESCRIPTION from "./websearch.txt"
 import { abortAfterAny } from "../util/abort"
 import { Auth } from "../auth"
 import { codexAuthHeaders } from "../plugin/codex"
+import { Config } from "../config/config"
+import { Provider } from "../provider/provider"
 
 const API_CONFIG = {
   BASE_URL: "https://mcp.exa.ai",
@@ -170,6 +172,7 @@ async function stream(response: Response) {
 }
 
 async function codex(params: { query: string; type?: "auto" | "fast" | "deep" }, signal: AbortSignal) {
+  const cfg = await Config.get()
   const headers = await codexAuthHeaders()
   headers.set("accept", "text/event-stream")
   headers.set("content-type", "application/json")
@@ -179,7 +182,7 @@ async function codex(params: { query: string; type?: "auto" | "fast" | "deep" },
     headers,
     signal,
     body: JSON.stringify({
-      model: "gpt-5.4-mini",
+      model: cfg.lightweight_model ? Provider.parseModel(cfg.lightweight_model).modelID : "gpt-5.4-mini",
       instructions: [
         "Use web_search to answer the user's query with current information.",
         "Return concise results with source URLs when available.",
