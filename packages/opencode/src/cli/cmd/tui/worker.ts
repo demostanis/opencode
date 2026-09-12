@@ -98,25 +98,33 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
 
 startEventStream({ directory: process.cwd() })
 
+const requests = new Map<string, AbortController>()
+
 export const rpc = {
-  async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
+  async abort(input: { id: string }) {
+    requests.get(input.id)?.abort()
+  },
+  async fetch(input: { id: string; url: string; method: string; headers: Record<string, string>; body?: string }) {
     const headers = { ...input.headers }
     const auth = getAuthorizationHeader()
     if (auth && !headers["authorization"] && !headers["Authorization"]) {
       headers["Authorization"] = auth
     }
+    const abort = new AbortController()
     const request = new Request(input.url, {
       method: input.method,
       headers,
       body: input.body,
+      signal: abort.signal,
     })
-    const response = await Server.Default().fetch(request)
-    const body = await response.text()
-    return {
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
-      body,
-    }
+    requests.set(input.id, abort)
+    return Promise.resolve(Server.Default().fetch(request))
+      .then(async (response) => ({
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: await response.text(),
+      }))
+      .finally(() => requests.delete(input.id))
   },
   async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
     if (server) await server.stop(true)

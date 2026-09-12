@@ -537,9 +537,9 @@ export function Autocomplete(props: {
     })
   }
 
-  function hide() {
+  function hide(clear = true) {
     const text = props.input().plainText
-    if (store.visible === "/" && !text.endsWith(" ") && text.startsWith("/")) {
+    if (clear && store.visible === "/" && !text.endsWith(" ") && text.startsWith("/")) {
       const cursor = props.input().logicalCursor
       props.input().deleteRange(0, 0, cursor.row, cursor.col)
       // Sync the prompt store immediately since onContentChange is async
@@ -566,7 +566,7 @@ export function Autocomplete(props: {
             // "/<command>" is not the sole content
             (store.visible === "/" && value.match(/^\S+\s+\S+\s*$/))
           ) {
-            hide()
+            hide(false)
           }
           return
         }

@@ -20,11 +20,30 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Collaboration } from "@/tool/collaboration"
+import { Btw } from "@/session/btw"
 
 const log = Log.create({ service: "server" })
 
 export const SessionRoutes = lazy(() =>
   new Hono()
+    .post(
+      "/:sessionID/btw",
+      describeRoute({
+        summary: "Ask a side question",
+        description: "Answer from a conversation snapshot without changing history or interrupting the active turn.",
+        operationId: "session.btw",
+        responses: {
+          200: {
+            description: "Side answer",
+            content: { "application/json": { schema: resolver(z.object({ text: z.string() })) } },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      validator("json", Btw.Input),
+      async (c) => c.json(await Btw.ask(c.req.valid("param").sessionID, c.req.valid("json"), c.req.raw.signal)),
+    )
     .get(
       "/",
       describeRoute({

@@ -114,6 +114,8 @@ import type {
   QuestionReplyResponses,
   SessionAbortErrors,
   SessionAbortResponses,
+  SessionBtwErrors,
+  SessionBtwResponses,
   SessionChildrenErrors,
   SessionChildrenResponses,
   SessionCommandErrors,
@@ -1392,6 +1394,50 @@ export class Worktree extends HeyApiClient {
 }
 
 export class Session2 extends HeyApiClient {
+  /**
+   * Ask a side question
+   *
+   * Answer from a conversation snapshot without changing history or interrupting the active turn.
+   */
+  public btw<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      question?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "question" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionBtwResponses, SessionBtwErrors, ThrowOnError>({
+      url: "/session/{sessionID}/btw",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
   /**
    * List sessions
    *

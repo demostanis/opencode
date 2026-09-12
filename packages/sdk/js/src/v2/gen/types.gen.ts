@@ -2930,6 +2930,48 @@ export type ExperimentalResourceListResponses = {
 export type ExperimentalResourceListResponse =
   ExperimentalResourceListResponses[keyof ExperimentalResourceListResponses]
 
+export type SessionBtwData = {
+  body?: {
+    question: string
+    model: {
+      providerID: string
+      modelID: string
+    }
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/btw"
+}
+
+export type SessionBtwErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionBtwError = SessionBtwErrors[keyof SessionBtwErrors]
+
+export type SessionBtwResponses = {
+  /**
+   * Side answer
+   */
+  200: {
+    text: string
+  }
+}
+
+export type SessionBtwResponse = SessionBtwResponses[keyof SessionBtwResponses]
+
 export type SessionListData = {
   body?: never
   path?: never

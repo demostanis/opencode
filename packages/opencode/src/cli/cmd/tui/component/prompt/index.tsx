@@ -50,6 +50,8 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { hydrate } from "./session"
 import { Variant } from "@tui/util/variant"
+import { DialogBtw } from "../dialog-btw"
+import { DialogPrompt } from "../../ui/dialog-prompt"
 
 export type PromptProps = {
   sessionID?: string
@@ -396,8 +398,8 @@ export function Prompt(props: PromptProps) {
         hidden: true,
         onSelect: (dialog) => {
           if (!input.focused) return
-          submit()
           dialog.clear()
+          submit()
         },
       },
       {
@@ -682,6 +684,15 @@ export function Prompt(props: PromptProps) {
 
   command.register(() => [
     {
+      title: "Ask a side question",
+      description: "Ask about this conversation without interrupting or saving to history",
+      value: "prompt.btw",
+      category: "Prompt",
+      slash: { name: "btw" },
+      enabled: !!props.sessionID,
+      onSelect: () => btw(),
+    },
+    {
       title: "Stash prompt",
       value: "prompt.stash",
       category: "Prompt",
@@ -735,11 +746,59 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  function btw(question = "") {
+    const sessionID = props.sessionID
+    const model = selectedModel()
+    if (!sessionID) {
+      toast.show({ variant: "warning", message: "Start a conversation before asking a side question." })
+      return
+    }
+    if (!model) {
+      promptModelWarning()
+      return
+    }
+    if (!question.trim()) {
+      dialog.replace(() => (
+        <DialogPrompt
+          title="Ask a side question"
+          placeholder="What would you like to know about this conversation?"
+          onConfirm={(text) => {
+            if (text.trim()) btw(text.trim())
+          }}
+        />
+      ))
+      return
+    }
+    dialog.replace(() => <DialogBtw sessionID={sessionID} model={model} question={question} />)
+  }
+
+  function expanded() {
+    let text = store.prompt.input
+    const marks = input.extmarks.getAllForTypeId(promptPartTypeId).sort((a, b) => b.start - a.start)
+    for (const mark of marks) {
+      const index = store.extmarkToPartIndex.get(mark.id)
+      const part = index === undefined ? undefined : store.prompt.parts[index]
+      if (part?.type !== "text" || !part.text) continue
+      text = text.slice(0, mark.start) + part.text + text.slice(mark.end)
+    }
+    return text
+  }
+
   async function submit(opts?: { deferred?: boolean }) {
     if (props.disabled) return
     if (autocomplete?.visible) return
     if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
+    if (store.mode === "normal" && /^\/btw(?:\s|$)/.test(trimmed)) {
+      if (store.prompt.parts.some((part) => part.type !== "text")) {
+        toast.show({ variant: "warning", message: "Side questions support text only. Remove attachments first." })
+        return
+      }
+      const question = expanded().trim().slice(4).trim()
+      if (props.sessionID && selectedModel()) clear(false)
+      btw(question)
+      return
+    }
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
       return
@@ -777,24 +836,8 @@ export function Prompt(props: PromptProps) {
     }
 
     const messageID = MessageID.ascending()
-    let inputText = store.prompt.input
+    const inputText = expanded()
     const defer = opts?.deferred && status().type !== "idle"
-
-    // Expand pasted text inline before submitting
-    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
-    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
-
-    for (const extmark of sortedExtmarks) {
-      const partIndex = store.extmarkToPartIndex.get(extmark.id)
-      if (partIndex !== undefined) {
-        const part = store.prompt.parts[partIndex]
-        if (part?.type === "text" && part.text) {
-          const before = inputText.slice(0, extmark.start)
-          const after = inputText.slice(extmark.end)
-          inputText = before + part.text + after
-        }
-      }
-    }
 
     // Filter out text parts (pasted content) since they're now expanded inline
     const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
