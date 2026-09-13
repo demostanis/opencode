@@ -14,6 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[4] / "src/cli/cmd/tui/voice"
 sys.path.insert(0, str(ROOT))
 from bridge import (
+    Capture,
     ENDPOINT,
     Protocol,
     Speaker,
@@ -76,6 +77,17 @@ class Tests(unittest.TestCase):
         self.assertFalse(self.gate.active)
         self.assertEqual(self.muted, 1)
         self.assertTrue(self.gate.blocked)
+
+    def test_focus_controls_cannot_report_ready_during_startup(self):
+        self.gate.ready = False
+        for command in ["resume", "suspend", "resume", "mute"]:
+            self.protocol.command({"type": command})
+        states = [event["state"] for event in self.events if event["type"] == "state"]
+        self.assertEqual(states, ["starting"])
+        self.assertEqual(self.gate.process(b"\1" * 1920), bytes(1920))
+        self.gate.ready = True
+        self.protocol.changed()
+        self.assertEqual(self.events[-1], {"type": "state", "state": "waiting"})
 
     def test_silence_excludes_reply_not_resets(self):
         self.gate.wake()
@@ -486,6 +498,71 @@ class Tests(unittest.TestCase):
 
 
 class Archives(unittest.IsolatedAsyncioTestCase):
+    async def test_capture_preserves_normal_audio_pipe_bursts(self):
+        capture = Capture()
+        reader = asyncio.StreamReader()
+        task = asyncio.create_task(capture.run(reader))
+        chunks = [bytes([value]) * 1920 for value in range(8)]
+        try:
+            reader.feed_data(b"".join(chunks))
+            await asyncio.sleep(0)
+            self.assertEqual([await capture.recv() for _ in chunks], chunks)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_capture_drops_startup_backlog(self):
+        capture = Capture()
+        reader = asyncio.StreamReader()
+        task = asyncio.create_task(capture.run(reader))
+        try:
+            for value in range(100):
+                reader.feed_data(bytes([value]) * 1920)
+            await asyncio.sleep(0)
+            self.assertEqual(capture.frames.qsize(), 16)
+            self.assertEqual(await capture.recv(), bytes([84]) * 1920)
+            capture.clear()
+            reader.feed_data(b"x" * 1920)
+            await asyncio.sleep(0)
+            capture.clear()
+            reader.feed_data(b"y" * 1920)
+            self.assertEqual(await capture.recv(), b"y" * 1920)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_playback_waits_for_startup_buffer_and_mute_discards_it(self):
+        speaker = Speaker()
+        await speaker.play(PCM)
+        self.assertIsNone(speaker.player)
+        self.assertEqual(speaker.buffer, PCM)
+        await speaker.flush()
+        self.assertIsNone(speaker.player)
+        speaker.stop()
+        self.assertFalse(speaker.buffer)
+        await speaker.flush()
+        self.assertIsNone(speaker.player)
+        await speaker.close()
+
+    async def test_short_playback_flushes_after_bounded_wait(self):
+        speaker = Speaker()
+        await speaker.play(PCM[:960])
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+        )
+        speaker.player = child
+        try:
+            speaker.since -= 0.3
+            await speaker.flush()
+            output, _ = await asyncio.wait_for(child.communicate(), 2)
+            self.assertEqual(output, PCM[:960])
+        finally:
+            await speaker.close()
+
     async def test_playback_preserves_silence_and_quiet_samples(self):
         gate = Gate(vad=Vad())
         gate.wake()

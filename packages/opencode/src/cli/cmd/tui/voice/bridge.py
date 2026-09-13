@@ -188,14 +188,38 @@ async def models(cache):
     return result
 
 
+class Capture:
+    def __init__(self):
+        self.frames = asyncio.Queue(maxsize=16)
+
+    async def run(self, reader):
+        while True:
+            data = await reader.readexactly(1920)
+            if self.frames.full():
+                self.frames.get_nowait()
+            self.frames.put_nowait(data)
+
+    async def recv(self):
+        return await self.frames.get()
+
+    def clear(self):
+        while not self.frames.empty():
+            self.frames.get_nowait()
+
+
 class Speaker:
     def __init__(self):
         self.player = None
         self.tasks = set()
         self.epoch = 0
+        self.buffer = bytearray()
+        self.since = 0
+        self.lock = asyncio.Lock()
 
     def stop(self):
         self.epoch += 1
+        self.buffer.clear()
+        self.since = 0
         if self.player:
             if self.player.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
@@ -206,10 +230,37 @@ class Speaker:
             self.player = None
 
     async def play(self, data, gate=None):
-        if gate is not None:
-            gate.audio(data)
-            if not gate.audible:
+        epoch = self.epoch
+        async with self.lock:
+            if epoch != self.epoch:
                 return
+            if gate is not None:
+                gate.audio(data)
+                if not gate.audible:
+                    return
+            if self.player is None or self.buffer:
+                if not self.buffer:
+                    self.since = asyncio.get_running_loop().time()
+                self.buffer.extend(data)
+                if len(self.buffer) < 14400:
+                    return
+                data = bytes(self.buffer)
+                self.buffer.clear()
+                self.since = 0
+            await self.write(data)
+
+    async def flush(self):
+        async with self.lock:
+            if not self.buffer or asyncio.get_running_loop().time() - self.since < 0.3:
+                return
+            data = bytes(self.buffer)
+            self.buffer.clear()
+            self.since = 0
+            if self.player is None:
+                data += bytes(max(0, 14400 - len(data)))
+            await self.write(data)
+
+    async def write(self, data):
         epoch = self.epoch
         if self.player is None:
             task = asyncio.create_task(
@@ -266,8 +317,9 @@ class Protocol:
         self.state = None
 
     def changed(self):
-        if self.state != self.gate.state:
-            self.state = self.gate.state
+        state = self.gate.state if self.gate.ready else "starting"
+        if self.state != state:
+            self.state = state
             self.output({"type": "state", "state": self.state})
 
     def event(self, event):
@@ -440,6 +492,9 @@ async def run(start, queue):
     protocol = Protocol(gate)
     gate.change = protocol.changed
     outgoing = asyncio.Queue(maxsize=128)
+    capture = Capture()
+    connected = asyncio.Event()
+    transmitting = asyncio.Event()
 
     def fail(message):
         if not failed.done():
@@ -452,14 +507,14 @@ async def run(start, queue):
 
         async def recv(self):
             try:
-                assert source is not None and source.stdout is not None
-                data = await source.stdout.readexactly(1920)
+                data = await capture.recv()
                 frame = av.AudioFrame(format="s16", layout="mono", samples=960)
                 frame.planes[0].update(gate.process(data))
                 frame.sample_rate = 48000
                 frame.pts = self.samples
                 frame.time_base = fractions.Fraction(1, 48000)
                 self.samples += 960
+                transmitting.set()
                 return frame
             except Exception:
                 fail("Microphone capture failed")
@@ -467,6 +522,8 @@ async def run(start, queue):
 
     @peer.on("connectionstatechange")
     def state():
+        if peer.connectionState == "connected":
+            connected.set()
         if peer.connectionState in ("failed", "closed"):
             fail("Voice connection closed")
 
@@ -523,6 +580,7 @@ async def run(start, queue):
         while True:
             await asyncio.sleep(0.02)
             gate.tick()
+            await speaker.flush()
             if gate.active:
                 await send(protocol.flush())
 
@@ -531,6 +589,9 @@ async def run(start, queue):
         tasks.append(asyncio.create_task(protocol.receive(queue, outgoing)))
         loaded = await models(Path(start["cache"]))
         gate.load(loaded)
+        for _, recognizer in gate.recognizers:
+            recognizer.AcceptWaveform(bytes(96000))
+            recognizer.Reset()
         protocol.drain(queue, outgoing)
         task = asyncio.create_task(
             asyncio.create_subprocess_exec(
@@ -546,6 +607,10 @@ async def run(start, queue):
                 "48000",
                 "-c",
                 "1",
+                "-B",
+                "80000",
+                "-F",
+                "20000",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -555,6 +620,8 @@ async def run(start, queue):
         except asyncio.CancelledError:
             source = await task
             raise
+        assert source.stdout is not None
+        tasks.append(asyncio.create_task(capture.run(source.stdout)))
         peer.addTrack(microphone)
         await peer.setLocalDescription(await peer.createOffer())
         async with aiohttp.ClientSession(
@@ -599,7 +666,17 @@ async def run(start, queue):
                 heartbeat=20,
                 timeout=aiohttp.ClientWSTimeout(ws_close=2),
             ) as socket:
+                await asyncio.wait_for(
+                    asyncio.gather(connected.wait(), transmitting.wait()), 15
+                )
+                for task in tasks:
+                    if task.done():
+                        task.result()
+                        raise RuntimeError(
+                            "Voice startup stopped before audio was ready"
+                        )
                 protocol.drain(queue, outgoing)
+                capture.clear()
                 gate.ready = True
                 protocol.changed()
                 tasks.extend(
