@@ -11,6 +11,12 @@ const KeybindOverride = z
   .strict()
 
 export const TuiOptions = z.object({
+  voice: z
+    .boolean()
+    .optional()
+    .describe(
+      "Automatically listen locally for slave/esclave and use ChatGPT OAuth voice on Linux (default: true). Set false to disable microphone access.",
+    ),
   scroll_speed: z.number().min(0.001).optional().describe("TUI scroll speed"),
   scroll_acceleration: z
     .object({

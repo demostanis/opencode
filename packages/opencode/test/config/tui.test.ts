@@ -9,6 +9,12 @@ import { Filesystem } from "../../src/util/filesystem"
 
 const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR!
 
+test("voice can be disabled explicitly without requiring a slash command", () => {
+  expect(TuiConfig.Info.parse({ voice: false }).voice).toBe(false)
+  expect(TuiConfig.Info.parse({ voice: true }).voice).toBe(true)
+  expect(TuiConfig.Info.parse({}).voice).toBeUndefined()
+})
+
 afterEach(async () => {
   delete process.env.OPENCODE_CONFIG
   delete process.env.OPENCODE_TUI_CONFIG

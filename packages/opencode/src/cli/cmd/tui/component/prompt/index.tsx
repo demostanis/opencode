@@ -22,7 +22,7 @@ import { useSDK } from "@tui/context/sdk"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { MessageID, PartID } from "@/session/schema"
-import { createStore, produce } from "solid-js/store"
+import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { assign } from "./part"
@@ -52,6 +52,8 @@ import { hydrate } from "./session"
 import { Variant } from "@tui/util/variant"
 import { DialogBtw } from "../dialog-btw"
 import { DialogPrompt } from "../../ui/dialog-prompt"
+import { useVoice } from "../../context/voice"
+import { voice } from "./voice"
 
 export type PromptProps = {
   sessionID?: string
@@ -78,6 +80,7 @@ export type PromptRef = {
   blur(): void
   focus(): void
   submit(): void
+  voice(text: string): Promise<{ sessionID: string; messageID: string }>
   defer(): void
 }
 
@@ -91,6 +94,7 @@ export function Prompt(props: PromptProps) {
 
   const keybind = useKeybind()
   const local = useLocal()
+  const speech = useVoice()
   const sdk = useSDK()
   const route = useRoute()
   const sync = useSync()
@@ -579,6 +583,7 @@ export function Prompt(props: PromptProps) {
     set(prompt) {
       input.setText(prompt.input)
       setStore("prompt", prompt)
+      if (prompt.mode) setStore("mode", prompt.mode)
       restoreExtmarksFromParts(prompt.parts)
       input.gotoBufferEnd()
     },
@@ -593,6 +598,30 @@ export function Prompt(props: PromptProps) {
     },
     submit() {
       submit()
+    },
+    async voice(text) {
+      if (!input || input.isDestroyed)
+        throw new Error("No active prompt is available. Open a session or the home screen and retry voice delegation.")
+      const session = props.sessionID
+      const result = await voice(sdk.client, {
+        text,
+        disabled: props.disabled,
+        sessionID: session,
+        workspaceID: props.workspaceID,
+        agent: selectedAgent(),
+        model: selectedModel(),
+        variant: selectedVariant(),
+        memory: memory(),
+      })
+      history.append({ input: text, parts: [], mode: "normal" })
+      // Navigation remounts the home prompt; carry the latest draft, not the voice text.
+      if (!session && !input.isDestroyed)
+        route.navigate({
+          type: "session",
+          sessionID: result.sessionID,
+          initialPrompt: structuredClone(unwrap({ ...store.prompt, mode: store.mode })),
+        })
+      return result
     },
     defer() {
       submit({ deferred: true })
@@ -1090,7 +1119,7 @@ export function Prompt(props: PromptProps) {
   })
 
   const spinnerDef = createMemo(() => {
-    const color = local.agent.color(selectedAgent())
+    const color = speech.active() ? theme.success : local.agent.color(selectedAgent())
     return {
       frames: createFrames({
         color,
@@ -1331,6 +1360,18 @@ export function Prompt(props: PromptProps) {
                       {selectedModelInfo().model}
                     </text>
                     <text fg={theme.textMuted}>{selectedModelInfo().provider}</text>
+                    <Show when={speech.focused()}>
+                      <text fg={speech.active() ? theme.success : theme.textMuted} flexShrink={0}>
+                        (voice)
+                      </text>
+                      <Show when={speech.state() === "starting"}>
+                        <spinner
+                          frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]}
+                          color={theme.textMuted}
+                          interval={80}
+                        />
+                      </Show>
+                    </Show>
                     <For each={badges()}>
                       {(item) => (
                         <>
@@ -1384,7 +1425,7 @@ export function Prompt(props: PromptProps) {
           />
         </box>
         <box flexDirection="row" justifyContent="space-between">
-          <Show when={status().type !== "idle"} fallback={<text />}>
+          <Show when={status().type !== "idle" || speech.active()} fallback={<text />}>
             <box
               flexDirection="row"
               gap={1}
@@ -1393,7 +1434,10 @@ export function Prompt(props: PromptProps) {
             >
               <box flexShrink={0} flexDirection="row" gap={1}>
                 <box marginLeft={1}>
-                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                  <Show
+                    when={kv.get("animations_enabled", true)}
+                    fallback={<text fg={speech.active() ? theme.success : theme.textMuted}>[⋯]</text>}
+                  >
                     <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
                   </Show>
                 </box>
@@ -1456,12 +1500,14 @@ export function Prompt(props: PromptProps) {
                   })()}
                 </box>
               </box>
-              <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                esc{" "}
-                <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                  {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
-                </span>
-              </text>
+              <Show when={status().type !== "idle"}>
+                <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
+                  esc{" "}
+                  <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
+                    {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                  </span>
+                </text>
+              </Show>
             </box>
           </Show>
           <Show when={status().type !== "retry"}>
