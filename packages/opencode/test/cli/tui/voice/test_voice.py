@@ -89,6 +89,17 @@ class Tests(unittest.TestCase):
         self.protocol.changed()
         self.assertEqual(self.events[-1], {"type": "state", "state": "waiting"})
 
+    def test_focus_loss_and_mute_discard_preroll(self):
+        for command in ["suspend", "mute"]:
+            self.gate.wake()
+            self.gate.replay.append(b"x" * 1920)
+            self.gate.history.append(b"y" * 1920)
+            self.protocol.command({"type": command})
+            self.assertFalse(self.gate.replay)
+            self.assertFalse(self.gate.history)
+            self.assertEqual(self.gate.process(b"\1" * 1920), bytes(1920))
+            self.protocol.command({"type": "resume"})
+
     def test_silence_excludes_reply_not_resets(self):
         self.gate.wake()
         self.advance(12)
@@ -558,6 +569,9 @@ class Archives(unittest.IsolatedAsyncioTestCase):
         try:
             speaker.since -= 0.3
             await speaker.flush()
+            assert child.stdin is not None
+            child.stdin.close()
+            await child.stdin.wait_closed()
             output, _ = await asyncio.wait_for(child.communicate(), 2)
             self.assertEqual(output, PCM[:960])
         finally:
@@ -579,6 +593,9 @@ class Archives(unittest.IsolatedAsyncioTestCase):
         try:
             for chunk in chunks:
                 await speaker.play(chunk, gate)
+            assert child.stdin is not None
+            child.stdin.close()
+            await child.stdin.wait_closed()
             output, _ = await asyncio.wait_for(child.communicate(), 2)
             self.assertEqual(output, b"".join(chunks))
         finally:
@@ -722,23 +739,50 @@ class Recognition(unittest.TestCase):
             check=True,
         ).stdout + bytes(144000)
         data += bytes(-len(data) % 1920)
+        first = None
         for offset in range(0, len(data), 1920):
             active = gate.active
             output = gate.process(data[offset : offset + 1920])
             if not active:
                 self.assertEqual(output, bytes(1920))
+                if gate.active and first is None:
+                    first = offset / 96000
+        return first
+
+    def test_wake_during_continuous_speech(self):
+        for lang, text in [
+            ("fr", "esclave bonjour peux tu me dire comment tu vas aujourd'hui"),
+            ("en-us", "slave hello can you tell me how you are doing today"),
+        ]:
+            gate = Gate(self.models)
+            gate.ready = True
+            first = self.speech(gate, text, lang)
+            assert first is not None, text
+            self.assertLess(first, 1.5, "Do not wait for the entire request to finish")
 
     def test_actual_english_and_french(self):
         for lang, word, negatives in (
             (
                 "en-us",
                 "slave",
-                ["hello computer", "please save the file", "the weather is nice today"],
+                [
+                    "hello computer",
+                    "please save the file",
+                    "save the file",
+                    "sleep",
+                    "the weather is nice today",
+                ],
             ),
             (
                 "fr",
                 "esclave",
-                ["bonjour", "il fait beau aujourd'hui", "je fais de l'escalade"],
+                [
+                    "bonjour",
+                    "il fait beau aujourd'hui",
+                    "je fais de l'escalade",
+                    "escalade",
+                    "est ce que tu peux m'aider",
+                ],
             ),
         ):
             gate = Gate(self.models)

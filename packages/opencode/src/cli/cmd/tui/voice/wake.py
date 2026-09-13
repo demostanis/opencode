@@ -1,4 +1,5 @@
 import json
+from collections import deque
 import re
 import struct
 import time
@@ -85,6 +86,10 @@ class Gate:
         self.cooldown = 0
         self.idle = 0
         self.last = clock()
+        # Keep 200 ms locally to avoid clipping words immediately after the wake word.
+        self.history = deque(maxlen=10)
+        self.replay = deque()
+        self.hits = {}
 
     def load(self, models):
         self.recognizers = []
@@ -133,6 +138,9 @@ class Gate:
         self.notification = False
         self.idle = 0
         self.last = self.clock()
+        self.history.clear()
+        self.replay.clear()
+        self.hits.clear()
         for _, recognizer in self.recognizers:
             recognizer.Reset()
         self.change()
@@ -159,6 +167,9 @@ class Gate:
         self.idle = 0
         self.last = self.clock()
         self.cooldown = self.clock() + 2
+        self.history.clear()
+        self.replay.clear()
+        self.hits.clear()
         for _, recognizer in self.recognizers:
             recognizer.Reset()
         self.mute()
@@ -232,14 +243,26 @@ class Gate:
             return bytes(len(data))
         self.tick(self.vad.is_speech(data, 48000) if self.active else False)
         if self.active:
-            return data
+            self.replay.append(data)
+            return self.replay.popleft()
         if self.speaking or self.clock() < self.cooldown:
             return bytes(len(data))
+        self.history.append(data)
         for word, recognizer in self.recognizers:
-            if (
-                recognizer.AcceptWaveform(data)
-                and word in json.loads(recognizer.Result()).get("text", "").split()
-            ):
+            final = recognizer.AcceptWaveform(data)
+            text = (
+                json.loads(recognizer.Result() if final else recognizer.PartialResult())
+                .get("text" if final else "partial", "")
+                .split()
+            )
+            self.hits[word] = (
+                self.hits.get(word, 0) + 1
+                if not final and text and text[0] == word
+                else 0
+            )
+            if (final and word in text) or self.hits[word] >= 5:
+                replay = tuple(self.history)
                 self.wake()
+                self.replay.extend(replay)
                 break
         return bytes(len(data))

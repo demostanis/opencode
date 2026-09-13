@@ -5,6 +5,13 @@ export namespace Action {
   const names = ["stop_listening", "submit_prompt"] as const
   const item = z.object({ type: z.literal("function_call"), name: z.enum(names), arguments: z.string() })
 
+  export function needed(text: string) {
+    const words = text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
+    return /\b(stop|shut|quiet|silence|silent|mute|unmute|alone|enough|done|finished|bye|goodbye|leave|pause|arrete\w*|tais|taire|taisez|tranquille|laisse\w*|paix|termine\w*|fini\w*|adieu|chut|gueule)\b|\b(that will do|that.s all|ce sera tout|c.est tout|au revoir|a plus tard|ferme.la|boucle.la|je ne veux plus|don.t (speak|talk|listen))\b/.test(
+      words,
+    )
+  }
+
   export function result(value: unknown) {
     const parsed = z.object({ status: z.literal("completed"), output: z.array(z.unknown()) }).parse(value)
     const calls = parsed.output.flatMap((value) => {
@@ -45,6 +52,8 @@ export namespace Action {
   }
 
   export async function choose(text: string, signal: AbortSignal) {
+    signal.throwIfAborted()
+    if (!needed(text)) return "submit_prompt" as const
     const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     const headers = await codexAuthHeaders()
     headers.set("content-type", "application/json")

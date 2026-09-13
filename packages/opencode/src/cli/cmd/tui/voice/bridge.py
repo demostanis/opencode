@@ -25,7 +25,8 @@ from wake import Gate, MODELS, stopping
 ENDPOINT = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
 INSTRUCTIONS = """Parle toujours français, naturellement et brièvement. Attends une demande,
 sans salutation spontanée. Les mots de réveil locaux sont slave et esclave.
-Discute naturellement; délègue au client toute action de code ou de travail.
+Réponds directement et sans délégation aux salutations, aux questions ordinaires et à la conversation.
+Ne consulte pas l'agent de code pour discuter. Délègue seulement les actions de code ou de travail demandées.
 La délégation doit contenir la demande réelle de l'utilisateur, comme une consigne
 concrète, avec ses détails; jamais un simple résumé générique. Demande les détails
 manquants si nécessaire. Ne prétends jamais avoir exécuté ou implémenté une action
