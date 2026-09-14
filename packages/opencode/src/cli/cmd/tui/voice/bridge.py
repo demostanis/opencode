@@ -483,6 +483,16 @@ class Protocol:
         ]
 
 
+async def discard(track):
+    from aiortc.mediastreams import MediaStreamError
+
+    try:
+        while True:
+            await track.recv()
+    except MediaStreamError:
+        pass
+
+
 async def record():
     return await asyncio.create_subprocess_exec(
         "arecord",
@@ -562,6 +572,12 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
             fail("Voice connection closed")
 
     events = asyncio.Queue(maxsize=512)
+
+    @peer.on("track")
+    def track(remote):
+        # Sideband owns playback, but aiortc still queues decoded RTP audio.
+        # Drain it even while unfocused or muted so native frames cannot accumulate.
+        tasks.append(asyncio.create_task(discard(remote)))
 
     @peer.createDataChannel("oai-events").on("message")
     def message(data):
