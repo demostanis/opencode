@@ -143,11 +143,16 @@ async def extract(archive, dest, name):
                     await asyncio.sleep(0)
 
 
-async def models(cache):
-    import aiohttp
+async def models(cache, download=True):
     from vosk import Model, SetLogLevel
 
     SetLogLevel(-1)
+    if not download:
+        # Distribution-owned models have no user-cache integrity manifest.
+        return [(word, Model(str(cache / name)), words) for word, name, words in MODELS]
+
+    import aiohttp
+
     cache.mkdir(parents=True, exist_ok=True)
     result = []
     async with aiohttp.ClientSession(
@@ -478,7 +483,30 @@ class Protocol:
         ]
 
 
-async def run(start, queue):
+async def record():
+    return await asyncio.create_subprocess_exec(
+        "arecord",
+        "-q",
+        "-D",
+        "pulse",
+        "-t",
+        "raw",
+        "-f",
+        "S16_LE",
+        "-r",
+        "48000",
+        "-c",
+        "1",
+        "-B",
+        "80000",
+        "-F",
+        "20000",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+
+async def run(start, queue, loaded=None, output=emit, capture=None, control=None):
     import aiohttp
     import av
     from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
@@ -490,10 +518,15 @@ async def run(start, queue):
     socket = None
     failed = asyncio.get_running_loop().create_future()
     gate = Gate(mute=speaker.stop)
-    protocol = Protocol(gate)
+    protocol = Protocol(gate, output)
     gate.change = protocol.changed
     outgoing = asyncio.Queue(maxsize=128)
-    capture = Capture()
+    shared = capture is not None
+    capture = capture if shared else Capture()
+    if control is not None:
+        # Register before the first await: ownership can change during startup.
+        gate.suspend()
+        control(protocol.control)
     connected = asyncio.Event()
     transmitting = asyncio.Event()
 
@@ -588,41 +621,22 @@ async def run(start, queue):
     microphone = Microphone()
     try:
         tasks.append(asyncio.create_task(protocol.receive(queue, outgoing)))
-        loaded = await models(Path(start["cache"]))
+        if loaded is None:
+            loaded = await models(Path(start["cache"]))
         gate.load(loaded)
         for _, recognizer in gate.recognizers:
             recognizer.AcceptWaveform(bytes(96000))
             recognizer.Reset()
         protocol.drain(queue, outgoing)
-        task = asyncio.create_task(
-            asyncio.create_subprocess_exec(
-                "arecord",
-                "-q",
-                "-D",
-                "pulse",
-                "-t",
-                "raw",
-                "-f",
-                "S16_LE",
-                "-r",
-                "48000",
-                "-c",
-                "1",
-                "-B",
-                "80000",
-                "-F",
-                "20000",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        )
-        try:
-            source = await asyncio.shield(task)
-        except asyncio.CancelledError:
-            source = await task
-            raise
-        assert source.stdout is not None
-        tasks.append(asyncio.create_task(capture.run(source.stdout)))
+        if not shared:
+            task = asyncio.create_task(record())
+            try:
+                source = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                source = await task
+                raise
+            assert source.stdout is not None
+            tasks.append(asyncio.create_task(capture.run(source.stdout)))
         peer.addTrack(microphone)
         await peer.setLocalDescription(await peer.createOffer())
         async with aiohttp.ClientSession(
@@ -641,7 +655,7 @@ async def run(start, queue):
                 },
             ) as response:
                 if response.status not in (200, 201):
-                    emit(
+                    output(
                         {
                             "type": "error",
                             "message": "OAuth voice call rejected (HTTP "
@@ -697,7 +711,7 @@ async def run(start, queue):
                     gate.ready = False
                     gate.reset()
                     microphone.stop()
-                    if source.returncode is None:
+                    if source and source.returncode is None:
                         with contextlib.suppress(ProcessLookupError):
                             source.kill()
                     for task in tasks:

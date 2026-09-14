@@ -298,7 +298,9 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
         })
         .catch(() => {
           if (controller !== abort || disposed) return
-          recover("Unable to start voice. Check uv, alsa-utils, audio devices and /connect openai ChatGPT OAuth.")
+          recover(
+            "Unable to start voice. Check opencode-voice, alsa-utils, audio devices and /connect openai ChatGPT OAuth.",
+          )
         })
     }
 
