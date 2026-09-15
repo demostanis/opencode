@@ -138,3 +138,5 @@ when i say "sync demolinux", you need to push to dev, create a new -demolinux
 tag and push it, and go to /data/programming/demolinux/packages/tobuild/opencode
 to update PKGBUILD and run updpkgsums, and create a commit "packages: bump
 opencode" without pushing
+when i tell you to install the new opencode version locally, you should use
+makepkg -si inside demolinux/packages/tobuild/opencode, not another way
