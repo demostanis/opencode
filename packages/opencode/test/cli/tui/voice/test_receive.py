@@ -29,12 +29,18 @@ class ReceiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(remote._queue.qsize(), 0)
             raise Finished()
 
+        events = []
         with (
             patch("aiortc.RTCPeerConnection", return_value=peer),
             patch.object(peer, "setLocalDescription", side_effect=description),
         ):
-            with self.assertRaises(Finished):
-                await run({}, asyncio.Queue(), loaded=[], capture=Capture())
+            await run(
+                {}, asyncio.Queue(), loaded=[], capture=Capture(), output=events.append
+            )
+        self.assertIn(
+            {"type": "error", "message": "Voice failure: stage=offer error=Exception"},
+            events,
+        )
         self.assertEqual(peer.connectionState, "closed")
         self.assertFalse(remote._queue._getters)
 

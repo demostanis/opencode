@@ -255,8 +255,8 @@ class Audio:
             await client.capture.run(source.stdout)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            client.emit({"type": "error", "message": "Microphone capture failed"})
+        except Exception as err:
+            client.emit(bridge.failure("capture", err))
             client.writer.close()
         finally:
             if source:
@@ -393,6 +393,8 @@ class Service:
         def output(event):
             if client.closed:
                 return
+            if event["type"] == "timing" and client.start.get("timing") is not True:
+                return
             if event["type"] == "state" and self.owner is not client:
                 client.state("waiting")
                 return
@@ -404,8 +406,10 @@ class Service:
             if self.owner is client and client.wake:
                 fn({"type": "wake"})
 
+        stage = "models"
         try:
             loaded = await self.models()
+            stage = "startup"
             await self.run(
                 client.start,
                 client.queue,
@@ -416,13 +420,8 @@ class Service:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            output(
-                {
-                    "type": "error",
-                    "message": "Voice helper failed; check audio devices, models and OAuth session",
-                }
-            )
+        except Exception as err:
+            output(bridge.failure(stage, err))
         finally:
             client.control = None
             # The connection cleanup owns destruction, avoiding a session/lock cycle.

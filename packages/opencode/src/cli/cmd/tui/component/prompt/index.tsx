@@ -1361,7 +1361,15 @@ export function Prompt(props: PromptProps) {
                     </text>
                     <text fg={theme.textMuted}>{selectedModelInfo().provider}</text>
                     <Show when={speech.focused()}>
-                      <text fg={speech.active() ? theme.success : theme.textMuted} flexShrink={0}>
+                      <text
+                        fg={speech.active() ? theme.success : theme.textMuted}
+                        flexShrink={0}
+                        onMouseUp={(event) => {
+                          if (event.button !== 0) return
+                          event.stopPropagation()
+                          speech.toggle()
+                        }}
+                      >
                         (voice)
                       </text>
                       <Show when={speech.state() === "starting"}>

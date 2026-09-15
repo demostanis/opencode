@@ -266,7 +266,12 @@ class Sessions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.event(reader), HELLO)
         await self.send(
             writer,
-            {"type": "start", "headers": {"authorization": name}, "cache": "/ignored"},
+            {
+                "type": "start",
+                "headers": {"authorization": name},
+                "cache": "/ignored",
+                "timing": True,
+            },
         )
         self.assertEqual(await self.event(reader), {"type": "started"})
         await self.event(reader, "starting")
@@ -407,6 +412,11 @@ class Sessions(unittest.IsolatedAsyncioTestCase):
                     "content": [{"type": "input_text", "text": "implement fix"}],
                 },
             }
+        )
+        timing = await self.event(a)
+        self.assertGreater(timing.pop("at"), 0)
+        self.assertEqual(
+            timing, {"type": "timing", "event": "delegation.created", "id": "job"}
         )
         self.assertEqual(
             await self.event(a),
@@ -603,6 +613,9 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
             def Reset(self):
                 self.resets += 1
 
+            def SetWords(self, enabled):
+                self.words = enabled
+
         loaded = tuple((word, object(), words) for word, _, words in bridge.MODELS)
         with patch.dict(
             sys.modules, {"vosk": types.SimpleNamespace(KaldiRecognizer=Recognizer)}
@@ -615,6 +628,8 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
             self.assertIsNot(first, second)
             self.assertEqual(first.resets, 1)
             self.assertEqual(second.resets, 0)
+            self.assertTrue(first.words)
+            self.assertTrue(second.words)
         self.assertFalse(b.suspended)
 
     async def test_model_singleflight_failure_and_retry(self):

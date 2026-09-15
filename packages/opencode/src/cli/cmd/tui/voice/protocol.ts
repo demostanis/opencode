@@ -7,6 +7,15 @@ const id = z.string().min(1).max(Limits.id)
 
 export const VoiceEvent = z.discriminatedUnion("type", [
   z
+    .object({
+      type: z.literal("timing"),
+      event: z.enum(["turn.created", "turn.done", "delegation.created", "local.stop"]),
+      at: z.number().finite().nonnegative(),
+      id: id.optional(),
+      role: z.enum(["user", "assistant"]).optional(),
+    })
+    .strict(),
+  z
     .object({ type: z.literal("state"), state: z.enum(["starting", "waiting", "listening", "speaking", "off"]) })
     .strict(),
   z.object({ type: z.literal("transcript"), role: z.enum(["user", "assistant"]), text }).strict(),

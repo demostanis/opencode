@@ -143,6 +143,29 @@ describe("voice protocol", () => {
 })
 
 describe("voice runtime", () => {
+  test.each([
+    "OAuth voice call rejected (HTTP 429)",
+    "Microphone capture failed",
+    "Voice failure: stage=connect error=TimeoutError",
+    "Voice failure: stage=socket error=WSServerHandshakeError HTTP=503",
+  ])("preserves safe helper diagnostics: %s", async (message) => {
+    await using ctx = await fixture(
+      `client.write(${JSON.stringify(JSON.stringify({ type: "error", message }) + "\n")}); return`,
+    )
+    await until(() => ctx.events.some((event) => event.type === "error"))
+    expect(ctx.events).toContainEqual({ type: "error", message })
+  })
+
+  test.each([
+    `Voice failure: stage=socket error=${secret}`,
+    `Voice failure: stage=${secret} error=TimeoutError`,
+    `Voice failure: stage=socket error=TimeoutError HTTP=503 ${secret}`,
+    `OAuth voice call rejected (HTTP 429) ${secret}`,
+  ])("rejects arbitrary diagnostic fields: %s", (message) => {
+    expect(Voice.diagnostic(message)).not.toContain(secret)
+    expect(Voice.diagnostic(message)).toContain("Voice helper failed")
+  })
+
   test.each([false, true])("negotiates exact credential-free hello (packaged=%s)", async (packaged) => {
     await using ctx = await fixture("", undefined, { packaged })
     expect(await Bun.file(path.join(ctx.dir, "hello.json")).json()).toEqual({

@@ -15,6 +15,7 @@ import signal
 import stat
 import sys
 import tempfile
+import time
 import zipfile
 
 sys.dont_write_bytecode = True
@@ -53,6 +54,52 @@ ne simule jamais cet appel par une réponse parlée ou du texte dans la conversa
 
 def emit(event):
     print(json.dumps(event, ensure_ascii=True), flush=True)
+
+
+def failure(stage, err):
+    # Never include exception messages, URLs, headers, SDP, or remote payloads.
+    stages = {
+        "startup",
+        "models",
+        "capture",
+        "offer",
+        "call",
+        "answer",
+        "socket",
+        "connect",
+        "session",
+    }
+    errors = {
+        "TimeoutError",
+        "ClientConnectorError",
+        "ClientConnectorDNSError",
+        "ClientConnectorCertificateError",
+        "ClientConnectorSSLError",
+        "ClientOSError",
+        "ServerDisconnectedError",
+        "ServerTimeoutError",
+        "WSServerHandshakeError",
+        "ClientResponseError",
+        "ConnectionResetError",
+        "BrokenPipeError",
+        "IncompleteReadError",
+        "FileNotFoundError",
+        "PermissionError",
+        "OSError",
+        "ValueError",
+        "RuntimeError",
+        "ModuleNotFoundError",
+        "ImportError",
+    }
+    stage = stage if stage in stages else "startup"
+    kind = type(err).__name__
+    kind = kind if kind in errors else "Exception"
+    status = getattr(err, "status", None)
+    suffix = f" HTTP={status}" if type(status) is int and 100 <= status <= 599 else ""
+    return {
+        "type": "error",
+        "message": f"Voice failure: stage={stage} error={kind}{suffix}",
+    }
 
 
 def headers(auth):
@@ -337,6 +384,16 @@ class Protocol:
             if self.turns.get(key) in (kind, "turn.done"):
                 return
             self.turns[key] = kind
+            if turn.get("role") in ("user", "assistant"):
+                self.output(
+                    {
+                        "type": "timing",
+                        "event": kind,
+                        "at": time.time() * 1000,
+                        "id": id,
+                        "role": turn["role"],
+                    }
+                )
         self.gate.event(event)
         if event.get("type") == "turn.done" and not self.gate.suspended:
             turn = event.get("turn", {})
@@ -368,9 +425,25 @@ class Protocol:
             if part.get("type") == "input_text"
         )
         self.seen.add(id)
+        self.output(
+            {
+                "type": "timing",
+                "event": "delegation.created",
+                "at": time.time() * 1000,
+                "id": id,
+            }
+        )
         if not text.strip() or not self.gate.authorized:
             return
         if stopping(text):
+            self.output(
+                {
+                    "type": "timing",
+                    "event": "local.stop",
+                    "at": time.time() * 1000,
+                    "id": id,
+                }
+            )
             self.gate.reset()
             return self.append(
                 id,
@@ -635,6 +708,7 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
                 await send(protocol.flush())
 
     microphone = Microphone()
+    stage = "models"
     try:
         tasks.append(asyncio.create_task(protocol.receive(queue, outgoing)))
         if loaded is None:
@@ -645,6 +719,7 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
             recognizer.Reset()
         protocol.drain(queue, outgoing)
         if not shared:
+            stage = "capture"
             task = asyncio.create_task(record())
             try:
                 source = await asyncio.shield(task)
@@ -654,7 +729,9 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
             assert source.stdout is not None
             tasks.append(asyncio.create_task(capture.run(source.stdout)))
         peer.addTrack(microphone)
+        stage = "offer"
         await peer.setLocalDescription(await peer.createOffer())
+        stage = "call"
         async with aiohttp.ClientSession(
             headers=headers(start["headers"]), timeout=aiohttp.ClientTimeout(total=45)
         ) as client:
@@ -665,7 +742,7 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
                     "session": {
                         "model": "gpt-live-1-codex",
                         "instructions": INSTRUCTIONS,
-                        "audio": {"output": {"voice": "cove"}},
+                        "audio": {"output": {"voice": "juniper"}},
                         "delegation": {"type": "client", "ack_filler": False},
                     },
                 },
@@ -689,14 +766,17 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
                 )
                 if not re.fullmatch(r"[A-Za-z0-9_-]+", call):
                     raise ValueError("Invalid call identifier")
+            stage = "answer"
             await peer.setRemoteDescription(
                 RTCSessionDescription(sdp=answer, type="answer")
             )
+            stage = "socket"
             async with client.ws_connect(
                 "wss://api.openai.com/v1/live/" + call,
                 heartbeat=20,
                 timeout=aiohttp.ClientWSTimeout(ws_close=2),
             ) as socket:
+                stage = "connect"
                 await asyncio.wait_for(
                     asyncio.gather(connected.wait(), transmitting.wait()), 15
                 )
@@ -710,6 +790,7 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
                 capture.clear()
                 gate.ready = True
                 protocol.changed()
+                stage = "session"
                 tasks.extend(
                     [
                         asyncio.create_task(fn())
@@ -737,6 +818,8 @@ async def run(start, queue, loaded=None, output=emit, capture=None, control=None
                         await asyncio.wait_for(
                             socket.send_json({"type": "session.close"}), 1
                         )
+    except Exception as err:
+        output(failure(stage, err))
     finally:
         gate.ready = False
         gate.reset()
@@ -835,14 +918,8 @@ async def main():
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
-    except Exception:
-        # Never stringify library exceptions: they can contain headers, SDP or audio.
-        emit(
-            {
-                "type": "error",
-                "message": "Voice helper failed; check audio devices, models and OAuth session",
-            }
-        )
+    except Exception as err:
+        emit(failure("startup", err))
     finally:
         for task in tasks:
             task.cancel()

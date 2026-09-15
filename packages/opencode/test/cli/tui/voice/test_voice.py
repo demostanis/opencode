@@ -19,6 +19,7 @@ from bridge import (
     Protocol,
     Speaker,
     extract,
+    failure,
     frames,
     headers,
     manifest,
@@ -47,6 +48,73 @@ class Vad:
 
 
 class Tests(unittest.TestCase):
+    def test_provisional_wake_never_authorizes_audio(self):
+        class Recognizer:
+            def AcceptWaveform(self, data):
+                return False
+
+            def PartialResult(self):
+                return '{"partial":"esclave"}'
+
+            def Reset(self):
+                pass
+
+        self.gate.recognizers = [("esclave", Recognizer())]
+        for _ in range(100):
+            self.assertEqual(self.gate.process(PCM[:1920]), bytes(1920))
+        self.assertFalse(self.gate.active)
+
+    def test_final_wake_requires_confidence_duration_and_isolation(self):
+        class Recognizer:
+            def __init__(self, result):
+                self.result = result
+
+            def AcceptWaveform(self, data):
+                return True
+
+            def Result(self):
+                return json.dumps(self.result)
+
+            def Reset(self):
+                pass
+
+        token = {"word": "esclave", "conf": 0.95, "start": 0, "end": 0.4}
+        for result, active in [
+            ({"text": "esclave", "result": [token]}, True),
+            ({"text": "esclave", "result": [{**token, "conf": 0.89}]}, False),
+            ({"text": "esclave", "result": [{**token, "end": 0.1}]}, False),
+            ({"text": "esclave"}, False),
+            ({"text": "[unk] esclave", "result": [token]}, False),
+            ({"text": "esclave [unk]", "result": [token]}, False),
+            ({"text": "esclave", "result": [token, token]}, False),
+        ]:
+            with self.subTest(result=result):
+                gate = Gate(vad=Vad())
+                gate.ready = True
+                gate.recognizers = [("esclave", Recognizer(result))]
+                self.assertEqual(gate.process(PCM[:1920]), bytes(1920))
+                self.assertEqual(gate.active, active)
+
+    def test_diagnostics_omit_sensitive_exception_data(self):
+        err = TimeoutError("secret authorization SDP audio")
+        self.assertEqual(
+            failure("connect", err),
+            {
+                "type": "error",
+                "message": "Voice failure: stage=connect error=TimeoutError",
+            },
+        )
+        setattr(err, "status", 503)
+        self.assertEqual(
+            failure("socket", err)["message"],
+            "Voice failure: stage=socket error=TimeoutError HTTP=503",
+        )
+        setattr(err, "status", "secret")
+        self.assertNotIn("secret", json.dumps(failure("secret", err)))
+        self.assertNotIn(
+            "secret", json.dumps(failure("call", type("secret", (Exception,), {})()))
+        )
+
     def setUp(self):
         self.now = 0
         self.events = []
@@ -749,7 +817,7 @@ class Recognition(unittest.TestCase):
                     first = offset / 96000
         return first
 
-    def test_wake_during_continuous_speech(self):
+    def test_wake_requires_a_separate_utterance(self):
         for lang, text in [
             ("fr", "esclave bonjour peux tu me dire comment tu vas aujourd'hui"),
             ("en-us", "slave hello can you tell me how you are doing today"),
@@ -757,8 +825,21 @@ class Recognition(unittest.TestCase):
             gate = Gate(self.models)
             gate.ready = True
             first = self.speech(gate, text, lang)
-            assert first is not None, text
-            self.assertLess(first, 1.5, "Do not wait for the entire request to finish")
+            self.assertIsNone(first, text)
+            self.assertFalse(gate.active)
+
+    def test_silence_and_noise_do_not_wake(self):
+        import random
+
+        gate = Gate(self.models)
+        gate.ready = True
+        noise = random.Random(0)
+        for _ in range(250):
+            self.assertEqual(gate.process(noise.randbytes(1920)), bytes(1920))
+            self.assertFalse(gate.active)
+        for _ in range(250):
+            self.assertEqual(gate.process(bytes(1920)), bytes(1920))
+            self.assertFalse(gate.active)
 
     def test_actual_english_and_french(self):
         for lang, word, negatives in (
@@ -771,6 +852,11 @@ class Recognition(unittest.TestCase):
                     "save the file",
                     "sleep",
                     "the weather is nice today",
+                    "the voice triggers without me saying it explicitly",
+                    "why does the voice start on its own",
+                    "the slave is mentioned in the book",
+                    "slaves",
+                    "slay",
                 ],
             ),
             (
@@ -782,6 +868,11 @@ class Recognition(unittest.TestCase):
                     "je fais de l'escalade",
                     "escalade",
                     "est ce que tu peux m'aider",
+                    "pourquoi la voix se déclenche toute seule",
+                    "je m'entends ou pas",
+                    "est ce que tu m'entends",
+                    "il parle d'un esclave dans ce livre",
+                    "espace",
                 ],
             ),
         ):

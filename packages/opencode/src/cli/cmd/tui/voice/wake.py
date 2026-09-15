@@ -89,7 +89,6 @@ class Gate:
         # Keep 200 ms locally to avoid clipping words immediately after the wake word.
         self.history = deque(maxlen=10)
         self.replay = deque()
-        self.hits = {}
 
     def load(self, models):
         self.recognizers = []
@@ -100,6 +99,8 @@ class Gate:
                 (word, KaldiRecognizer(model, 48000, json.dumps(words)))
                 for word, model, words in models
             ]
+            for _, recognizer in self.recognizers:
+                recognizer.SetWords(True)
 
     @property
     def authorized(self):
@@ -140,7 +141,6 @@ class Gate:
         self.last = self.clock()
         self.history.clear()
         self.replay.clear()
-        self.hits.clear()
         for _, recognizer in self.recognizers:
             recognizer.Reset()
         self.change()
@@ -169,7 +169,6 @@ class Gate:
         self.cooldown = self.clock() + 2
         self.history.clear()
         self.replay.clear()
-        self.hits.clear()
         for _, recognizer in self.recognizers:
             recognizer.Reset()
         self.mute()
@@ -249,18 +248,19 @@ class Gate:
             return bytes(len(data))
         self.history.append(data)
         for word, recognizer in self.recognizers:
-            final = recognizer.AcceptWaveform(data)
-            text = (
-                json.loads(recognizer.Result() if final else recognizer.PartialResult())
-                .get("text" if final else "partial", "")
-                .split()
-            )
-            self.hits[word] = (
-                self.hits.get(word, 0) + 1
-                if not final and text and text[0] == word
-                else 0
-            )
-            if (final and word in text) or self.hits[word] >= 5:
+            if not recognizer.AcceptWaveform(data):
+                continue
+            result = json.loads(recognizer.Result())
+            words = result.get("result", [])
+            # Require a completed, isolated word, not a mention inside a sentence
+            # or the same provisional guess repeated over successive audio frames.
+            if (
+                result.get("text") == word
+                and len(words) == 1
+                and words[0].get("word") == word
+                and words[0].get("conf", 0) >= 0.9
+                and words[0].get("end", 0) - words[0].get("start", 0) >= 0.15
+            ):
                 replay = tuple(self.history)
                 self.wake()
                 self.replay.extend(replay)

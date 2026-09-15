@@ -13,6 +13,7 @@ import { Tracker } from "../voice/tracker"
 import { Focus } from "../voice/focus"
 import { Action } from "../voice/action"
 import type { Command, VoiceEvent } from "../voice/protocol"
+import { Log } from "@/util/log"
 
 export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
   name: "Voice",
@@ -62,6 +63,11 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
     }
 
     const active = () => focused() && (state() === "listening" || state() === "speaking")
+
+    function toggle() {
+      if (!enabled() || !focused() || !handle() || binding() !== target()) return
+      send([{ type: active() ? "mute" : "wake" }])
+    }
 
     function send(commands: Command[]) {
       if (disposed || binding() !== target()) return
@@ -174,8 +180,19 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
     }
 
     async function delegate(event: Extract<VoiceEvent, { type: "delegate" }>, controller: AbortController) {
+      const started = performance.now()
+      const timing = (stage: string) =>
+        Log.create({ service: "voice" }).info("voice.timing", {
+          pid: process.pid,
+          id: event.id,
+          at: Date.now(),
+          ms: Math.round(performance.now() - started),
+          event: stage,
+        })
+      timing("delegate.received")
       if (controller !== abort || controller.signal.aborted || binding() !== target() || seen.has(event.id)) return
       if (!focused()) {
+        timing("delegate.rejected.focus")
         send([
           {
             type: "result",
@@ -190,6 +207,7 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
       if (seen.size > 256) seen.delete(seen.values().next().value!)
       const current = prompt.current
       if (!current || !target() || submission() || tracker.size() >= 8) {
+        timing("delegate.rejected.busy")
         send([
           {
             type: "result",
@@ -209,13 +227,16 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
       setSubmission(request)
       const cancelled = Promise.withResolvers<undefined>()
       request.controller.signal.addEventListener("abort", () => cancelled.resolve(undefined), { once: true })
-      const timeout = setTimeout(() => cancelled.resolve(undefined), 60_000)
+      const timeout = setTimeout(() => {
+        timing("delegate.timeout")
+        cancelled.resolve(undefined)
+      }, 60_000)
       const receipt = await Promise.race([
         Promise.resolve()
           .then(async () => {
             if (controller !== abort || request.controller.signal.aborted || binding() !== target() || !focused())
               return
-            const action = await Action.choose(event.text, request.controller.signal)
+            const action = await Action.choose(event.text, request.controller.signal, event.id)
             if (controller !== abort || request.controller.signal.aborted || binding() !== target() || !focused())
               return
             if (action === "stop_listening") {
@@ -223,12 +244,17 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
               return "stopped" as const
             }
             request.sent = true
+            timing("prompt.submit")
             return current.voice(event.text)
           })
-          .catch(() => undefined),
+          .catch(() => {
+            timing(request.controller.signal.aborted ? "delegate.aborted" : "delegate.failed")
+            return undefined
+          }),
         cancelled.promise,
       ])
       clearTimeout(timeout)
+      timing(receipt ? "prompt.receipt" : "prompt.no_receipt")
       if (controller !== abort || controller.signal.aborted || request.controller.signal.aborted) return
       clearTimeout(transition)
       transition = undefined
@@ -390,6 +416,6 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
       destroy()
     })
 
-    return { state, active, focused: () => focused() && enabled() && state() !== "off" }
+    return { state, active, toggle, focused: () => focused() && enabled() && state() !== "off" }
   },
 })

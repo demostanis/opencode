@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { codexAuthHeaders } from "@/plugin/codex"
+import { Log } from "@/util/log"
 
 export namespace Action {
   const names = ["stop_listening", "submit_prompt"] as const
@@ -51,11 +52,27 @@ export namespace Action {
     }
   }
 
-  export async function choose(text: string, signal: AbortSignal) {
+  export async function choose(text: string, signal: AbortSignal, id?: string) {
+    const started = performance.now()
+    const log = Log.create({ service: "voice" })
+    const timing = (event: string, fields: Record<string, string | number | boolean> = {}) =>
+      log.info("voice.timing", {
+        pid: process.pid,
+        id,
+        at: Date.now(),
+        ms: Math.round(performance.now() - started),
+        event,
+        ...fields,
+      })
     signal.throwIfAborted()
-    if (!needed(text)) return "submit_prompt" as const
+    if (!needed(text)) {
+      timing("routing.skip")
+      return "submit_prompt" as const
+    }
+    timing("routing.begin", { timeout_ms: 15_000 })
     const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     const headers = await codexAuthHeaders()
+    timing("routing.auth.done")
     headers.set("content-type", "application/json")
     const response = await fetch("https://chatgpt.com/backend-api/codex/responses", {
       method: "POST",
@@ -63,6 +80,7 @@ export namespace Action {
       body: JSON.stringify(request(text)),
       signal: abort,
     })
+    timing("routing.headers", { status: response.status })
     if (!response.ok || !response.body) throw new Error("Voice routing is unavailable")
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -84,9 +102,16 @@ export namespace Action {
           const data = line.slice(5).trim()
           if (!data || data === "[DONE]") continue
           const event = JSON.parse(data)
+          if (event.type === "response.output_item.done") timing("routing.item.done")
           if (event.type === "response.output_item.done") items.push(event.item)
-          if (event.type === "response.completed")
-            return result({ ...event.response, output: event.response.output?.length ? event.response.output : items })
+          if (event.type === "response.completed") {
+            const action = result({
+              ...event.response,
+              output: event.response.output?.length ? event.response.output : items,
+            })
+            timing("routing.done", { action })
+            return action
+          }
           if (["error", "response.failed", "response.incomplete"].includes(event.type))
             throw new Error("Voice routing failed")
         }

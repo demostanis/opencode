@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import net from "node:net"
 import { Global } from "@/global"
+import { Log } from "@/util/log"
 import { Installation } from "@/installation"
 import { codexAuthHeaders } from "@/plugin/codex"
 import bridge from "./bridge.py" with { type: "text" }
@@ -11,6 +12,20 @@ import daemon from "./daemon.py" with { type: "text" }
 import { Command, Limits, VoiceEvent } from "./protocol"
 
 export namespace Voice {
+  const log = Log.create({ service: "voice" })
+
+  export function diagnostic(message: string) {
+    if (/^OAuth voice call rejected \(HTTP [1-5]\d{2}\)$/.test(message)) return message
+    if (message === "Microphone capture failed") return message
+    if (
+      /^Voice failure: stage=(startup|models|capture|offer|call|answer|socket|connect|session) error=(TimeoutError|ClientConnectorError|ClientConnectorDNSError|ClientConnectorCertificateError|ClientConnectorSSLError|ClientOSError|ServerDisconnectedError|ServerTimeoutError|WSServerHandshakeError|ClientResponseError|ConnectionResetError|BrokenPipeError|IncompleteReadError|FileNotFoundError|PermissionError|OSError|ValueError|RuntimeError|ModuleNotFoundError|ImportError|Exception)( HTTP=[1-5]\d{2})?$/.test(
+        message,
+      )
+    )
+      return message
+    return "Voice helper failed; check audio devices, installed models and OAuth, then restart voice."
+  }
+
   export interface Options {
     event: (event: VoiceEvent) => void
     signal?: AbortSignal
@@ -151,6 +166,18 @@ export namespace Voice {
 
   export function create(deps: Dependencies) {
     return async function start(opts: Options): Promise<Handle> {
+      const trace = crypto.randomUUID()
+      const started = performance.now()
+      const timing = (event: string, fields: Record<string, string | number | boolean | undefined> = {}) =>
+        log.info("voice.timing", {
+          trace,
+          pid: process.pid,
+          at: Date.now(),
+          ms: Math.round(performance.now() - started),
+          event,
+          ...fields,
+        })
+      timing("startup.begin")
       let socket: net.Socket | undefined
       let closed = false
       let stopping: Promise<void> | undefined
@@ -179,6 +206,7 @@ export namespace Voice {
       }
       function fail(message: string) {
         if (closed) return
+        log.error(message)
         emit({ type: "error", message })
         void stop()
       }
@@ -200,6 +228,11 @@ export namespace Voice {
           if (closed) return
           const parsed = Command.safeParse(command)
           if (!parsed.success) return fail("Invalid voice command; check command fields and text length.")
+          if (command.type !== "context")
+            timing("command." + command.type, {
+              id: "id" in command ? command.id : undefined,
+              final: command.type === "result" ? command.final : undefined,
+            })
           if (parsed.data.type === "stop") return abort()
           enqueue(JSON.stringify(parsed.data) + "\n")
         },
@@ -214,6 +247,7 @@ export namespace Voice {
       try {
         if (closed) return handle
         const prepared = await Promise.race([deps.prepare(), cancel.promise])
+        timing("prepare.done")
         if (closed || !prepared) return handle
         failure = "Unable to connect to voice service; check opencode-voice installation and socket permissions."
         await endpoint(prepared.socket).catch((err: NodeJS.ErrnoException) => {
@@ -222,6 +256,7 @@ export namespace Voice {
         if (closed) return handle
         failure = "Voice authentication failed; run /connect openai and choose ChatGPT Pro/Plus OAuth, then retry."
         const headers = await Promise.race([deps.auth(), cancel.promise])
+        timing("auth.done")
         if (closed || !headers) return handle
         if (!headers.get("authorization")) throw new Error("Missing credentials")
         failure =
@@ -290,8 +325,12 @@ export namespace Voice {
                     phase = "starting"
                     arm()
                     enqueue(
-                      JSON.stringify({ type: "start", headers: Object.fromEntries(headers), cache: prepared.cache }) +
-                        "\n",
+                      JSON.stringify({
+                        type: "start",
+                        headers: Object.fromEntries(headers),
+                        cache: prepared.cache,
+                        timing: true,
+                      }) + "\n",
                     )
                     continue
                   }
@@ -299,14 +338,29 @@ export namespace Voice {
                     if (!value || value.type !== "started" || Object.keys(value).length !== 1)
                       throw new Error("Expected voice started acknowledgement")
                     phase = "ready"
+                    timing("handshake.done")
                     clearTimeout(timer)
                     session.resolve()
                     continue
                   }
                   if (phase !== "ready") throw new Error("Unexpected voice handshake")
                   const event = VoiceEvent.parse(value)
+                  if (event.type === "timing") {
+                    timing("remote." + event.event, {
+                      id: event.id,
+                      role: event.role,
+                      source_at: event.at,
+                      delivery_ms: Date.now() - event.at,
+                    })
+                    continue
+                  }
+                  timing("receive." + event.type, {
+                    id: event.type === "delegate" ? event.id : undefined,
+                    state: event.type === "state" ? event.state : undefined,
+                    role: event.type === "transcript" ? event.role : undefined,
+                  })
                   if (event.type === "error") {
-                    fail("Voice helper failed; check audio devices, installed models and OAuth, then restart voice.")
+                    fail(diagnostic(event.message))
                     continue
                   }
                   if (event.type === "state" && event.state === "off") {
