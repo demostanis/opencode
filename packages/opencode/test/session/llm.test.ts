@@ -16,6 +16,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { Session } from "../../src/session"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { Installation } from "../../src/installation"
 
 describe("session.llm.hasToolCalls", () => {
   test("returns false for empty messages array", () => {
@@ -241,6 +242,74 @@ function createHangingResponse(chunks: unknown[]) {
 }
 
 describe("session.llm.stream", () => {
+  test("sends OpenCode identity on Zen model requests", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hello"), {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            enabled_providers: ["opencode"],
+            provider: {
+              opencode: {
+                options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await Provider.getModel(ProviderID.make("opencode"), ModelID.make("big-pickle"))
+        const sessionID = SessionID.make("session-test-zen")
+        const agent = {
+          name: "build",
+          mode: "primary",
+          ultra_mode_allowed: false,
+          options: {},
+          permission: [],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-zen"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make("opencode"), modelID: model.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID,
+          model,
+          agent,
+          system: ["You are a helpful assistant."],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {},
+        })
+        for await (const _ of stream.fullStream) {
+        }
+
+        const capture = await request
+        expect(capture.headers.get("User-Agent")).toContain(Installation.USER_AGENT)
+        expect(capture.headers.get("x-opencode-session")).toBe(sessionID)
+      },
+    })
+  })
+
   test.each([
     ["anthropic", "claude-3-5-sonnet-20241022", "/messages"],
     ["google", "gemini-2.5-flash", "/models/gemini-2.5-flash:streamGenerateContent"],

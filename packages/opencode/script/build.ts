@@ -12,8 +12,12 @@ const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
 
-import { Script } from "@opencode-ai/script"
 import pkg from "../package.json"
+
+if (!process.env.OPENCODE_VERSION && pkg.version.includes("+demolinux.")) {
+  process.env.OPENCODE_VERSION = pkg.version
+}
+const { Script } = await import("@opencode-ai/script")
 
 const modelsUrl = process.env.OPENCODE_MODELS_URL || "https://models.dev"
 // Fetch and generate models.dev snapshot
