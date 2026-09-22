@@ -47,6 +47,29 @@ describe("plugin.codex", () => {
     expect(CODEX_MODELS.has("gpt-6-astra")).toBe(true)
   })
 
+  test.each(["sol", "luna"])("adds GPT-6 %s when the model catalog is stale", async (name) => {
+    const id = `gpt-6-${name}`
+    expect(CODEX_MODELS.has(id)).toBe(true)
+    const hooks = await CodexAuthPlugin({} as PluginInput)
+    const loader = hooks.auth!.loader!
+    const provider = { models: {} } as Parameters<typeof loader>[1]
+    await loader(
+      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+      provider,
+    )
+
+    expect(provider.models[id]).toMatchObject({
+      id,
+      limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      variants: {
+        medium: { reasoningEffort: "medium" },
+        max: { reasoningEffort: "max" },
+        ultra: { reasoningEffort: "max" },
+      },
+    })
+  })
+
   test("adds GPT-6 Astra when the model catalog is stale", async () => {
     const hooks = await CodexAuthPlugin({} as PluginInput)
     const loader = hooks.auth?.loader

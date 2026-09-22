@@ -2375,6 +2375,20 @@ describe("ProviderTransform.variants", () => {
       expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
 
+    test("gpt-6-sol has the same reasoning variants as gpt-5.6-sol", () => {
+      const variants = ["gpt-5.6-sol", "gpt-6-sol"].map((id) =>
+        ProviderTransform.variants(
+          createMockModel({
+            id,
+            providerID: "openai",
+            api: { id, url: "https://api.openai.com", npm: "@ai-sdk/openai" },
+          }),
+        ),
+      )
+      expect(variants[1]).toEqual(variants[0])
+      expect(Object.keys(variants[1])).toEqual(["medium", "max", "ultra"])
+    })
+
     test("gpt-6-astra exposes high and max efforts with Ultra mode", () => {
       const model = createMockModel({
         id: "gpt-6-astra",

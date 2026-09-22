@@ -29,6 +29,8 @@ export const CODEX_MODELS = new Set<string>([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
 ])
 export const CODEX_WEBSOCKET_MODELS = new Set<string>(["gpt-5.6-luna"])
 export const CODEX_WEBSOCKET_MAX_BYTES = 16 * 1024 * 1024
@@ -524,16 +526,21 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         const auth = await getAuth()
         if (auth.type !== "oauth") return {}
 
-        if (!provider.models["gpt-6-astra"]) {
+        for (const entry of [
+          { id: "gpt-6-astra", name: "GPT-6 Astra", input: 10, output: 50, date: "2026-09-04", family: "gpt-astra" },
+          { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
+          { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, date: "2026-09-22", family: "gpt-luna" },
+        ]) {
+          if (provider.models[entry.id]) continue
           const model = {
-            id: ModelID.make("gpt-6-astra"),
+            id: ModelID.make(entry.id),
             providerID: ProviderID.openai,
             api: {
-              id: "gpt-6-astra",
+              id: entry.id,
               url: "https://chatgpt.com/backend-api/codex",
               npm: "@ai-sdk/openai",
             },
-            name: "GPT-6 Astra",
+            name: entry.name,
             capabilities: {
               temperature: false,
               reasoning: true,
@@ -543,14 +550,18 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
               output: { text: true, audio: false, image: false, video: false, pdf: false },
               interleaved: false,
             },
-            cost: { input: 10, output: 50, cache: { read: 1, write: 12.5 } },
+            cost: {
+              input: entry.input,
+              output: entry.output,
+              cache: { read: entry.input / 10, write: entry.input * 1.25 },
+            },
             limit: { context: 1_050_000, input: 922_000, output: 128_000 },
             status: "active" as const,
             options: {},
             headers: {},
-            release_date: "2026-09-04",
+            release_date: entry.date,
             variants: {} as Record<string, Record<string, unknown>>,
-            family: "gpt-astra",
+            family: entry.family,
           }
           model.variants = ProviderTransform.variants(model)
           provider.models[model.id] = model

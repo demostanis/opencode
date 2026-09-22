@@ -99,8 +99,34 @@ export namespace ModelsDev {
   })
 
   export async function get() {
-    const result = await Data()
-    return result as Record<string, Provider>
+    const result = (await Data()) as Record<string, Provider>
+    if (result.openai) {
+      for (const entry of [
+        { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, family: "gpt-sol" },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, family: "gpt-luna" },
+      ]) {
+        result.openai.models[entry.id] ??= {
+          id: entry.id,
+          name: entry.name,
+          family: entry.family,
+          release_date: "2026-09-22",
+          attachment: true,
+          reasoning: true,
+          temperature: false,
+          tool_call: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+          cost: {
+            input: entry.input,
+            output: entry.output,
+            cache_read: entry.input / 10,
+            cache_write: entry.input * 1.25,
+          },
+          options: {},
+        }
+      }
+    }
+    return result
   }
 
   export async function refresh() {

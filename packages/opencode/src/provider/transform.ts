@@ -334,7 +334,9 @@ export namespace ProviderTransform {
   export function ultra(model: Provider.Model, variant?: string) {
     const supported =
       Object.hasOwn(model.variants ?? {}, "ultra") ||
-      [model.id, model.api.id].some((id) => ["gpt-5.6", "gpt-6-astra"].some((name) => id.toLowerCase().includes(name)))
+      [model.id, model.api.id].some((id) =>
+        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"].some((name) => id.toLowerCase().includes(name)),
+      )
     return variant === undefined ? supported : supported && variant === "ultra"
   }
 
@@ -348,6 +350,8 @@ export namespace ProviderTransform {
   }
 
   function efforts(model: Provider.Model, fallback: string[]) {
+    if ([model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-6-luna")))
+      return ["none", "low", "medium", "high", "xhigh", "max"]
     if ([model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-6-astra"))) return ASTRA_EFFORTS
     return ultra(model) ? GPT_56_EFFORTS : fallback
   }
