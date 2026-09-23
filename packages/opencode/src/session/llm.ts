@@ -161,6 +161,16 @@ export namespace LLM {
       isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
     const tools = await resolveTools(input)
+    // Zen free models reject tool-free requests, including compaction and title generation.
+    const placeholder =
+      input.model.providerID.startsWith("opencode") && input.model.cost.input === 0 && Object.keys(tools).length === 0
+
+    if (placeholder) {
+      tools["_noop"] = tool({
+        description: "Unused placeholder for tool-free OpenCode requests",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+      })
+    }
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -215,7 +225,7 @@ export namespace LLM {
       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
       tools,
-      toolChoice: input.toolChoice,
+      toolChoice: placeholder ? "none" : input.toolChoice,
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {

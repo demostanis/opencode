@@ -311,6 +311,82 @@ describe("session.llm.stream", () => {
   })
 
   test.each([
+    ["free Zen", "opencode", "big-pickle", 0, false],
+    ["free Zen with tools", "opencode", "big-pickle", 0, true],
+    ["paid Zen", "opencode", "big-pickle", 1, false],
+    ["free third-party", "alibaba", "qwen-plus", 0, false],
+  ] as const)("handles %s tool availability", async (_, provider, id, price, enabled) => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hello"), {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      config: {
+        enabled_providers: [provider],
+        provider: {
+          [provider]: {
+            options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` },
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const source = await Provider.getModel(ProviderID.make(provider), ModelID.make(id))
+        const model = { ...source, cost: { ...source.cost, input: price } }
+        const sid = SessionID.make(`session-${provider}-${price}`)
+        const agent = {
+          name: "compaction",
+          mode: "primary",
+          ultra_mode_allowed: false,
+          options: {},
+          permission: [],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make(`user-${provider}-${price}`),
+          sessionID: sid,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(provider), modelID: model.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID: sid,
+          model,
+          agent,
+          system: [],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "Summarize this conversation." }],
+          tools: enabled ? { ping: tool({ description: "Ping", inputSchema: z.object({}) }) } : {},
+        })
+        expect(await stream.text).toBe("Hello")
+
+        const capture = await request
+        const placeholder = provider === "opencode" && price === 0 && !enabled
+        expect(capture.headers.get("x-opencode-session")).toBe(provider === "opencode" ? sid : null)
+        expect(capture.body.tools).toEqual(
+          placeholder
+            ? [expect.objectContaining({ type: "function", function: expect.objectContaining({ name: "_noop" }) })]
+            : enabled
+              ? [expect.objectContaining({ type: "function", function: expect.objectContaining({ name: "ping" }) })]
+              : undefined,
+        )
+        expect(capture.body.tool_choice).toBe(placeholder ? "none" : enabled ? "auto" : undefined)
+      },
+    })
+  })
+
+  test.each([
     ["anthropic", "claude-3-5-sonnet-20241022", "/messages"],
     ["google", "gemini-2.5-flash", "/models/gemini-2.5-flash:streamGenerateContent"],
     ["alibaba", "qwen-plus", "/chat/completions"],
