@@ -1359,27 +1359,30 @@ export function Prompt(props: PromptProps) {
                     <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
                       {selectedModelInfo().model}
                     </text>
-                    <text fg={theme.textMuted}>{selectedModelInfo().provider}</text>
-                    <Show when={speech.focused()}>
-                      <text
-                        fg={speech.active() ? theme.success : theme.textMuted}
-                        flexShrink={0}
-                        onMouseUp={(event) => {
-                          if (event.button !== 0) return
-                          event.stopPropagation()
-                          speech.toggle()
-                        }}
-                      >
-                        (voice)
-                      </text>
-                      <Show when={speech.state() === "starting"}>
-                        <spinner
-                          frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]}
-                          color={theme.textMuted}
-                          interval={80}
-                        />
+                    <box flexDirection="row" gap={1}>
+                      <text fg={theme.textMuted}>{selectedModelInfo().provider}</text>
+                      <Show when={speech.focused()}>
+                        <text fg={theme.textMuted}>·</text>
+                        <text
+                          fg={speech.active() ? theme.success : theme.textMuted}
+                          flexShrink={0}
+                          onMouseUp={(event) => {
+                            if (event.button !== 0) return
+                            event.stopPropagation()
+                            speech.toggle()
+                          }}
+                        >
+                          🎙
+                        </text>
+                        <Show when={speech.state() === "starting"}>
+                          <spinner
+                            frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]}
+                            color={theme.textMuted}
+                            interval={80}
+                          />
+                        </Show>
                       </Show>
-                    </Show>
+                    </box>
                     <For each={badges()}>
                       {(item) => (
                         <>
