@@ -304,7 +304,7 @@ describe("session.llm.stream", () => {
         }
 
         const capture = await request
-        expect(capture.headers.get("User-Agent")).toContain(Installation.USER_AGENT)
+        expect(capture.headers.get("User-Agent")).toContain(Installation.ZEN_USER_AGENT)
         expect(capture.headers.get("x-opencode-session")).toBe(sessionID)
       },
     })
