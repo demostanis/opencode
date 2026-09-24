@@ -107,6 +107,7 @@ async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
 import type { EventSource } from "./context/sdk"
 import { ConnectionProvider, useConnection } from "./context/connection"
 import type { Owner } from "./owner"
+import { resume } from "./resume"
 
 export function tui(input: {
   url: string
@@ -293,6 +294,15 @@ function App() {
 
   const args = useArgs()
   const connection = useConnection()
+  const navigate = (sessionID: string) => {
+    resume({
+      sessionID,
+      fork: args.fork,
+      forkSession: async (id) => (await sdk.client.session.fork({ sessionID: id })).data?.id,
+    })
+      .then((id) => route.navigate({ type: "session", sessionID: id }))
+      .catch(toast.error)
+  }
   onMount(() => {
     batch(() => {
       if (args.agent) local.agent.set(args.agent)
@@ -307,53 +317,27 @@ function App() {
           })
         local.model.set({ providerID, modelID }, { recent: true })
       }
-      // Handle --session without --fork immediately (fork is handled in createEffect below)
-      if (connection.initial && args.sessionID && !args.fork) {
-        route.navigate({
-          type: "session",
-          sessionID: args.sessionID,
-        })
-      }
     })
   })
 
   let continued = false
   createEffect(() => {
     // When using -c, session list is loaded in blocking phase, so we can navigate at "partial"
-    if (continued || !connection.initial || sync.status === "loading" || !args.continue) return
+    if (continued || !connection.initial || sync.status !== "complete" || !args.continue || args.sessionID) return
     const match = sync.data.session
       .toSorted((a, b) => b.time.updated - a.time.updated)
       .find((x) => x.parentID === undefined)?.id
     if (match) {
       continued = true
-      if (args.fork) {
-        sdk.client.session.fork({ sessionID: match }).then((result) => {
-          if (result.data?.id) {
-            route.navigate({ type: "session", sessionID: result.data.id })
-          } else {
-            toast.show({ message: "Failed to fork session", variant: "error" })
-          }
-        })
-      } else {
-        route.navigate({ type: "session", sessionID: match })
-      }
+      navigate(match)
     }
   })
 
-  // Handle --session with --fork: wait for sync to be fully complete before forking
-  // (session list loads in non-blocking phase for --session, so we must wait for "complete"
-  // to avoid a race where reconcile overwrites the newly forked session)
   let forked = false
   createEffect(() => {
-    if (forked || !connection.initial || sync.status !== "complete" || !args.sessionID || !args.fork) return
+    if (forked || !connection.initial || sync.status !== "complete" || !args.sessionID) return
     forked = true
-    sdk.client.session.fork({ sessionID: args.sessionID }).then((result) => {
-      if (result.data?.id) {
-        route.navigate({ type: "session", sessionID: result.data.id })
-      } else {
-        toast.show({ message: "Failed to fork session", variant: "error" })
-      }
-    })
+    navigate(args.sessionID)
   })
 
   createEffect(

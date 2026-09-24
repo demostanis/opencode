@@ -16,7 +16,7 @@ export async function resolve(input: {
   backend: Backend
   owner?: Pick<Owner.Info, "id">
   find?: typeof Owner.find
-}) {
+}): Promise<Backend> {
   const info = await (input.find ?? Owner.find)(input.sessionID)
   if (!info || info.id === input.owner?.id) return input.backend
   return {

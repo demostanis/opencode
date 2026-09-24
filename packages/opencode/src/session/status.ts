@@ -3,6 +3,8 @@ import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { SessionID } from "./schema"
 import z from "zod"
+import { Active } from "./active"
+import { Log } from "@/util/log"
 
 export namespace SessionStatus {
   export const Info = z
@@ -60,6 +62,9 @@ export namespace SessionStatus {
   }
 
   export function set(sessionID: SessionID, status: Info) {
+    Active.set(sessionID, status.type !== "idle")?.catch((err) =>
+      Log.Default.warn("failed to update synced session activity", { sessionID, error: String(err) }),
+    )
     Bus.publish(Event.Status, {
       sessionID,
       status,

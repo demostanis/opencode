@@ -1085,6 +1085,14 @@ export function Session() {
               flexGrow={1}
               scrollAcceleration={scrollAcceleration()}
             >
+              <Show when={session()?.title.endsWith(" (from another host)")}>
+                <box paddingLeft={2} paddingTop={1} paddingBottom={1} backgroundColor={theme.backgroundPanel}>
+                  <text fg={theme.textMuted}>
+                    Conversation transferred from another host. Files, snapshots and worktree may be missing on this
+                    host.
+                  </text>
+                </box>
+              </Show>
               <For each={display()}>
                 {(message, index) => (
                   <Switch>

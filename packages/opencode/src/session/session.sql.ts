@@ -75,6 +75,18 @@ export const PartTable = sqliteTable(
   ],
 )
 
+export const SyncTable = sqliteTable(
+  "session_sync",
+  {
+    machine: text().notNull(),
+    source_id: text().notNull(),
+    local_id: text().notNull(),
+    revision: text().notNull(),
+    baseline: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.machine, table.source_id] })],
+)
+
 export const TodoTable = sqliteTable(
   "todo",
   {

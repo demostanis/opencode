@@ -12,6 +12,7 @@ import { DialogSessionRename } from "./dialog-session-rename"
 import { createDebouncedSignal } from "../util/signal"
 import { Spinner } from "./spinner"
 import { useConnection } from "../context/connection"
+import { useToast } from "../ui/toast"
 
 export function DialogSessionList() {
   const dialog = useDialog()
@@ -21,6 +22,7 @@ export function DialogSessionList() {
   const { theme } = useTheme()
   const sdk = useSDK()
   const connection = useConnection()
+  const toast = useToast()
 
   const [toDelete, setToDelete] = createSignal<string>()
   const [search, setSearch] = createDebouncedSignal("", 150)
@@ -86,7 +88,7 @@ export function DialogSessionList() {
       onSelect={async (option) => {
         dialog.clear()
         const session = sessions().find((item) => item.id === option.value)
-        await connection.open(option.value, session?.directory ?? sdk.directory ?? process.cwd())
+        await connection.open(option.value, session?.directory ?? sdk.directory ?? process.cwd()).catch(toast.error)
       }}
       keybind={[
         {

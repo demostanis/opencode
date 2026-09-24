@@ -230,7 +230,7 @@ export namespace LLM {
       abortSignal: input.abort,
       headers: {
         ...(input.model.providerID.startsWith("opencode") && {
-          "User-Agent": Installation.USER_AGENT,
+          "User-Agent": Installation.ZEN_USER_AGENT,
           "x-opencode-project": Instance.project.id,
           "x-opencode-session": input.sessionID,
           "x-opencode-request": input.user.id,
