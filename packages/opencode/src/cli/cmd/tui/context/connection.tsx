@@ -4,11 +4,11 @@ import { batch, createContext, createSignal, Show, useContext, type ParentProps 
 import { useRoute } from "./route"
 import { SDKProvider } from "./sdk"
 import { SyncProvider } from "./sync"
-import { createOpencodeClient } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type SessionSearchHit } from "@opencode-ai/sdk/v2"
 import { resume } from "../resume"
 
 const ctx = createContext<{
-  open(sessionID: string, directory: string): Promise<void>
+  open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string): Promise<void>
   initial: boolean
 }>()
 
@@ -23,7 +23,7 @@ export function ConnectionProvider(
   const [initial, setInitial] = createSignal(true)
 
   const value = {
-    async open(sessionID: string, directory: string) {
+    async open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string) {
       const next = await resolve({ sessionID, directory, backend: props.backend, owner: props.owner })
       const client = createOpencodeClient({
         baseUrl: next.url,
@@ -35,10 +35,20 @@ export function ConnectionProvider(
         sessionID,
         forkSession: async (id) => (await client.session.fork({ sessionID: id })).data?.id,
       })
+      const match =
+        search && id !== sessionID && query
+          ? (await client.session.search({ sessionID: id, query, limit: 100 }, { throwOnError: true })).data!.find(
+              (hit) =>
+                hit.time === search.time &&
+                hit.type === search.type &&
+                hit.role === search.role &&
+                hit.preview === search.preview,
+            )
+          : search
       batch(() => {
         setInitial(false)
         setBackend(next)
-        route.navigate({ type: "session", sessionID: id })
+        route.navigate({ type: "session", sessionID: id, search: match })
       })
     },
     get initial() {

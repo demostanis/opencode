@@ -64,7 +64,7 @@ describe("conversation search", () => {
     })
   })
 
-  test("indexes replies, reasoning, tool inputs and outputs without synthetic prompts", async () => {
+  test("indexes dialogue, executed commands and read paths without internal tool details", async () => {
     await Instance.provide({
       directory: root,
       fn: async () => {
@@ -91,7 +91,7 @@ describe("conversation search", () => {
           type: "text",
           text: "assistant response needle",
         })
-        const reasoning = await Session.updatePart({
+        await Session.updatePart({
           id: PartID.ascending(),
           sessionID: session.id,
           messageID: message.id,
@@ -118,11 +118,32 @@ describe("conversation search", () => {
         await Session.updatePart({ ...part, id: PartID.ascending(), text: "synthetic needle", synthetic: true })
         await Session.updatePart({ ...part, id: PartID.ascending(), text: "ignored needle", ignored: true })
         const hits = await SessionSearch.search({ sessionID: session.id, query: "needle" })
-        expect(hits.map((hit) => hit.partID).sort()).toEqual([text.id, reasoning.id, tool.id].sort())
+        expect(hits.map((hit) => hit.partID)).toEqual([text.id])
         expect(hits.every((hit) => hit.role === "assistant")).toBe(true)
         expect(await SessionSearch.search({ sessionID: session.id, query: "git status" })).toMatchObject([
           { partID: tool.id, type: "tool", tool: "bash" },
         ])
+        for (const query of ["reasoning needle", "tool output", "Show status", "src/needle.ts"]) {
+          expect(await SessionSearch.search({ sessionID: session.id, query })).toEqual([])
+        }
+        const file = await Session.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: message.id,
+          type: "tool",
+          tool: "read",
+          callID: "read",
+          state: {
+            status: "completed",
+            input: { filePath: "src/reader.ts" },
+            title: "Read source",
+            output: "private implementation detail",
+            metadata: {},
+            time: { start: 2, end: 3 },
+          },
+        })
+        expect(await SessionSearch.search({ query: "reader.ts" })).toMatchObject([{ partID: file.id, tool: "read" }])
+        expect(await SessionSearch.search({ query: "private implementation" })).toEqual([])
         await Session.remove(session.id)
       },
     })
@@ -162,7 +183,7 @@ describe("conversation search", () => {
     })
   })
 
-  test("omits reverted history and rebuilds evicted conversations", async () => {
+  test("searches every conversation, including unopened and reverted history", async () => {
     await Instance.provide({
       directory: root,
       fn: async () => {
@@ -181,7 +202,10 @@ describe("conversation search", () => {
         expect(await SessionSearch.search({ sessionID: sessions[0].id, query: "updated" })).toMatchObject([
           { partID: first.id },
         ])
-        expect(Database.use((db) => db.all(sql`SELECT id FROM part_search_session`))).toHaveLength(4)
+        const hits = await SessionSearch.search({ query: "needle" })
+        expect(new Set(hits.map((hit) => hit.sessionID))).toEqual(new Set(sessions.map((session) => session.id)))
+        expect(hits.some((hit) => hit.partID === second.id)).toBe(false)
+        expect(hits.every((hit) => hit.title && hit.directory === root)).toBe(true)
         for (const session of sessions) await Session.remove(session.id)
       },
     })
@@ -221,6 +245,94 @@ describe("conversation search", () => {
         expect(await SessionSearch.search({ sessionID: session.id, query: "external" })).toMatchObject([
           { partID: part.id },
         ])
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("keeps a persistent cache across connections and reconciles offline edits and deletions", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({ title: "Persistent search" })
+        const part = await user(session.id, "offline original needle")
+        expect(await SessionSearch.search({ query: "original needle" })).toMatchObject([
+          { sessionID: session.id, title: "Persistent search", partID: part.id },
+        ])
+        Database.close()
+        using cache = new SQLite(`${Database.Path}.search-v2`, { readonly: true })
+        expect(
+          cache.query("SELECT part_id FROM part_search WHERE part_search MATCH ?").all('text : "original needle"'),
+        ).toEqual([{ part_id: part.id }])
+        expect(await SessionSearch.search({ query: "original needle" })).toHaveLength(1)
+        Database.close()
+        using db = new SQLite(Database.Path)
+        db.query("UPDATE part SET data = json_set(data, '$.text', ?) WHERE id = ?").run(
+          "offline updated needle",
+          part.id,
+        )
+        expect(await SessionSearch.search({ query: "original needle" })).toEqual([])
+        expect(await SessionSearch.search({ query: "updated needle" })).toMatchObject([{ partID: part.id }])
+        Database.close()
+        db.query("DELETE FROM part WHERE id = ?").run(part.id)
+        expect(await SessionSearch.search({ query: "updated needle" })).toEqual([])
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("includes archived sessions and exposes workspace and conversation labels", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({ title: "Archived project notes" })
+        const part = await user(session.id, "archived global needle")
+        await Session.setArchived({ sessionID: session.id, time: Date.now() })
+        expect(await SessionSearch.search({ query: "global needle" })).toMatchObject([
+          { sessionID: session.id, title: session.title, directory: root, partID: part.id },
+        ])
+        await Session.setTitle({ sessionID: session.id, title: "Renamed notes" })
+        expect(await SessionSearch.search({ query: "global needle" })).toMatchObject([{ title: "Renamed notes" }])
+        await Session.remove(session.id)
+      },
+    })
+  })
+
+  test("reports indexing while background batches prepare the cache", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({})
+        const part = await user(session.id, "indexing needle")
+        await SessionSearch.search({ query: "" })
+        Database.close()
+        using db = new SQLite(Database.Path)
+        const statement = db.query(
+          "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, 1, 1, ?)",
+        )
+        db.transaction(() => {
+          Array.from({ length: 400 }, (_, i) =>
+            statement.run(
+              PartID.ascending(),
+              part.messageID,
+              session.id,
+              JSON.stringify({ type: "text", text: `batch indexing needle ${i}` }),
+            ),
+          )
+        })()
+        statement.finalize()
+        let done = false
+        let seen = false
+        const job = SessionSearch.search({ query: "indexing needle" }).finally(() => {
+          done = true
+        })
+        while (!done) {
+          seen ||= SessionSearch.status().indexing
+          await Bun.sleep(0)
+        }
+        await job
+        expect(seen).toBe(true)
+        expect(SessionSearch.status()).toEqual({ indexing: false })
         await Session.remove(session.id)
       },
     })

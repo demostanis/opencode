@@ -91,6 +91,38 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .get(
+      "/search/status",
+      describeRoute({
+        summary: "Get conversation indexing status",
+        operationId: "session.searchStatus",
+        responses: {
+          200: {
+            description: "Indexing state",
+            content: { "application/json": { schema: resolver(SessionSearch.Status) } },
+          },
+        },
+      }),
+      async (c) => c.json(SessionSearch.status()),
+    )
+    .get(
+      "/search",
+      describeRoute({
+        summary: "Search all conversation contents",
+        description:
+          "Search message contents across all conversations and workspaces using a persistent substring index.",
+        operationId: "session.searchAll",
+        responses: {
+          200: {
+            description: "Matching conversation parts with their conversation and workspace",
+            content: { "application/json": { schema: resolver(SessionSearch.Hit.array()) } },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("query", SessionSearch.Input.omit({ sessionID: true })),
+      async (c) => c.json(await SessionSearch.search(c.req.valid("query"))),
+    )
+    .get(
       "/status",
       describeRoute({
         summary: "Get session status",
@@ -572,7 +604,7 @@ export const SessionRoutes = lazy(() =>
           ...errors(400, 404),
         },
       }),
-      validator("param", SessionSearch.Input.pick({ sessionID: true })),
+      validator("param", SessionSearch.Input.pick({ sessionID: true }).required()),
       validator("query", SessionSearch.Input.omit({ sessionID: true })),
       async (c) => c.json(await SessionSearch.search({ ...c.req.valid("param"), ...c.req.valid("query") })),
     )

@@ -145,8 +145,11 @@ import type {
   SessionQueueResponses,
   SessionRevertErrors,
   SessionRevertResponses,
+  SessionSearchAllErrors,
+  SessionSearchAllResponses,
   SessionSearchErrors,
   SessionSearchResponses,
+  SessionSearchStatusResponses,
   SessionShareErrors,
   SessionShareResponses,
   SessionShellErrors,
@@ -1518,6 +1521,68 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get conversation indexing status
+   */
+  public searchStatus<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionSearchStatusResponses, unknown, ThrowOnError>({
+      url: "/session/search/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Search all conversation contents
+   *
+   * Search message contents across all conversations and workspaces using a persistent substring index.
+   */
+  public searchAll<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      query: string
+      limit?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "query" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionSearchAllResponses, SessionSearchAllErrors, ThrowOnError>({
+      url: "/session/search",
+      ...options,
+      ...params,
     })
   }
 

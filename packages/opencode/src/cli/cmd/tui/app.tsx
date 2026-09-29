@@ -20,6 +20,7 @@ import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
+import { DialogSearch } from "@tui/component/dialog-search"
 import { DialogWorkspaceList } from "@tui/component/dialog-workspace-list"
 import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
@@ -353,6 +354,14 @@ function App() {
 
   const connected = useConnected()
   command.register(() => [
+    {
+      title: "Search all conversations",
+      value: "session.search",
+      keybind: "session_search",
+      category: "Session",
+      slash: { name: "search" },
+      onSelect: () => dialog.replace(() => <DialogSearch />),
+    },
     {
       title: "Switch session",
       value: "session.list",

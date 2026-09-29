@@ -1,6 +1,7 @@
-import { createStore } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../component/prompt/history"
+import type { SessionSearchHit } from "@opencode-ai/sdk/v2"
 
 export type HomeRoute = {
   type: "home"
@@ -12,6 +13,7 @@ export type SessionRoute = {
   type: "session"
   sessionID: string
   initialPrompt?: PromptInfo
+  search?: SessionSearchHit
 }
 
 export type PtyRoute = {
@@ -39,7 +41,7 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
       },
       navigate(route: Route) {
         console.log("navigate", route)
-        setStore(route)
+        setStore(reconcile(route))
       },
     }
   },

@@ -51,3 +51,54 @@ test("session search validates queries and returns bounded previews", async () =
     },
   })
 })
+
+test("global search works without a selected conversation and spans project directories", async () => {
+  await Instance.provide({
+    directory: root,
+    fn: async () => {
+      const sessions = await Promise.all([
+        Session.create({ title: "First workspace" }),
+        Session.create({ title: "Second workspace" }),
+      ])
+      for (const session of sessions) {
+        const message = await Session.updateMessage({
+          id: MessageID.ascending(),
+          sessionID: session.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+        })
+        await Session.updatePart({
+          id: PartID.ascending(),
+          sessionID: session.id,
+          messageID: message.id,
+          type: "text",
+          text: "Global workspace needle",
+        })
+      }
+      const { Database, sql } = await import("../../src/storage/db")
+      Database.use((db) => db.run(sql`UPDATE session SET directory = '/other/workspace' WHERE id = ${sessions[1].id}`))
+      const response = await Server.Default().request("/session/search?query=workspace%20needle")
+      expect(response.status).toBe(200)
+      const hits = await response.json()
+      expect(hits).toHaveLength(2)
+      expect(hits).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionID: sessions[0].id, title: "First workspace", directory: root }),
+          expect.objectContaining({
+            sessionID: sessions[1].id,
+            title: "Second workspace",
+            directory: "/other/workspace",
+          }),
+        ]),
+      )
+      const status = await Server.Default().request("/session/search/status")
+      expect(status.status).toBe(200)
+      expect(await status.json()).toEqual({ indexing: false })
+      expect((await Server.Default().request("/session/search?query=ab")).status).toBe(400)
+      expect((await Server.Default().request("/session/search?query=&limit=101")).status).toBe(400)
+      for (const session of sessions) await Session.remove(session.id)
+    },
+  })
+})

@@ -1761,7 +1761,14 @@ export type McpResource = {
   client: string
 }
 
+export type SessionSearchStatus = {
+  indexing: boolean
+}
+
 export type SessionSearchHit = {
+  sessionID: string
+  title: string
+  directory: string
   messageID: string
   partID: string
   role: "user" | "assistant"
@@ -3052,6 +3059,55 @@ export type SessionCreateResponses = {
 }
 
 export type SessionCreateResponse = SessionCreateResponses[keyof SessionCreateResponses]
+
+export type SessionSearchStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/search/status"
+}
+
+export type SessionSearchStatusResponses = {
+  /**
+   * Indexing state
+   */
+  200: SessionSearchStatus
+}
+
+export type SessionSearchStatusResponse = SessionSearchStatusResponses[keyof SessionSearchStatusResponses]
+
+export type SessionSearchAllData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    workspace?: string
+    query: string
+    limit?: number
+  }
+  url: "/session/search"
+}
+
+export type SessionSearchAllErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type SessionSearchAllError = SessionSearchAllErrors[keyof SessionSearchAllErrors]
+
+export type SessionSearchAllResponses = {
+  /**
+   * Matching conversation parts with their conversation and workspace
+   */
+  200: Array<SessionSearchHit>
+}
+
+export type SessionSearchAllResponse = SessionSearchAllResponses[keyof SessionSearchAllResponses]
 
 export type SessionStatusData = {
   body?: never

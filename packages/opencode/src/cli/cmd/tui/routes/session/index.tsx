@@ -73,7 +73,7 @@ import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
-import { DialogSearch } from "./dialog-search"
+import { DialogSearch } from "@tui/component/dialog-search"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
@@ -288,10 +288,34 @@ export function Session() {
     ),
   )
 
+  createEffect(
+    on(
+      () => route.search,
+      (hit) => {
+        if (!hit || hit.sessionID !== route.sessionID) return
+        const controller = new AbortController()
+        onCleanup(() => controller.abort())
+        sync.session
+          .reveal(route.sessionID, hit.messageID, controller.signal)
+          .then((ready) => {
+            if (!ready || controller.signal.aborted) return
+            setFocus(hit.partID)
+            clearTimeout(jump)
+            jump = setTimeout(() => move(hit), 50)
+          })
+          .catch((err: unknown) => {
+            if (!controller.signal.aborted) toast.error(err)
+          })
+      },
+    ),
+  )
+
   function move(hit: SessionSearchHit) {
     if (!scroll || scroll.isDestroyed) return
-    const id = hit.role === "user" ? hit.messageID : "part-" + hit.partID
-    const child = scroll.getChildren().find((item) => item.id === id)
+    const id = hit.role === "user" ? hit.messageID : (hit.type === "tool" ? "tool-" : "text-") + hit.partID
+    const child = scroll
+      .getChildren()
+      .find((item) => item.id === id || (hit.type === "tool" && item.id.startsWith(id + "-")))
     if (child && child.height > 0) scroll.scrollBy(child.y - scroll.y - 1)
   }
 
@@ -441,13 +465,11 @@ export function Session() {
       },
     },
     {
-      title: "Search conversation",
-      value: "session.search",
-      keybind: "session_search",
+      title: "Find in this conversation",
+      value: "session.find",
       category: "Session",
       slash: {
-        name: "search",
-        aliases: ["find"],
+        name: "find",
       },
       onSelect: (dialog) => {
         dialog.replace(() => (
@@ -1536,14 +1558,12 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
           return (
             <Show when={component()}>
-              <box id={"part-" + part.id} flexShrink={0}>
-                <Dynamic
-                  last={index() === props.parts.length - 1}
-                  component={component()}
-                  part={part as any}
-                  message={props.message}
-                />
-              </box>
+              <Dynamic
+                last={index() === props.parts.length - 1}
+                component={component()}
+                part={part as any}
+                message={props.message}
+              />
             </Show>
           )
         }}
@@ -1890,6 +1910,7 @@ function InlineTool(props: {
 
   return (
     <box
+      id={"tool-" + props.part.id}
       marginTop={margin()}
       paddingLeft={3}
       onMouseOver={() => props.onClick && setHover(true)}
@@ -1941,6 +1962,7 @@ function InlineTool(props: {
 }
 
 function BlockTool(props: {
+  id?: string
   title: string
   children: JSX.Element
   onClick?: () => void
@@ -1953,6 +1975,7 @@ function BlockTool(props: {
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
     <box
+      id={props.id ?? (props.part ? "tool-" + props.part.id : undefined)}
       border={["left"]}
       paddingTop={1}
       paddingBottom={1}
@@ -2365,7 +2388,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
       <Match when={files().length > 0}>
         <For each={files()}>
           {(file) => (
-            <BlockTool title={title(file)} part={props.part}>
+            <BlockTool id={"tool-" + props.part.id + "-" + file.filePath} title={title(file)} part={props.part}>
               <Show
                 when={file.type !== "delete"}
                 fallback={
