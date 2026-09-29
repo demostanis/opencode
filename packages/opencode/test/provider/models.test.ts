@@ -3,6 +3,7 @@ import { ModelsDev } from "../../src/provider/models"
 
 test.each([
   { id: "gpt-6-sol", input: 2, output: 10, read: 0.2, write: 2.5 },
+  { id: "gpt-6.1-sol", input: 2, output: 10, read: 0.2, write: 2.5 },
   { id: "gpt-6-luna", input: 0.1, output: 0.5, read: 0.01, write: 0.125 },
 ])("includes $id in the OpenAI catalog", async (entry) => {
   const catalog = await ModelsDev.get()

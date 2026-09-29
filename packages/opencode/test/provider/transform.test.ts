@@ -2375,8 +2375,8 @@ describe("ProviderTransform.variants", () => {
       expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
 
-    test("gpt-6-sol has the same reasoning variants as gpt-5.6-sol", () => {
-      const variants = ["gpt-5.6-sol", "gpt-6-sol"].map((id) =>
+    test("gpt-6 and gpt-6.1 Sol have the same reasoning variants as gpt-5.6-sol", () => {
+      const variants = ["gpt-5.6-sol", "gpt-6-sol", "gpt-6.1-sol"].map((id) =>
         ProviderTransform.variants(
           createMockModel({
             id,
@@ -2387,6 +2387,7 @@ describe("ProviderTransform.variants", () => {
       )
       expect(variants[1]).toEqual(variants[0])
       expect(Object.keys(variants[1])).toEqual(["medium", "max", "ultra"])
+      expect(variants[2]).toEqual(variants[1])
     })
 
     test("gpt-6-astra exposes high and max efforts with Ultra mode", () => {

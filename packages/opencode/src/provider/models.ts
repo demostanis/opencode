@@ -102,14 +102,15 @@ export namespace ModelsDev {
     const result = (await Data()) as Record<string, Provider>
     if (result.openai) {
       for (const entry of [
-        { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, family: "gpt-sol" },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, family: "gpt-luna" },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", input: 2, output: 10, date: "2026-09-29", family: "gpt-sol" },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, date: "2026-09-22", family: "gpt-luna" },
       ]) {
         result.openai.models[entry.id] ??= {
           id: entry.id,
           name: entry.name,
           family: entry.family,
-          release_date: "2026-09-22",
+          release_date: entry.date,
           attachment: true,
           reasoning: true,
           temperature: false,

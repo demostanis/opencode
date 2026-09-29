@@ -30,6 +30,7 @@ export const CODEX_MODELS = new Set<string>([
   "gpt-5.6-terra",
   "gpt-6-astra",
   "gpt-6-sol",
+  "gpt-6.1-sol",
   "gpt-6-luna",
 ])
 export const CODEX_WEBSOCKET_MODELS = new Set<string>(["gpt-5.6-luna"])
@@ -529,6 +530,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         for (const entry of [
           { id: "gpt-6-astra", name: "GPT-6 Astra", input: 10, output: 50, date: "2026-09-04", family: "gpt-astra" },
           { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
+          { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", input: 2, output: 10, date: "2026-09-29", family: "gpt-sol" },
           { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, date: "2026-09-22", family: "gpt-luna" },
         ]) {
           if (provider.models[entry.id]) continue

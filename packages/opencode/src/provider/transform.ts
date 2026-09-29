@@ -335,7 +335,9 @@ export namespace ProviderTransform {
     const supported =
       Object.hasOwn(model.variants ?? {}, "ultra") ||
       [model.id, model.api.id].some((id) =>
-        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"].some((name) => id.toLowerCase().includes(name)),
+        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"].some((name) =>
+          id.toLowerCase().includes(name),
+        ),
       )
     return variant === undefined ? supported : supported && variant === "ultra"
   }

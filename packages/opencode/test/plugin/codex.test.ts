@@ -47,8 +47,7 @@ describe("plugin.codex", () => {
     expect(CODEX_MODELS.has("gpt-6-astra")).toBe(true)
   })
 
-  test.each(["sol", "luna"])("adds GPT-6 %s when the model catalog is stale", async (name) => {
-    const id = `gpt-6-${name}`
+  test.each(["gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"])("adds %s when the model catalog is stale", async (id) => {
     expect(CODEX_MODELS.has(id)).toBe(true)
     const hooks = await CodexAuthPlugin({} as PluginInput)
     const loader = hooks.auth!.loader!
