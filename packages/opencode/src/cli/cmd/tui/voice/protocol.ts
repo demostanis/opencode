@@ -20,7 +20,28 @@ export const VoiceEvent = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("transcript"), role: z.enum(["user", "assistant"]), text }).strict(),
   z.object({ type: z.literal("delegate"), id, text: text.min(1) }).strict(),
-  z.object({ type: z.literal("error"), message: z.string().min(1).max(Limits.message) }).strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      message: z.string().min(1).max(Limits.message),
+      detail: z
+        .object({
+          source: z.string().regex(/^(?:bridge|daemon|wake)\.py:[0-9]{1,5}$|^unknown$/),
+          reason: z
+            .enum([
+              "Model download failed",
+              "Audio playback failed",
+              "Voice socket failed",
+              "Voice session closed",
+              "Remote voice session closed or expired",
+              "Voice connection ended",
+            ])
+            .nullable(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
 ])
 export type VoiceEvent = z.infer<typeof VoiceEvent>
 

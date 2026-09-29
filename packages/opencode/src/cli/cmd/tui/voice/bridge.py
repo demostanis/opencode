@@ -96,9 +96,26 @@ def failure(stage, err):
     kind = kind if kind in errors else "Exception"
     status = getattr(err, "status", None)
     suffix = f" HTTP={status}" if type(status) is int and 100 <= status <= 599 else ""
+    frames = []
+    trace = err.__traceback__
+    while trace:
+        name = Path(trace.tb_frame.f_code.co_filename).name
+        if name in ("bridge.py", "daemon.py", "wake.py"):
+            frames.append(f"{name}:{trace.tb_lineno}")
+        trace = trace.tb_next
+    reasons = {
+        "Model download failed",
+        "Audio playback failed",
+        "Voice socket failed",
+        "Voice session closed",
+        "Remote voice session closed or expired",
+        "Voice connection ended",
+    }
+    reason = str(err) if type(err) is RuntimeError and str(err) in reasons else None
     return {
         "type": "error",
         "message": f"Voice failure: stage={stage} error={kind}{suffix}",
+        "detail": {"source": frames[-1] if frames else "unknown", "reason": reason},
     }
 
 

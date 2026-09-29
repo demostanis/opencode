@@ -102,8 +102,15 @@ class Tests(unittest.TestCase):
             {
                 "type": "error",
                 "message": "Voice failure: stage=connect error=TimeoutError",
+                "detail": {"source": "unknown", "reason": None},
             },
         )
+        try:
+            raise RuntimeError("secret authorization SDP audio")
+        except RuntimeError as raised:
+            detail = failure("session", raised)
+        self.assertIsNone(detail["detail"]["reason"])
+        self.assertNotIn("secret", json.dumps(detail))
         setattr(err, "status", 503)
         self.assertEqual(
             failure("socket", err)["message"],

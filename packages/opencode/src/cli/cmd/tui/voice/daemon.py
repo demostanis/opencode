@@ -22,6 +22,7 @@ import socket
 import stat
 import struct
 import sys
+import time
 
 sys.dont_write_bytecode = True
 
@@ -506,9 +507,12 @@ class Service:
                 await self.command(client, command)
                 if command["type"] == "stop":
                     break
-        except (ValueError, TypeError, asyncio.QueueFull, TimeoutError):
+        except (ValueError, TypeError, asyncio.QueueFull, TimeoutError) as err:
             client.emit(
-                {"type": "error", "message": "Invalid voice command or input overflow"}
+                {
+                    **bridge.failure("socket", err),
+                    "message": "Invalid voice command or input overflow",
+                }
             )
         except (ConnectionError, OSError):
             pass
@@ -561,13 +565,41 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", required=True)
     parser.add_argument("--cache", required=True)
+    parser.add_argument("--log")
     parser.add_argument("--packaged", action="store_true")
     logging.disable(logging.CRITICAL)
+    args = parser.parse_args()
     try:
-        asyncio.run(main(parser.parse_args()))
+        asyncio.run(main(args))
     except BlockingIOError:
         pass
-    except Exception:
+    except Exception as err:
+        if args.log:
+            info = bridge.failure("startup", err)
+            try:
+                fd = os.open(
+                    args.log,
+                    os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                    0o600,
+                )
+                try:
+                    meta = os.fstat(fd)
+                    if (
+                        not stat.S_ISREG(meta.st_mode)
+                        or meta.st_uid != os.getuid()
+                        or stat.S_IMODE(meta.st_mode) != 0o600
+                    ):
+                        raise ValueError("Unsafe voice log")
+                    os.write(
+                        fd,
+                        (
+                            f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {json.dumps(info)}\n"
+                        ).encode(),
+                    )
+                finally:
+                    os.close(fd)
+            except (OSError, ValueError):
+                pass
         print(
             "Voice service failed; check socket permissions and dependencies",
             file=sys.stderr,

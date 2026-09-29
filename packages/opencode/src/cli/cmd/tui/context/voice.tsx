@@ -247,7 +247,9 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
             timing("prompt.submit")
             return current.voice(event.text)
           })
-          .catch(() => {
+          .catch((err) => {
+            if (!request.controller.signal.aborted)
+              Log.create({ service: "voice" }).error("Voice delegation failed", Voice.detail(err))
             timing(request.controller.signal.aborted ? "delegate.aborted" : "delegate.failed")
             return undefined
           }),
@@ -322,8 +324,9 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
           }
           setHandle(child)
         })
-        .catch(() => {
+        .catch((err) => {
           if (controller !== abort || disposed) return
+          Log.create({ service: "voice" }).error("Voice TUI startup failed", Voice.detail(err))
           recover(
             "Unable to start voice. Check opencode-voice, alsa-utils, audio devices and /connect openai ChatGPT OAuth.",
           )

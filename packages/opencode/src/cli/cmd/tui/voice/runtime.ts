@@ -26,6 +26,23 @@ export namespace Voice {
     return "Voice helper failed; check audio devices, installed models and OAuth, then restart voice."
   }
 
+  export function detail(err: unknown) {
+    if (!(err instanceof Error)) return { error: "unknown" }
+    const code = (err as NodeJS.ErrnoException).code
+    const status = (err as Error & { status?: number }).status
+    return {
+      error: /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(err.name) ? err.name : "Error",
+      code: typeof code === "string" && /^[A-Z][A-Z0-9_]{0,30}$/.test(code) ? code : undefined,
+      status: typeof status === "number" && status >= 100 && status <= 599 ? status : undefined,
+      source: err.stack
+        ?.split("\n")
+        .slice(1)
+        .flatMap((line) => line.match(/\/(?:voice\/(?:runtime|action)\.ts|context\/voice\.tsx):\d+:\d+/)?.[0] ?? [])
+        .at(0)
+        ?.slice(1),
+    }
+  }
+
   export interface Options {
     event: (event: VoiceEvent) => void
     signal?: AbortSignal
@@ -360,6 +377,11 @@ export namespace Voice {
                     role: event.type === "transcript" ? event.role : undefined,
                   })
                   if (event.type === "error") {
+                    log.error("Voice helper failure", {
+                      message: diagnostic(event.message),
+                      source: event.detail?.source,
+                      reason: event.detail?.reason,
+                    })
                     fail(diagnostic(event.message))
                     continue
                   }
@@ -369,7 +391,8 @@ export namespace Voice {
                   }
                   emit(event)
                 }
-              } catch {
+              } catch (err) {
+                log.error("Voice service output failed", detail(err))
                 reject(new Error("Invalid or unexpected voice service output"))
               }
             })
@@ -404,6 +427,8 @@ export namespace Voice {
                   prepared.socket,
                   "--cache",
                   prepared.cache,
+                  "--log",
+                  path.join(Global.Path.log, "voice.log"),
                   ...(prepared.packaged ? ["--packaged"] : []),
                 ],
                 { cwd: prepared.cwd, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true },
@@ -417,6 +442,7 @@ export namespace Voice {
           }
         }
       } catch (err) {
+        log.error("Voice startup failed", { stage: failure, ...detail(err) })
         const message =
           failure.startsWith("Unable to prepare") &&
           err instanceof Error &&

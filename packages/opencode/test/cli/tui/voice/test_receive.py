@@ -37,9 +37,13 @@ class ReceiveTests(unittest.IsolatedAsyncioTestCase):
             await run(
                 {}, asyncio.Queue(), loaded=[], capture=Capture(), output=events.append
             )
-        self.assertIn(
-            {"type": "error", "message": "Voice failure: stage=offer error=Exception"},
-            events,
+        self.assertTrue(
+            any(
+                event["type"] == "error"
+                and event["message"] == "Voice failure: stage=offer error=Exception"
+                and event["detail"]["source"].startswith("bridge.py:")
+                for event in events
+            )
         )
         self.assertEqual(peer.connectionState, "closed")
         self.assertFalse(remote._queue._getters)

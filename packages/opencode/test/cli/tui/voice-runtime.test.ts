@@ -113,6 +113,13 @@ describe("voice protocol", () => {
     expect(VoiceEvent.safeParse({ type: "transcript", role: "user", text: "bonjour" }).success).toBe(true)
     expect(VoiceEvent.safeParse({ type: "delegate", id: "a", text: "work" }).success).toBe(true)
     expect(VoiceEvent.safeParse({ type: "error", message: "failure" }).success).toBe(true)
+    expect(
+      VoiceEvent.safeParse({
+        type: "error",
+        message: "failure",
+        detail: { source: "bridge.py:688", reason: "Voice session closed" },
+      }).success,
+    ).toBe(true)
     for (const type of ["stop", "mute", "wake"]) expect(Command.safeParse({ type }).success).toBe(true)
     expect(Command.safeParse({ type: "context", text: "" }).success).toBe(true)
     expect(Command.safeParse({ type: "result", id: "a", text: "", final: false }).success).toBe(true)
@@ -136,6 +143,8 @@ describe("voice protocol", () => {
       { type: "transcript", role: "user", text: "x".repeat(Limits.text + 1) },
       { type: "delegate", id: "a", text: "" },
       { type: "error", message: "x".repeat(Limits.message + 1) },
+      { type: "error", message: "failure", detail: { source: "private data", reason: null } },
+      { type: "error", message: "failure", detail: { source: "bridge.py:688", reason: secret } },
       null,
     ])
       expect(VoiceEvent.safeParse(value).success).toBe(false)
@@ -143,6 +152,22 @@ describe("voice protocol", () => {
 })
 
 describe("voice runtime", () => {
+  test("keeps helper failure detail out of UI events", async () => {
+    const message = "Voice failure: stage=session error=RuntimeError"
+    await using ctx = await fixture(
+      `client.write(${JSON.stringify(JSON.stringify({ type: "error", message, detail: { source: "bridge.py:688", reason: "Voice session closed" } }) + "\n")}); return`,
+    )
+    await until(() => ctx.events.some((event) => event.type === "error"))
+    expect(ctx.events).toContainEqual({ type: "error", message })
+    expect(JSON.stringify(ctx.events)).not.toContain("Voice session closed")
+  })
+
+  test("omits untrusted exception messages from local diagnostics", () => {
+    const err = new Error(secret)
+    err.name = secret
+    expect(JSON.stringify(Voice.detail(err))).not.toContain(secret)
+  })
+
   test.each([
     "OAuth voice call rejected (HTTP 429)",
     "Microphone capture failed",
