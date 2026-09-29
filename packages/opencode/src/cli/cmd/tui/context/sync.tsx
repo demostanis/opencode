@@ -32,6 +32,7 @@ import type { Path } from "@opencode-ai/sdk"
 import { Pty } from "@/pty"
 import type { Workspace } from "@opencode-ai/sdk/v2"
 import { tree } from "./session-tree"
+import { retain } from "../routes/session/messages"
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -114,6 +115,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const sdk = useSDK()
     const kv = useKV()
+    const pinned = new Map<string, Set<string>>()
+    let revision = 0
     const [autoaccept] = kv.signal<"none" | "edit" | "yolo" | "autoreject">("permission_auto_accept", "edit")
 
     async function syncWorkspaces() {
@@ -234,6 +237,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
 
         case "session.deleted": {
+          pinned.delete(event.properties.info.id)
           const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
             setStore(
@@ -283,25 +287,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               draft.splice(result.index, 0, event.properties.info)
             }),
           )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
-              setStore(
-                "part",
-                produce((draft) => {
-                  delete draft[oldest.id]
-                }),
-              )
-            })
-          }
+          trim(event.properties.info.sessionID)
           break
         }
         case "message.removed": {
@@ -437,6 +423,23 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       )
     }
 
+    function trim(id: string) {
+      const messages = store.message[id] ?? []
+      const kept = retain(messages, pinned.get(id) ?? new Set<string>())
+      if (kept.length === messages.length) return
+      const ids = new Set(kept.map((msg) => msg.id))
+      const removed = messages.filter((msg) => !ids.has(msg.id)).map((msg) => msg.id)
+      batch(() => {
+        setStore("message", id, reconcile(kept))
+        setStore(
+          "part",
+          produce((draft) => {
+            removed.forEach((mid) => delete draft[mid])
+          }),
+        )
+      })
+    }
+
     async function bootstrap() {
       console.log("bootstrapping")
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
@@ -528,6 +531,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const fullSyncedSessions = new Set<string>()
+    const loading = new Map<string, Promise<void>>()
     const result = {
       data: store,
       set: setStore,
@@ -539,6 +543,45 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
 
       session: {
+        async reveal(id: string, mid: string, signal?: AbortSignal) {
+          const ticket = ++revision
+          await result.session.sync(id)
+          if (disposed || ticket !== revision || signal?.aborted) return false
+          const loaded = store.message[id] ?? []
+          const existing = loaded.find((msg) => msg.id === mid)
+          const fetched = existing
+            ? undefined
+            : (
+                await sdk.client.session.message(
+                  { sessionID: id, messageID: mid },
+                  { throwOnError: true, ...(signal ? { signal } : {}) },
+                )
+              ).data!
+          const message = existing ?? fetched!.info
+          const parent =
+            message.role === "assistant" && !loaded.some((msg) => msg.id === message.parentID)
+              ? (
+                  await sdk.client.session.message(
+                    { sessionID: id, messageID: message.parentID },
+                    { throwOnError: false, ...(signal ? { signal } : {}) },
+                  )
+                ).data
+              : undefined
+          if (disposed || ticket !== revision || signal?.aborted) return false
+          const items = [fetched, parent].filter((item) => item !== undefined)
+          pinned.set(id, new Set([mid, ...(message.role === "assistant" ? [message.parentID] : [])]))
+          batch(() => {
+            items.forEach((item) => {
+              const messages = store.message[id] ?? []
+              const match = Binary.search(messages, item.info.id, (msg) => msg.id)
+              if (match.found) return
+              setStore("message", id, [...messages.slice(0, match.index), item.info, ...messages.slice(match.index)])
+              setStore("part", item.info.id, reconcile(item.parts))
+            })
+            trim(id)
+          })
+          return true
+        },
         get(sessionID: string) {
           const match = Binary.search(store.session, sessionID, (s) => s.id)
           if (match.found) return store.session[match.index]
@@ -554,34 +597,40 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
-        async sync(sessionID: string) {
-          if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff] = await Promise.all([
-            sdk.client.session.get({ sessionID }, { throwOnError: true }),
-            sdk.client.session.messages({ sessionID, limit: 100 }),
-            sdk.client.session.todo({ sessionID }),
-            sdk.client.session.diff({ sessionID }),
-          ])
-          const family = await tree(
-            session.data!,
-            (id) => sdk.client.session.get({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
-            (id) => sdk.client.session.children({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
-          )
-          sessions(family)
-          setStore(
-            produce((draft) => {
-              const match = Binary.search(draft.session, sessionID, (s) => s.id)
-              if (match.found) draft.session[match.index] = session.data!
-              if (!match.found) draft.session.splice(match.index, 0, session.data!)
-              draft.todo[sessionID] = todo.data ?? []
-              draft.message[sessionID] = messages.data!.map((x) => x.info)
-              for (const message of messages.data!) {
-                draft.part[message.info.id] = message.parts
-              }
-              draft.session_diff[sessionID] = diff.data ?? []
-            }),
-          )
-          fullSyncedSessions.add(sessionID)
+        sync(sessionID: string): Promise<void> {
+          if (fullSyncedSessions.has(sessionID)) return Promise.resolve()
+          const pending = loading.get(sessionID)
+          if (pending) return pending
+          const job = (async () => {
+            const [session, messages, todo, diff] = await Promise.all([
+              sdk.client.session.get({ sessionID }, { throwOnError: true }),
+              sdk.client.session.messages({ sessionID, limit: 100 }),
+              sdk.client.session.todo({ sessionID }),
+              sdk.client.session.diff({ sessionID }),
+            ])
+            const family = await tree(
+              session.data!,
+              (id) => sdk.client.session.get({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
+              (id) => sdk.client.session.children({ sessionID: id }, { throwOnError: true }).then((x) => x.data!),
+            )
+            sessions(family)
+            setStore(
+              produce((draft) => {
+                const match = Binary.search(draft.session, sessionID, (s) => s.id)
+                if (match.found) draft.session[match.index] = session.data!
+                if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                draft.todo[sessionID] = todo.data ?? []
+                draft.message[sessionID] = messages.data!.map((x) => x.info)
+                for (const message of messages.data!) {
+                  draft.part[message.info.id] = message.parts
+                }
+                draft.session_diff[sessionID] = diff.data ?? []
+              }),
+            )
+            fullSyncedSessions.add(sessionID)
+          })().finally(() => loading.delete(sessionID))
+          loading.set(sessionID, job)
+          return job
         },
       },
       workspace: {

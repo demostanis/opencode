@@ -21,6 +21,7 @@ import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Collaboration } from "@/tool/collaboration"
 import { Btw } from "@/session/btw"
+import { SessionSearch } from "@/session/search"
 
 const log = Log.create({ service: "server" })
 
@@ -556,6 +557,24 @@ export const SessionRoutes = lazy(() =>
         await SessionPrompt.loop({ sessionID })
         return c.json(true)
       },
+    )
+    .get(
+      "/:sessionID/search",
+      describeRoute({
+        summary: "Search conversation contents",
+        description: "Search the full conversation using a case-insensitive, literal substring index.",
+        operationId: "session.search",
+        responses: {
+          200: {
+            description: "Recently stored matching conversation parts with previews",
+            content: { "application/json": { schema: resolver(SessionSearch.Hit.array()) } },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", SessionSearch.Input.pick({ sessionID: true })),
+      validator("query", SessionSearch.Input.omit({ sessionID: true })),
+      async (c) => c.json(await SessionSearch.search({ ...c.req.valid("param"), ...c.req.valid("query") })),
     )
     .get(
       "/:sessionID/message",

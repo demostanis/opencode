@@ -8,6 +8,7 @@ import {
   Index,
   Match,
   on,
+  onCleanup,
   onMount,
   Show,
   Switch,
@@ -32,7 +33,15 @@ import {
   rgbToHex,
 } from "@opentui/core"
 import { Prompt, type PromptRef } from "@tui/component/prompt"
-import type { AssistantMessage, Part, ToolPart, UserMessage, TextPart, ReasoningPart } from "@opencode-ai/sdk/v2"
+import type {
+  AssistantMessage,
+  Part,
+  ToolPart,
+  UserMessage,
+  TextPart,
+  ReasoningPart,
+  SessionSearchHit,
+} from "@opencode-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
 import type { Tool } from "@/tool/tool"
@@ -64,6 +73,7 @@ import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
+import { DialogSearch } from "./dialog-search"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
@@ -104,6 +114,7 @@ const context = createContext<{
   width: number
   sessionID: string
   conceal: () => boolean
+  focus: () => string | undefined
   showThinking: () => boolean
   showTimestamps: () => boolean
   showDetails: () => boolean
@@ -180,6 +191,7 @@ export function Session() {
   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
   const [sidebarOpen, setSidebarOpen] = createSignal(false)
   const [conceal, setConceal] = createSignal(true)
+  const [focus, setFocus] = createSignal<string>()
   const [showThinking, setShowThinking] = kv.signal("thinking_visibility", true)
   const [timestamps, setTimestamps] = kv.signal<"hide" | "show">("timestamps", "hide")
   const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
@@ -267,6 +279,21 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
   const exit = useExit()
+  let jump: Timer | undefined
+  onCleanup(() => clearTimeout(jump))
+  createEffect(
+    on(
+      () => route.sessionID,
+      () => setFocus(undefined),
+    ),
+  )
+
+  function move(hit: SessionSearchHit) {
+    if (!scroll || scroll.isDestroyed) return
+    const id = hit.role === "user" ? hit.messageID : "part-" + hit.partID
+    const child = scroll.getChildren().find((item) => item.id === id)
+    if (child && child.height > 0) scroll.scrollBy(child.y - scroll.y - 1)
+  }
 
   useKeyboard((evt) => {
     if (editable() || permissions().length > 0 || questions().length > 0 || dialog.stack.length > 0) return
@@ -411,6 +438,32 @@ export function Session() {
       },
       onSelect: (dialog) => {
         dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
+      },
+    },
+    {
+      title: "Search conversation",
+      value: "session.search",
+      keybind: "session_search",
+      category: "Session",
+      slash: {
+        name: "search",
+        aliases: ["find"],
+      },
+      onSelect: (dialog) => {
+        dialog.replace(() => (
+          <DialogSearch
+            sessionID={route.sessionID}
+            onMove={move}
+            onSelect={(hit) => {
+              setFocus(hit.partID)
+              const id = route.sessionID
+              clearTimeout(jump)
+              jump = setTimeout(() => {
+                if (route.sessionID === id) move(hit)
+              }, 50)
+            }}
+          />
+        ))
       },
     },
     {
@@ -1052,6 +1105,7 @@ export function Session() {
         },
         sessionID: route.sessionID,
         conceal,
+        focus,
         showThinking,
         showTimestamps,
         showDetails,
@@ -1263,7 +1317,10 @@ function UserMessage(props: {
 }) {
   const ctx = use()
   const local = useLocal()
-  const text = createMemo(() => props.parts.flatMap((x) => (x.type === "text" && !x.synthetic ? [x] : []))[0])
+  const text = createMemo(() => {
+    const parts = props.parts.flatMap((part) => (part.type === "text" && !part.synthetic ? [part] : []))
+    return parts.find((part) => part.id === ctx.focus()) ?? parts[0]
+  })
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
   const sync = useSync()
   const { theme } = useTheme()
@@ -1479,12 +1536,14 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
           return (
             <Show when={component()}>
-              <Dynamic
-                last={index() === props.parts.length - 1}
-                component={component()}
-                part={part as any}
-                message={props.message}
-              />
+              <box id={"part-" + part.id} flexShrink={0}>
+                <Dynamic
+                  last={index() === props.parts.length - 1}
+                  component={component()}
+                  part={part as any}
+                  message={props.message}
+                />
+              </box>
             </Show>
           )
         }}
@@ -1566,7 +1625,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
     return props.part.text.replace("[REDACTED]", "").trim()
   })
   return (
-    <Show when={content() && ctx.showThinking()}>
+    <Show when={content() && (ctx.showThinking() || ctx.focus() === props.part.id)}>
       <box
         id={"text-" + props.part.id}
         paddingLeft={2}
@@ -1630,6 +1689,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
 
   // Hide tool if showDetails is false and tool completed successfully
   const shouldHide = createMemo(() => {
+    if (ctx.focus() === props.part.id) return false
     if (ctx.showDetails()) return false
     if (props.part.state.status !== "completed") return false
     return true
@@ -1755,7 +1815,7 @@ function GenericTool(props: ToolProps<any>) {
 
   return (
     <Show
-      when={props.output && ctx.showGenericToolOutput()}
+      when={props.output && (ctx.showGenericToolOutput() || ctx.focus() === props.part.id)}
       fallback={
         <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
           {Locale.titlecase(props.tool)} {input(props.input)}

@@ -1761,6 +1761,16 @@ export type McpResource = {
   client: string
 }
 
+export type SessionSearchHit = {
+  messageID: string
+  partID: string
+  role: "user" | "assistant"
+  type: "text" | "reasoning" | "tool"
+  tool: string | null
+  time: number
+  preview: string
+}
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -3470,6 +3480,42 @@ export type SessionSummarizeResponses = {
 }
 
 export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSummarizeResponses]
+
+export type SessionSearchData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query: {
+    directory?: string
+    workspace?: string
+    query: string
+    limit?: number
+  }
+  url: "/session/{sessionID}/search"
+}
+
+export type SessionSearchErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionSearchError = SessionSearchErrors[keyof SessionSearchErrors]
+
+export type SessionSearchResponses = {
+  /**
+   * Recently stored matching conversation parts with previews
+   */
+  200: Array<SessionSearchHit>
+}
+
+export type SessionSearchResponse = SessionSearchResponses[keyof SessionSearchResponses]
 
 export type SessionMessagesData = {
   body?: never

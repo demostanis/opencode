@@ -10,6 +10,7 @@ import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
+import { highlight } from "@/util/search"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -21,6 +22,8 @@ export interface DialogSelectProps<T> {
   onFilter?: (query: string) => void
   onSelect?: (option: DialogSelectOption<T>) => void
   skipFilter?: boolean
+  empty?: string
+  highlight?: string
   keybind?: {
     keybind?: Keybind.Info
     title: string
@@ -268,7 +271,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         when={grouped().length > 0}
         fallback={
           <box paddingLeft={4} paddingRight={4} paddingTop={1}>
-            <text fg={theme.textMuted}>No results found</text>
+            <text fg={theme.textMuted}>{props.empty ?? "No results found"}</text>
           </box>
         }
       >
@@ -322,6 +325,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                       >
                         <Option
                           title={option.title}
+                          highlight={props.highlight}
                           footer={flatten() ? (option.category ?? option.footer) : option.footer}
                           description={option.description !== category ? option.description : undefined}
                           active={active()}
@@ -357,6 +361,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
 function Option(props: {
   title: string
+  highlight?: string
   description?: string
   active?: boolean
   current?: boolean
@@ -387,7 +392,15 @@ function Option(props: {
         wrapMode="none"
         paddingLeft={3}
       >
-        {Locale.truncate(props.title, 61)}
+        <Show when={props.highlight} fallback={Locale.truncate(props.title, 61)}>
+          <For each={highlight(Locale.truncate(props.title, 61), props.highlight)}>
+            {(item) => (
+              <span style={item.match ? { fg: props.active ? fg : theme.accent, bold: true, underline: true } : {}}>
+                {item.text}
+              </span>
+            )}
+          </For>
+        </Show>
         <Show when={props.description}>
           <span style={{ fg: props.active ? fg : theme.textMuted }}> {props.description}</span>
         </Show>

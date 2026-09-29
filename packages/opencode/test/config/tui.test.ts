@@ -4,6 +4,7 @@ import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { TuiConfig } from "../../src/config/tui"
+import { Config } from "../../src/config/config"
 import { Global } from "../../src/global"
 import { Filesystem } from "../../src/util/filesystem"
 
@@ -13,6 +14,15 @@ test("voice can be disabled explicitly without requiring a slash command", () =>
   expect(TuiConfig.Info.parse({ voice: false }).voice).toBe(false)
   expect(TuiConfig.Info.parse({ voice: true }).voice).toBe(true)
   expect(TuiConfig.Info.parse({}).voice).toBeUndefined()
+})
+
+test("conversation search has a configurable shortcut without stealing prompt navigation", () => {
+  const binds = Config.Keybinds.parse({})
+  expect(binds.session_search).toBe("<leader>f")
+  expect(binds.input_move_right).toContain("ctrl+f")
+  expect(TuiConfig.Info.parse({ keybinds: { session_search: "ctrl+shift+f" } }).keybinds?.session_search).toBe(
+    "ctrl+shift+f",
+  )
 })
 
 afterEach(async () => {
