@@ -65,7 +65,7 @@ function response() {
 }
 
 describe("tool.image", () => {
-  test.each([undefined, "gpt-image-2", "gpt-image-1.5"] as const)(
+  test.each([undefined, "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1.5"] as const)(
     "routes transparent backgrounds for model %s without switching models",
     async (model) => {
       let body: unknown
@@ -87,7 +87,7 @@ describe("tool.image", () => {
       expect(body).toMatchObject({
         tools: [
           {
-            model: model ?? "gpt-image-2",
+            model: model ?? "gpt-image-2.5-flare",
             background: model === "gpt-image-1.5" ? "transparent" : "auto",
             output_format: "png",
           },
@@ -104,6 +104,46 @@ describe("tool.image", () => {
           },
         ],
       })
+    },
+  )
+
+  test("defaults to Flare in the request and result", async () => {
+    await auth(async () => {
+      await intercept(
+        async (_input, init) => {
+          expect(JSON.parse(init?.body as string)).toMatchObject({
+            tools: [{ model: "gpt-image-2.5-flare" }],
+          })
+          return response()
+        },
+        async () => {
+          const tool = await ImageGenerateTool.init()
+          const result = await tool.execute({ prompt: "A red circle", short_name: "test" }, ctx)
+          expect(result.metadata.files[0].model).toBe("gpt-image-2.5-flare")
+        },
+      )
+    })
+  })
+
+  test.each(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"] as const)(
+    "passes model %s through to image generation",
+    async (model) => {
+      let body: unknown
+      await auth(async () => {
+        await intercept(
+          async (_input, init) => {
+            body = JSON.parse(init?.body as string)
+            return response()
+          },
+          async () => {
+            const tool = await ImageGenerateTool.init()
+            expect(tool.parameters.shape.model.safeParse(model).success).toBe(true)
+            const result = await tool.execute({ prompt: "A red circle", short_name: "test", model }, ctx)
+            expect(result.metadata.files[0].model).toBe(model)
+          },
+        )
+      })
+      expect(body).toMatchObject({ tools: [{ type: "image_generation", model }] })
     },
   )
 

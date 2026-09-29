@@ -10,7 +10,7 @@ Generates or edits images for the current project, for example website assets, g
 ## Top-level rules
 
 - Use the built-in `image_generate` tool by default for image generation, editing, and transparent-image requests. It uses Codex/ChatGPT auth and does not require `OPENAI_API_KEY`.
-- For transparent images, request a genuinely transparent background and preserve the generated alpha. Do not silently switch to `gpt-image-1.5`; ask first unless the user explicitly requested that model.
+- For transparent images, request a genuinely transparent background and preserve the generated alpha. Do not switch to an older model just for transparency.
 - Every edit must attach its source, and every reference-driven generation must attach its references, through exactly one of `reference_image` or `reference_images`; prompt text and `Input images` scaffolding never attach files.
 - Do not describe or rely on OS temp as the default destination. Built-in outputs are saved under opencode's generated-images data directory.
 - Do not describe or rely on a destination-path argument on the built-in tool. If a specific location is needed, generate first and then move or copy the selected output.
@@ -106,11 +106,11 @@ Execution strategy:
 
 ## Transparent image requests
 
-Ask built-in `image_generate` for a genuinely transparent background and preserve its alpha. Use `gpt-image-2` by default, including for glass, steam, hair, fur, and other complex cutouts. Do not default to chroma-key generation or local background removal.
+Ask built-in `image_generate` for a genuinely transparent background and preserve its alpha. Use `gpt-image-2.5-flare` by default, including for complex cutouts; reserve `gpt-image-2.5-sunburst` for demanding edits. Do not default to chroma-key generation or local background removal.
 
 Default sequence:
 
-1. Request real alpha transparency in the prompt. Omit `background` or leave it `auto` for `gpt-image-2`: the backend rejects its explicit `background=transparent` parameter. The local tool also translates that combination into a transparency prompt with `background=auto`.
+1. Request real alpha transparency in the prompt. For 2.5 models, omit `background` or leave it `auto`; if set to `transparent`, the local tool adds a transparency instruction to the prompt and sends `background=auto` to the backend.
 2. Use PNG (default) or WebP, not JPEG, to preserve alpha.
 3. Validate actual alpha values, not just an RGBA mode or a checkerboard-looking preview. Check transparent background regions and plausible subject opacity; partial alpha is expected for smooth edges and translucent materials.
 4. For complex cutouts, inspect the result over contrasting backgrounds for halos, opaque holes, and lost detail. An alpha channel alone does not prove cutout quality.
@@ -244,8 +244,9 @@ Constraints: change only the background; keep the product and its edges unchange
 
 ## Model guidance
 
-- Use `gpt-image-2` by default.
-- Ask before switching to `gpt-image-1.5` unless the user explicitly requested that model. Transparent output does not by itself require switching away from built-in `gpt-image-2`.
+- Omit `model` for lightweight `gpt-image-2.5-flare` generation and edits by default, or select it explicitly.
+- Use `gpt-image-2.5-sunburst` only for precision, detailed premium output, or demanding edits.
+- Treat `gpt-image-2` and `gpt-image-1.5` as optional compatibility fallbacks, not defaults. Ask before switching to an older model unless the user requested it.
 - Use `quality: low` for fast drafts, thumbnails, and quick iterations.
 - Use `quality: medium`, `high`, or `auto` for final assets, dense text, diagrams, identity-sensitive edits, or high-resolution outputs.
 - Square images are typically fastest to generate. Use `1024x1024` for fast square drafts.

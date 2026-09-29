@@ -16,6 +16,7 @@ type ImageItem = {
 }
 
 const ORCHESTRATOR_MODEL = "gpt-5.5"
+const DEFAULT_MODEL = "gpt-image-2.5-flare"
 const OutputFormat = z.enum(["png", "jpeg", "webp"])
 
 function safeName(value: string | undefined, fallback: string) {
@@ -171,7 +172,7 @@ async function collectImage(response: Response): Promise<ImageItem> {
 
 export const ImageGenerateTool = Tool.define("image_generate", {
   description:
-    "Generate or edit an image using the OpenAI Codex/ChatGPT image generation tool. Request genuinely transparent backgrounds in the prompt and preserve the generated alpha. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
+    "Generate or edit an image using the OpenAI Codex/ChatGPT image generation tool. Default to fast GPT Image 2.5 Flare for most work; choose 2.5 Sunburst for premium detail, precise edits, or demanding creative work. Request genuinely transparent backgrounds in the prompt and preserve the generated alpha. Requires OpenAI ChatGPT Pro/Plus OAuth auth.",
   parameters: z
     .object({
       prompt: z.string().describe("Detailed image prompt describing the desired image"),
@@ -190,9 +191,11 @@ export const ImageGenerateTool = Tool.define("image_generate", {
           "Optional ordered reference images: local PNG, JPEG, GIF, or WebP paths; HTTPS image URLs; or matching data:image/<format>;base64 URLs. Do not provide with reference_image.",
         ),
       model: z
-        .enum(["gpt-image-2", "gpt-image-1.5"])
+        .enum(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1.5"])
         .optional()
-        .describe("Image generation model (defaults to gpt-image-2)"),
+        .describe(
+          "Defaults to gpt-image-2.5-flare (fast, general-purpose). Use gpt-image-2.5-sunburst for premium detail or precise editing; older models are compatibility options.",
+        ),
       size: z
         .string()
         .optional()
@@ -202,7 +205,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
         .enum(["auto", "opaque", "transparent"])
         .optional()
         .describe(
-          "Background mode (defaults to auto). Prefer requesting genuine transparency in the prompt. For gpt-image-2, transparent is translated into a prompt instruction with background auto; gpt-image-1.5 receives it directly.",
+          "Background mode (defaults to auto). Prefer requesting genuine transparency in the prompt. For gpt-image-2 and 2.5, transparent is translated into a prompt instruction with background auto; gpt-image-1.5 receives it directly.",
         ),
       output_format: OutputFormat.optional().describe("Output image format (defaults to png)"),
       output_compression: z
@@ -221,7 +224,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
     if (params.background === "transparent" && params.output_format === "jpeg") {
       throw new Error("Transparent images require PNG or WebP output, not JPEG")
     }
-    const transparent = params.background === "transparent" && (params.model ?? "gpt-image-2") === "gpt-image-2"
+    const transparent = params.background === "transparent" && params.model !== "gpt-image-1.5"
     const prompt = transparent
       ? `${params.prompt}\nReturn a genuinely transparent background with real alpha, not a painted checkerboard or solid color. Preserve fine edges and partial transparency.`
       : params.prompt
@@ -257,7 +260,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
         tools: [
           {
             type: "image_generation",
-            model: params.model || "gpt-image-2",
+            model: params.model || DEFAULT_MODEL,
             size: params.size || "auto",
             quality: params.quality || "auto",
             background: transparent ? "auto" : params.background || "auto",
@@ -292,7 +295,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
       mime,
       prompt: params.prompt,
       revisedPrompt: item.revised_prompt,
-      model: params.model || "gpt-image-2",
+      model: params.model || DEFAULT_MODEL,
       shortName: params.short_name,
     }
     return {
