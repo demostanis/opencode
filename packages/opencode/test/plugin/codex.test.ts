@@ -57,16 +57,18 @@ describe("plugin.codex", () => {
       provider,
     )
 
+    const effort = id === "gpt-6.1-sol" ? "high" : "medium"
     expect(provider.models[id]).toMatchObject({
       id,
       limit: { context: 1_050_000, input: 922_000, output: 128_000 },
       cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
       variants: {
-        medium: { reasoningEffort: "medium" },
+        [effort]: { reasoningEffort: effort },
         max: { reasoningEffort: "max" },
         ultra: { reasoningEffort: "max" },
       },
     })
+    if (id === "gpt-6.1-sol") expect(provider.models[id]).not.toHaveProperty("variants.medium")
   })
 
   test("adds GPT-6 Astra when the model catalog is stale", async () => {

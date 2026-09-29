@@ -2375,8 +2375,8 @@ describe("ProviderTransform.variants", () => {
       expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
 
-    test("gpt-6 and gpt-6.1 Sol have the same reasoning variants as gpt-5.6-sol", () => {
-      const variants = ["gpt-5.6-sol", "gpt-6-sol", "gpt-6.1-sol"].map((id) =>
+    test("gpt-6-sol has the same reasoning variants as gpt-5.6-sol", () => {
+      const variants = ["gpt-5.6-sol", "gpt-6-sol"].map((id) =>
         ProviderTransform.variants(
           createMockModel({
             id,
@@ -2387,15 +2387,14 @@ describe("ProviderTransform.variants", () => {
       )
       expect(variants[1]).toEqual(variants[0])
       expect(Object.keys(variants[1])).toEqual(["medium", "max", "ultra"])
-      expect(variants[2]).toEqual(variants[1])
     })
 
-    test("gpt-6-astra exposes high and max efforts with Ultra mode", () => {
+    test.each(["gpt-6-astra", "gpt-6.1-sol"])("%s exposes high and max efforts with Ultra mode", (id) => {
       const model = createMockModel({
-        id: "gpt-6-astra",
+        id,
         providerID: "openai",
         api: {
-          id: "gpt-6-astra",
+          id,
           url: "https://api.openai.com",
           npm: "@ai-sdk/openai",
         },
@@ -2403,6 +2402,11 @@ describe("ProviderTransform.variants", () => {
 
       const result = ProviderTransform.variants(model)
       expect(Object.keys(result)).toEqual(["high", "max", "ultra"])
+      expect(result.high).toEqual({
+        reasoningEffort: "high",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
       expect(result.max).toEqual({
         reasoningEffort: "max",
         reasoningSummary: "auto",
@@ -2411,6 +2415,28 @@ describe("ProviderTransform.variants", () => {
       expect(result.ultra).toEqual(result.max)
       expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
     })
+  })
+
+  test.each([
+    ["@ai-sdk/openai", "openai/gpt-6.1-sol", "alias"],
+    ["@ai-sdk/openai", "alias", "GPT-6.1-SOL"],
+    ["@ai-sdk/openai-compatible", "gpt-6.1-sol", "gpt-6.1-sol"],
+    ["@openrouter/ai-sdk-provider", "openai/gpt-6.1-sol", "openai/gpt-6.1-sol"],
+  ])("gpt-6.1-sol uses high and max with %s (model %s, API %s)", (npm, id, api) => {
+    const result = ProviderTransform.variants(
+      createMockModel({
+        id,
+        api: { id: api, url: "https://api.test.com", npm },
+      }),
+    )
+    expect(Object.keys(result)).toEqual(["high", "max", "ultra"])
+    expect(result.high).toMatchObject(
+      npm === "@openrouter/ai-sdk-provider" ? { reasoning: { effort: "high" } } : { reasoningEffort: "high" },
+    )
+    expect(result.max).toMatchObject(
+      npm === "@openrouter/ai-sdk-provider" ? { reasoning: { effort: "max" } } : { reasoningEffort: "max" },
+    )
+    expect(result.ultra).toEqual(result.max)
   })
 
   describe("@ai-sdk/anthropic", () => {

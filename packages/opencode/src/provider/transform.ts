@@ -329,7 +329,6 @@ export namespace ProviderTransform {
   const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
   const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
   const GPT_56_EFFORTS = ["medium"]
-  const ASTRA_EFFORTS = ["high", "max"]
 
   export function ultra(model: Provider.Model, variant?: string) {
     const supported =
@@ -354,7 +353,12 @@ export namespace ProviderTransform {
   function efforts(model: Provider.Model, fallback: string[]) {
     if ([model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-6-luna")))
       return ["none", "low", "medium", "high", "xhigh", "max"]
-    if ([model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-6-astra"))) return ASTRA_EFFORTS
+    if (
+      [model.id, model.api.id].some((id) =>
+        ["gpt-6-astra", "gpt-6.1-sol"].some((name) => id.toLowerCase().includes(name)),
+      )
+    )
+      return ["high", "max"]
     return ultra(model) ? GPT_56_EFFORTS : fallback
   }
 
