@@ -141,9 +141,12 @@ When I say "sync demolinux", increment the semver patch version unless explicitl
 overridden (for example, `3.0.0-demolinux` -> `3.0.1-demolinux`). Push `dev`,
 create the new `-demolinux` tag, and push it.
 
-Update `/data/programming/demolinux/packages/tobuild/opencode/PKGBUILD` with the
+Update both `/data/programming/demolinux/packages/tobuild/opencode/PKGBUILD` and
+`/data/programming/demolinux/packages/tobuild/opencode-voice/PKGBUILD` with the
 matching `pkgver` (for example, `3.0.1+demolinux`) and `_pkgver` tag (for example,
-`3.0.1-demolinux`), reset `pkgrel=1`, and run `updpkgsums`. Create a commit
+`3.0.1-demolinux`), reset `pkgrel=1`, and run `updpkgsums` in both package
+directories. Set OpenCode's `opencode-voice` dependency minimum to the matching
+voice package version and release so an older daemon cannot satisfy it. Create a commit
 `packages: bump opencode` in the demolinux repository without pushing it.
 
 when i tell you to install the new opencode version locally, you should use
