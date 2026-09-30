@@ -31,7 +31,7 @@ test("provider loaded from env variable", async () => {
       // merge additional options.
       expect(providers[ProviderID.anthropic].source).toBe("env")
       expect(providers[ProviderID.anthropic].options.headers["anthropic-beta"]).toBeDefined()
-      expect(providers[ProviderID.anthropic].options.chunkTimeout).toBe(60_000)
+      expect(providers[ProviderID.anthropic].options.chunkTimeout).toBe(20_000)
     },
   })
 })
@@ -248,7 +248,7 @@ test("custom provider with npm package", async () => {
       expect(providers[ProviderID.make("custom-provider")]).toBeDefined()
       expect(providers[ProviderID.make("custom-provider")].name).toBe("Custom Provider")
       expect(providers[ProviderID.make("custom-provider")].models["custom-model"]).toBeDefined()
-      expect(providers[ProviderID.make("custom-provider")].options.chunkTimeout).toBe(60_000)
+      expect(providers[ProviderID.make("custom-provider")].options.chunkTimeout).toBe(20_000)
     },
   })
 })
@@ -316,7 +316,7 @@ test.each([undefined, false, 120_000])("OpenAI OAuth respects chunkTimeout %s", 
         const providers = await Provider.list()
         expect(providers[ProviderID.openai]).toBeDefined()
         expect(providers[ProviderID.openai].options.timeout).toBe(false)
-        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(timeout ?? 60_000)
+        expect(providers[ProviderID.openai].options.chunkTimeout).toBe(timeout ?? 20_000)
       },
     })
   } finally {
