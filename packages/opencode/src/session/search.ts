@@ -63,7 +63,7 @@ export namespace SessionSearch {
           JOIN session ON session.id = part.session_id AND session.id = message.session_id
           WHERE part_search MATCH ? ${input.sessionID ? "AND session.id = ?" : ""}
             AND (session.revert IS NULL OR message.id < json_extract(session.revert, '$.messageID'))
-          ORDER BY part_search.rowid DESC LIMIT ?
+          ORDER BY message.time_created DESC, message.id DESC, part.id LIMIT ?
         )
         SELECT session.id AS sessionID, session.title, session.directory, hits.messageID, hits.partID,
           json_extract(message.data, '$.role') AS role, json_extract(part.data, '$.type') AS type,

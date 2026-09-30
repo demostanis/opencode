@@ -281,7 +281,6 @@ export namespace SessionSync {
         share: undefined,
         revert: undefined,
         permission: undefined,
-        time: { ...data.session.time, updated: Date.now() },
         title: `${data.session.title} (from another host)`,
       })
       if (current && !changed) {

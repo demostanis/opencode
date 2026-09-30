@@ -25,6 +25,32 @@ async function user(sessionID: SessionID, text: string, time = Date.now()) {
 }
 
 describe("conversation search", () => {
+  test("selects the newest matches before limiting, regardless of insertion order", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await Session.create({ title: "Recent notes" })
+        const other = await Session.create({ title: "Old notes (from another host)" })
+        const newest = await user(session.id, "chronological needle newest", 300)
+        const middle = await user(session.id, "chronological needle middle", 200)
+        const oldest = await user(other.id, "chronological needle oldest", 100)
+        expect(
+          (await SessionSearch.search({ query: "chronological needle", limit: 2 })).map((hit) => hit.partID),
+        ).toEqual([newest.id, middle.id])
+        expect((await SessionSearch.search({ query: "chronological needle" })).map((hit) => hit.partID)).toEqual([
+          newest.id,
+          middle.id,
+          oldest.id,
+        ])
+        expect(
+          (await SessionSearch.search({ sessionID: session.id, query: "chronological needle", limit: 1 }))[0].partID,
+        ).toBe(newest.id)
+        await Session.remove(session.id)
+        await Session.remove(other.id)
+      },
+    })
+  })
+
   test("searches full history, not just the last 100 messages, and bounds results", async () => {
     await Instance.provide({
       directory: root,

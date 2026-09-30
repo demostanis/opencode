@@ -6,6 +6,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionSync } from "../../src/session/sync"
+import { SessionSearch } from "../../src/session/search"
 import { Database, eq, and } from "../../src/storage/db"
 import { SessionTable, MessageTable, PartTable, SyncTable } from "../../src/session/session.sql"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -154,6 +155,10 @@ describe("portable session sync", () => {
           )
         const first = entry().local_id
         expect(first).not.toBe(session.id)
+        const imported = await Session.get(SessionID.make(first))
+        expect(imported.time).toEqual((await Session.get(session.id)).time)
+        await SessionSearch.refresh()
+        expect((await SessionSearch.search({ query: "first" })).some((hit) => hit.sessionID === first)).toBe(true)
         const read = (id: string) =>
           Database.use((db) => {
             const messages = db
@@ -173,6 +178,7 @@ describe("portable session sync", () => {
         expect(await fs.readdir(path.join(base, "sessions", own))).toEqual([session.id])
         await SessionSync.scan(base)
         expect(entry().local_id).toBe(first)
+        expect((await Session.get(SessionID.make(first))).time).toEqual(imported.time)
         await Session.updatePart({ id: part, sessionID: session.id, messageID: mid, type: "text", text: "second" })
         await publish()
         await SessionSync.scan(base)
