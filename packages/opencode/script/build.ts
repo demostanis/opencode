@@ -14,7 +14,7 @@ process.chdir(dir)
 
 import pkg from "../package.json"
 
-if (!process.env.OPENCODE_VERSION && pkg.version.includes("+demolinux.")) {
+if (!process.env.OPENCODE_VERSION && pkg.version.includes("+demolinux")) {
   process.env.OPENCODE_VERSION = pkg.version
 }
 const { Script } = await import("@opencode-ai/script")

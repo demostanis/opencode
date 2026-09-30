@@ -134,9 +134,17 @@ part
 
 ## demolinux
 
-when i say "sync demolinux", you need to push to dev, create a new -demolinux
-tag and push it, and go to /data/programming/demolinux/packages/tobuild/opencode
-to update PKGBUILD and run updpkgsums, and create a commit "packages: bump
-opencode" without pushing
+The current release is `3.0.0-demolinux`, with `pkgver=3.0.0+demolinux`,
+`_pkgver=3.0.0-demolinux`, and `pkgrel=1`.
+
+When I say "sync demolinux", increment the semver patch version unless explicitly
+overridden (for example, `3.0.0-demolinux` -> `3.0.1-demolinux`). Push `dev`,
+create the new `-demolinux` tag, and push it.
+
+Update `/data/programming/demolinux/packages/tobuild/opencode/PKGBUILD` with the
+matching `pkgver` (for example, `3.0.1+demolinux`) and `_pkgver` tag (for example,
+`3.0.1-demolinux`), reset `pkgrel=1`, and run `updpkgsums`. Create a commit
+`packages: bump opencode` in the demolinux repository without pushing it.
+
 when i tell you to install the new opencode version locally, you should use
 makepkg -si inside demolinux/packages/tobuild/opencode, not another way
