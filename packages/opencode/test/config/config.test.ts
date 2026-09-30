@@ -800,6 +800,15 @@ test("serializes concurrent config dependency installs", async () => {
   expect(seen.toSorted()).toEqual(dirs.toSorted())
   expect(await Filesystem.exists(path.join(dirs[0], "package.json"))).toBe(true)
   expect(await Filesystem.exists(path.join(dirs[1], "package.json"))).toBe(true)
+  for (const dir of dirs) {
+    const pkg = await Filesystem.readJson<{ dependencies: Record<string, string> }>(path.join(dir, "package.json"))
+    expect(pkg.dependencies["@opencode-ai/plugin"]).toBe("1.2.27")
+    await fs.mkdir(path.join(dir, "node_modules"))
+    expect(await Config.needsInstall(dir)).toBe(false)
+    pkg.dependencies["@opencode-ai/plugin"] = "3.0.2+demolinux"
+    await Filesystem.writeJson(path.join(dir, "package.json"), pkg)
+    expect(await Config.needsInstall(dir)).toBe(true)
+  }
 })
 
 test("resolves scoped npm plugins in config", async () => {
