@@ -1,8 +1,8 @@
 import { Global } from "@/global"
 import { GlobalBus } from "@/bus/global"
-import { Database, eq, and } from "@/storage/db"
+import { Database, eq, and, sql } from "@/storage/db"
 import { ProjectTable } from "@/project/project.sql"
-import { SessionTable, MessageTable, PartTable, SyncTable } from "./session.sql"
+import { SessionTable, MessageTable, PartTable, SyncTable, SyncStateTable } from "./session.sql"
 import { Session } from "."
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
@@ -13,6 +13,12 @@ import fs from "fs/promises"
 import path from "path"
 import z from "zod"
 import { Database as SQLite } from "bun:sqlite"
+import { Rpc } from "@/util/rpc"
+import type { rpc } from "./sync-worker"
+import { Teammate } from "@/teammate/teammate"
+import { SyncLease } from "./sync-lease"
+
+declare const OPENCODE_SYNC_WORKER_PATH: string | undefined
 
 export namespace SessionSync {
   const log = Log.create({ service: "session-sync" })
@@ -39,14 +45,41 @@ export namespace SessionSync {
   }
 
   async function sessions() {
-    const ids = new Set(
-      Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all()).map((row) => row.id),
+    const rows = Database.use((db) => db.select().from(SessionTable).all())
+    const children = new Set(
+      rows
+        .filter((row) => row.parent_id || Teammate.session(undefined, row.permission ?? undefined))
+        .map((row) => row.id),
     )
+    const copies = new Set(
+      Database.use((db) => db.select().from(SyncTable).all())
+        .filter((row) => children.has(SessionID.make(row.source_id)))
+        .map((row) => row.local_id),
+    )
+    const ids = new Set(rows.filter((row) => !children.has(row.id) && !copies.has(row.id)).map((row) => row.id))
     for (const file of await fs.readdir(Global.Path.data)) {
       if (!/^opencode(?:-[a-zA-Z0-9._-]+)?\.db$/.test(file) || path.join(Global.Path.data, file) === Database.Path)
         continue
       using db = new SQLite(path.join(Global.Path.data, file), { readonly: true })
-      for (const row of db.query<{ id: string }, []>("SELECT id FROM session").all()) ids.add(SessionID.make(row.id))
+      const fields = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(session)")
+          .all()
+          .map((row) => row.name),
+      )
+      for (const row of db
+        .query<{ id: string; permission: string | null }, []>(
+          `SELECT id, ${fields.has("permission") ? "permission" : "NULL AS permission"} FROM session
+          WHERE ${fields.has("parent_id") ? "parent_id IS NULL" : "1"}`,
+        )
+        .all()) {
+        if (
+          row.permission &&
+          Teammate.session(undefined, Session.Info.shape.permission.parse(JSON.parse(row.permission)))
+        )
+          continue
+        ids.add(SessionID.make(row.id))
+      }
     }
     return ids
   }
@@ -65,7 +98,19 @@ export namespace SessionSync {
         await prune(target)
         continue
       }
-      if ((await sessions()).has(SessionID.make(session.name))) continue
+      const row = Database.use((db) =>
+        db
+          .select({ parent: SessionTable.parent_id, permission: SessionTable.permission })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, SessionID.make(session.name)))
+          .get(),
+      )
+      if (
+        !row?.parent &&
+        !Teammate.session(undefined, row?.permission ?? undefined) &&
+        (await sessions()).has(SessionID.make(session.name))
+      )
+        continue
       await fs.rm(target, { recursive: true, force: true })
     }
   }
@@ -74,6 +119,14 @@ export namespace SessionSync {
     return Database.transaction((db) => {
       const row = db.select().from(SessionTable).where(eq(SessionTable.id, id)).get()
       if (!row) return
+      if (row.parent_id || Teammate.session(undefined, row.permission ?? undefined)) return
+      const origins = db
+        .select({ parent: SessionTable.parent_id, permission: SessionTable.permission })
+        .from(SyncTable)
+        .innerJoin(SessionTable, eq(SessionTable.id, SyncTable.source_id))
+        .where(eq(SyncTable.local_id, id))
+        .all()
+      if (origins.some((origin) => origin.parent || Teammate.session(undefined, origin.permission ?? undefined))) return
       const project = db.select().from(ProjectTable).where(eq(ProjectTable.id, row.project_id)).get()
       if (!project) return
       const messages = db
@@ -83,8 +136,10 @@ export namespace SessionSync {
         .orderBy(MessageTable.time_created, MessageTable.id)
         .all()
       const parts = db.select().from(PartTable).where(eq(PartTable.session_id, id)).orderBy(PartTable.id).all()
-      if (parts.some((part) => !messages.some((msg) => msg.id === part.message_id)))
+      const ids = new Set(messages.map((msg) => msg.id))
+      if (parts.some((part) => !ids.has(part.message_id)))
         throw new Error(`Session ${id} contains a part without its message`)
+      const grouped = Map.groupBy(parts, (part) => part.message_id)
       return {
         version: 1 as const,
         machine: "",
@@ -94,17 +149,15 @@ export namespace SessionSync {
         project: { worktree: project.worktree, name: project.name },
         messages: messages.map((msg) => ({
           info: { ...msg.data, id: msg.id, sessionID: id },
-          parts: parts
-            .filter((part) => part.message_id === msg.id)
-            .map(
-              (part) =>
-                ({
-                  ...part.data,
-                  id: part.id,
-                  messageID: msg.id,
-                  sessionID: id,
-                }) as MessageV2.Part,
-            ),
+          parts: (grouped.get(msg.id) ?? []).map(
+            (part) =>
+              ({
+                ...part.data,
+                id: part.id,
+                messageID: msg.id,
+                sessionID: id,
+              }) as MessageV2.Part,
+          ),
         })),
       }
     })
@@ -114,7 +167,8 @@ export namespace SessionSync {
     const data = snapshot(id)
     if (!data) return
     const synced = Database.use((db) => db.select().from(SyncTable).where(eq(SyncTable.local_id, id)).all())
-    if (synced.some((item) => item.baseline === digest(data))) return
+    const baseline = synced.length ? digest(data) : undefined
+    if (synced.some((item) => item.baseline === baseline)) return
     const machine = await Active.machine
     const bundle = {
       ...data,
@@ -145,7 +199,8 @@ export namespace SessionSync {
       ),
     }
     const folder = location(machine, id, dir)
-    const hash = digest(bundle)
+    const text = JSON.stringify(bundle)
+    const hash = createHash("sha256").update(text).digest("hex")
     await fs.mkdir(folder, { recursive: true })
     const latest = (await fs.readdir(folder))
       .filter((name) => archive.test(name))
@@ -159,7 +214,7 @@ export namespace SessionSync {
     const file = path.join(folder, `${time}-${hash}.json`)
     const temp = `${file}.${randomUUID()}.tmp`
     await fs
-      .writeFile(temp, JSON.stringify(bundle), { mode: 0o600 })
+      .writeFile(temp, text, { mode: 0o600 })
       .then(() => fs.rename(temp, file))
       .catch(async (err) => {
         await fs.rm(temp, { force: true })
@@ -205,6 +260,11 @@ export namespace SessionSync {
     }
     const data = parsed.data
     if (data.machine !== machine || data.session.id !== source) return false
+    if (data.session.parentID || Teammate.session(undefined, data.session.permission)) return true
+    const origin = Database.use((db) =>
+      db.select().from(SessionTable).where(eq(SessionTable.id, data.session.id)).get(),
+    )
+    if (origin?.parent_id || Teammate.session(undefined, origin?.permission ?? undefined)) return true
     if (
       data.messages.some(
         (msg) =>
@@ -221,6 +281,7 @@ export namespace SessionSync {
       return false
     const parts = data.messages.flatMap((msg) => msg.parts.map((part) => part.id))
     if (new Set(parts).size !== parts.length) return false
+    const busy = prev ? await Active.remote(prev.local_id, { machine: "" }) : false
 
     Database.transaction((db) => {
       const prev = db
@@ -244,7 +305,7 @@ export namespace SessionSync {
         return
       }
       const local = current && snapshot(current.id)
-      const changed = !!prev && ((!!local && digest(local) !== prev.baseline) || Active.local(prev.local_id))
+      const changed = !!prev && ((!!local && digest(local) !== prev.baseline) || Active.local(prev.local_id) || busy)
       const id = current && !changed ? current.id : SessionID.descending()
       const project = db.select().from(ProjectTable).where(eq(ProjectTable.id, data.session.projectID)).get()
       if (!project)
@@ -379,6 +440,10 @@ export namespace SessionSync {
           set: { local_id: id, revision, baseline },
         })
         .run()
+      db.update(SyncStateTable)
+        .set({ exported: sql`${SyncStateTable.version}` })
+        .where(eq(SyncStateTable.session_id, id))
+        .run()
       Database.effect(() => {
         const info = Session.fromRow(row as typeof SessionTable.$inferSelect)
         GlobalBus.emit("event", {
@@ -418,29 +483,64 @@ export namespace SessionSync {
     }
   }
 
-  let started = false
-  export function start() {
-    if (started) return
-    started = true
-    let running = false
-    const run = async () => {
-      if (running) return
-      running = true
-      try {
-        await clean()
-        await scan()
-        const ids = Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all())
-        for (const row of ids)
-          await exportSession(row.id).catch((err) =>
-            log.warn("export failed", { sessionID: row.id, error: String(err) }),
+  export async function drain(dir = root, valid = () => true) {
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(SyncStateTable)
+        .where(sql`${SyncStateTable.version} != ${SyncStateTable.exported}`)
+        .all(),
+    )
+    let count = 0
+    for (const row of rows) {
+      if (!valid()) break
+      await exportSession(SessionID.make(row.session_id), dir)
+        .then(() => {
+          Database.use((db) =>
+            db
+              .update(SyncStateTable)
+              .set({ exported: row.version })
+              .where(and(eq(SyncStateTable.session_id, row.session_id), eq(SyncStateTable.version, row.version)))
+              .run(),
           )
-      } finally {
-        running = false
-      }
+          count++
+        })
+        .catch((err) => log.warn("export failed", { sessionID: row.session_id, error: String(err) }))
+      await Bun.sleep(0)
     }
-    const tick = () => run().catch((err) => log.warn("sync failed", { error: String(err) }))
-    tick()
-    const timer = setInterval(tick, 15_000)
-    timer.unref?.()
+    return count
+  }
+
+  let worker: Worker | undefined
+  export function start() {
+    if (worker) return
+    Database.Client()
+    const owner = randomUUID()
+    const lease = new SyncLease(`${Database.Path}.sync-v1`, owner)
+    worker = new Worker(
+      typeof OPENCODE_SYNC_WORKER_PATH !== "undefined"
+        ? OPENCODE_SYNC_WORKER_PATH
+        : new URL("./sync-worker.ts", import.meta.url).href,
+      {
+        env: Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+      },
+    )
+    if ("unref" in worker && typeof worker.unref === "function") worker.unref()
+    const client = Rpc.client<typeof rpc>(worker)
+    const off = client.on<Parameters<typeof GlobalBus.emit<"event">>[1]>("event", (event) => {
+      GlobalBus.emit("event", event)
+    })
+    client.on<string>("failure", (error) => log.warn("sync failed", { error }))
+    client
+      .call("init", { source: Database.Path, owner })
+      .catch((err) => log.warn("sync worker failed", { error: String(err) }))
+    Database.onclose(() => {
+      off()
+      worker?.terminate()
+      lease.close()
+      worker = undefined
+    })
   }
 }

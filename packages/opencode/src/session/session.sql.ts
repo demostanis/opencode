@@ -87,6 +87,14 @@ export const SyncTable = sqliteTable(
   (table) => [primaryKey({ columns: [table.machine, table.source_id] })],
 )
 
+export const SyncStateTable = sqliteTable("session_sync_state", {
+  session_id: text()
+    .primaryKey()
+    .references(() => SessionTable.id, { onDelete: "cascade" }),
+  version: integer().notNull().default(1),
+  exported: integer().notNull().default(0),
+})
+
 export const TodoTable = sqliteTable(
   "todo",
   {
