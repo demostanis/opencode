@@ -54,6 +54,7 @@ export namespace Server {
   const log = Log.create({ service: "server" })
 
   type Options = {
+    sync?: boolean
     cors?: string[]
     auth?: {
       username: string
@@ -64,7 +65,7 @@ export namespace Server {
   export const Default = lazy(() => createApp({}))
 
   export const createApp = (opts: Options): Hono => {
-    SessionSync.start()
+    if (opts.sync !== false) SessionSync.start()
     const app = new Hono()
     return app
       .onError((err, c) => {

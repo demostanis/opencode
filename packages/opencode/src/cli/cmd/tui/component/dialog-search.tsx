@@ -25,7 +25,7 @@ export function DialogSearch(
   const connection = useConnection()
   const [filter, setFilter] = createSignal("")
   const [query, setQuery] = createDebouncedSignal("", 25)
-  const [revision, setRevision] = createDebouncedSignal(0, 50)
+  const [revision, setRevision] = createDebouncedSignal(0, 1000)
   const [opening, setOpening] = createSignal(false)
   const [indexed, setIndexed] = createSignal(false)
   const [indexing, setIndexing] = createSignal(false)
@@ -79,7 +79,7 @@ export function DialogSearch(
   const options = createMemo(() =>
     hits().map((hit) => ({
       title: stripAnsi(hit.preview).replace(/\s+/g, " ").trim(),
-      value: hit,
+      value: hit.partID,
       category: props.sessionID ? undefined : hit.title,
       footer: `${hit.type === "tool" ? hit.tool : hit.type === "reasoning" ? "Thinking" : Locale.titlecase(hit.role)} ${Locale.time(hit.time)}`,
     })),
@@ -158,24 +158,27 @@ export function DialogSearch(
         setFilter(text)
         setQuery(text)
       }}
-      onMove={(option) => props.onMove?.(option.value)}
+      onMove={(option) => {
+        const hit = hits().find((hit) => hit.partID === option.value)
+        if (hit) props.onMove?.(hit)
+      }}
       onSelect={async (option) => {
         if (opening()) return
+        const hit = hits().find((hit) => hit.partID === option.value)
+        if (!hit) return
         setOpening(true)
         if (!props.sessionID) {
           dialog.clear()
-          await connection
-            .open(option.value.sessionID, option.value.directory, option.value, filter().trim())
-            .catch(toast.error)
+          await connection.open(hit.sessionID, hit.directory, hit, filter().trim()).catch(toast.error)
           return
         }
         const controller = new AbortController()
         reveal = controller
         await sync.session
-          .reveal(props.sessionID, option.value.messageID, controller.signal)
+          .reveal(props.sessionID, hit.messageID, controller.signal)
           .then((revealed) => {
             if (!revealed || disposed) return
-            props.onSelect?.(option.value)
+            props.onSelect?.(hit)
             dialog.clear()
           })
           .catch((err: unknown) => {

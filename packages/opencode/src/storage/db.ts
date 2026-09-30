@@ -108,8 +108,16 @@ export namespace Database {
   })
 
   export function close() {
+    for (const fn of cleanup) fn()
+    cleanup.clear()
     Client().$client.close()
     Client.reset()
+  }
+
+  const cleanup = new Set<() => void>()
+  export function onclose(fn: () => void) {
+    cleanup.add(fn)
+    return () => cleanup.delete(fn)
   }
 
   export type TxOrDb = Transaction | Client

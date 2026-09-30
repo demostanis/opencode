@@ -156,7 +156,8 @@ describe("conversation search", () => {
         const session = await Session.create({})
         const part = await user(session.id, "original needle")
         expect(await SessionSearch.search({ sessionID: session.id, query: "original" })).toHaveLength(1)
-        Database.use((db) => db.run(sql`INSERT INTO part_search(part_search) VALUES('integrity-check')`))
+        using cache = new SQLite(`${Database.Path}.search-v2`)
+        cache.run("INSERT INTO part_search(part_search) VALUES('integrity-check')")
         await Session.updatePart({ ...part, text: "replacement needle" })
         expect(await SessionSearch.search({ sessionID: session.id, query: "original" })).toEqual([])
         expect(await SessionSearch.search({ sessionID: session.id, query: "replacement" })).toHaveLength(1)
@@ -171,14 +172,13 @@ describe("conversation search", () => {
         expect(await SessionSearch.search({ sessionID: session.id, query: "needle" })).toEqual([])
         await user(session.id, "cascade needle")
         await Session.remove(session.id)
+        await SessionSearch.refresh()
         expect(
-          Database.use((db) =>
-            db.all(
-              sql`SELECT rowid FROM part_search WHERE session_id = ${session.id} AND part_search MATCH 'text : "needle"'`,
-            ),
-          ),
+          cache
+            .query("SELECT rowid FROM part_search WHERE session_id = ? AND part_search MATCH 'text : \"needle\"'")
+            .all(session.id),
         ).toEqual([])
-        Database.use((db) => db.run(sql`INSERT INTO part_search(part_search) VALUES('integrity-check')`))
+        cache.run("INSERT INTO part_search(part_search) VALUES('integrity-check')")
       },
     })
   })
@@ -221,7 +221,8 @@ describe("conversation search", () => {
         expect(
           Database.use((db) => db.all(sql`SELECT name FROM main.sqlite_master WHERE name LIKE 'part_search%'`)),
         ).toEqual([])
-        const statement = Database.Client().$client.prepare<{ detail: string }, []>(
+        using cache = new SQLite(`${Database.Path}.search-v2`, { readonly: true })
+        const statement = cache.prepare<{ detail: string }, []>(
           `EXPLAIN QUERY PLAN SELECT rowid FROM part_search WHERE part_search MATCH 'text : "needle"'`,
         )
         const plan = statement.all()
@@ -241,6 +242,7 @@ describe("conversation search", () => {
         expect(await SessionSearch.search({ sessionID: session.id, query: "original" })).toHaveLength(1)
         using db = new SQLite(Database.Path)
         db.query("UPDATE part SET data = json_set(data, '$.text', ?) WHERE id = ?").run("external needle", part.id)
+        await SessionSearch.refresh()
         expect(await SessionSearch.search({ sessionID: session.id, query: "original" })).toEqual([])
         expect(await SessionSearch.search({ sessionID: session.id, query: "external" })).toMatchObject([
           { partID: part.id },
@@ -271,10 +273,12 @@ describe("conversation search", () => {
           "offline updated needle",
           part.id,
         )
+        await SessionSearch.refresh()
         expect(await SessionSearch.search({ query: "original needle" })).toEqual([])
         expect(await SessionSearch.search({ query: "updated needle" })).toMatchObject([{ partID: part.id }])
         Database.close()
         db.query("DELETE FROM part WHERE id = ?").run(part.id)
+        await SessionSearch.refresh()
         expect(await SessionSearch.search({ query: "updated needle" })).toEqual([])
         await Session.remove(session.id)
       },
@@ -323,7 +327,7 @@ describe("conversation search", () => {
         statement.finalize()
         let done = false
         let seen = false
-        const job = SessionSearch.search({ query: "indexing needle" }).finally(() => {
+        const job = SessionSearch.refresh().finally(() => {
           done = true
         })
         while (!done) {
