@@ -12,16 +12,62 @@ import { createHash, randomUUID } from "crypto"
 import fs from "fs/promises"
 import path from "path"
 import z from "zod"
+import { Database as SQLite } from "bun:sqlite"
 
 export namespace SessionSync {
   const log = Log.create({ service: "session-sync" })
   const root = path.join(Global.Path.home, ".local/share/opencode-sync")
   const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
   const location = (machine: string, id: string, dir = root) => path.join(dir, "sessions", machine, id)
+  const archive = /^\d+-[a-f0-9]{64}\.json$/
   const order = (a: string, b: string) => {
     const x = BigInt(a.slice(0, a.indexOf("-")))
     const y = BigInt(b.slice(0, b.indexOf("-")))
     return x === y ? a.localeCompare(b) : x < y ? -1 : 1
+  }
+
+  async function prune(folder: string) {
+    const files = (
+      await fs.readdir(folder).catch((err) => {
+        if (err.code === "ENOENT") return []
+        throw err
+      })
+    )
+      .filter((name) => archive.test(name))
+      .sort(order)
+    await Promise.all(files.slice(0, -2).map((name) => fs.rm(path.join(folder, name), { force: true })))
+  }
+
+  async function sessions() {
+    const ids = new Set(
+      Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all()).map((row) => row.id),
+    )
+    for (const file of await fs.readdir(Global.Path.data)) {
+      if (!/^opencode(?:-[a-zA-Z0-9._-]+)?\.db$/.test(file) || path.join(Global.Path.data, file) === Database.Path)
+        continue
+      using db = new SQLite(path.join(Global.Path.data, file), { readonly: true })
+      for (const row of db.query<{ id: string }, []>("SELECT id FROM session").all()) ids.add(SessionID.make(row.id))
+    }
+    return ids
+  }
+
+  export async function clean(dir = root) {
+    const folder = path.join(dir, "sessions", await Active.machine)
+    const ids = await sessions()
+    const folders = await fs.readdir(folder, { withFileTypes: true }).catch((err) => {
+      if (err.code === "ENOENT") return []
+      throw err
+    })
+    for (const session of folders) {
+      if (!session.isDirectory() || !SessionID.zod.safeParse(session.name).success) continue
+      const target = path.join(folder, session.name)
+      if (ids.has(SessionID.make(session.name))) {
+        await prune(target)
+        continue
+      }
+      if ((await sessions()).has(SessionID.make(session.name))) continue
+      await fs.rm(target, { recursive: true, force: true })
+    }
   }
 
   function snapshot(id: SessionID) {
@@ -42,7 +88,8 @@ export namespace SessionSync {
       return {
         version: 1 as const,
         machine: "",
-        notice: "Conversation transferred from another host. Files, snapshots and worktree may be missing on this host.",
+        notice:
+          "Conversation transferred from another host. Files, snapshots and worktree may be missing on this host.",
         session: Session.fromRow(row),
         project: { worktree: project.worktree, name: project.name },
         messages: messages.map((msg) => ({
@@ -100,15 +147,25 @@ export namespace SessionSync {
     const folder = location(machine, id, dir)
     const hash = digest(bundle)
     await fs.mkdir(folder, { recursive: true })
-    const files = await fs.readdir(folder)
-    if (files.some((name) => name.endsWith(`-${hash}.json`))) return
-    const file = path.join(folder, `${Date.now()}-${hash}.json`)
+    const latest = (await fs.readdir(folder))
+      .filter((name) => archive.test(name))
+      .sort(order)
+      .at(-1)
+    if (latest?.endsWith(`-${hash}.json`)) {
+      await prune(folder)
+      return
+    }
+    const time = Math.max(Date.now(), latest ? Number(latest.slice(0, latest.indexOf("-"))) + 1 : 0)
+    const file = path.join(folder, `${time}-${hash}.json`)
     const temp = `${file}.${randomUUID()}.tmp`
-    await fs.writeFile(temp, JSON.stringify(bundle), { mode: 0o600 })
-    await fs.rename(temp, file).catch(async (err) => {
-      await fs.rm(temp, { force: true })
-      throw err
-    })
+    await fs
+      .writeFile(temp, JSON.stringify(bundle), { mode: 0o600 })
+      .then(() => fs.rename(temp, file))
+      .catch(async (err) => {
+        await fs.rm(temp, { force: true })
+        throw err
+      })
+    await prune(folder)
   }
 
   async function importOne(file: string, machine: string, source: string, revision: string) {
@@ -179,6 +236,13 @@ export namespace SessionSync {
           .from(SessionTable)
           .where(eq(SessionTable.id, SessionID.make(prev.local_id)))
           .get()
+      if (prev && !current) {
+        db.update(SyncTable)
+          .set({ revision })
+          .where(and(eq(SyncTable.machine, machine), eq(SyncTable.source_id, source)))
+          .run()
+        return
+      }
       const local = current && snapshot(current.id)
       const changed = !!prev && ((!!local && digest(local) !== prev.baseline) || Active.local(prev.local_id))
       const id = current && !changed ? current.id : SessionID.descending()
@@ -343,7 +407,7 @@ export namespace SessionSync {
       for (const session of await fs.readdir(path.join(base, host.name), { withFileTypes: true })) {
         if (!session.isDirectory() || !SessionID.zod.safeParse(session.name).success) continue
         const dir = path.join(base, host.name, session.name)
-        const files = (await fs.readdir(dir)).filter((name) => /^\d+-[a-f0-9]{64}\.json$/.test(name)).sort(order)
+        const files = (await fs.readdir(dir)).filter((name) => archive.test(name)).sort(order)
         for (const name of files.reverse()) {
           const done = await importOne(path.join(dir, name), host.name, session.name, name).catch((err) => {
             log.warn("import failed", { file: name, error: String(err) })
@@ -364,6 +428,7 @@ export namespace SessionSync {
       if (running) return
       running = true
       try {
+        await clean()
         await scan()
         const ids = Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all())
         for (const row of ids)

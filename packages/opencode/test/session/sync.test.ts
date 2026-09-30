@@ -15,10 +15,102 @@ import { GlobalBus } from "../../src/bus/global"
 import { ProjectTable } from "../../src/project/project.sql"
 import { MessageV2 } from "../../src/session/message-v2"
 import { pathToFileURL } from "url"
+import { Database as SQLite } from "bun:sqlite"
+import { Global } from "../../src/global"
 
 Log.init({ print: false })
 
 describe("portable session sync", () => {
+  test("republishes a return to an older snapshot and bounds concurrent exports", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({ title: "First" })
+        const base = path.join(tmp.path, "sync")
+        await SessionSync.exportSession(session.id, base)
+        const own = (await fs.readdir(path.join(base, "sessions")))[0]
+        const dir = path.join(base, "sessions", own, session.id)
+        Database.use((db) =>
+          db.update(SessionTable).set({ title: "Second" }).where(eq(SessionTable.id, session.id)).run(),
+        )
+        await SessionSync.exportSession(session.id, base)
+        const prev = (await fs.readdir(dir)).sort().at(-1)!
+        Database.use((db) =>
+          db.update(SessionTable).set({ title: "First" }).where(eq(SessionTable.id, session.id)).run(),
+        )
+        await Promise.all(Array.from({ length: 8 }, () => SessionSync.exportSession(session.id, base)))
+        const files = (await fs.readdir(dir)).sort()
+        expect(files).toHaveLength(2)
+        expect(files.at(-1)! > prev).toBe(true)
+        expect((await Bun.file(path.join(dir, files.at(-1)!)).json()).session.title).toBe("First")
+        await SessionSync.exportSession(session.id, base)
+        expect((await fs.readdir(dir)).sort()).toEqual(files)
+      },
+    })
+  })
+
+  test("cleanup preserves sessions belonging to another local channel database", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({ title: "Other channel" })
+        const base = path.join(tmp.path, "sync")
+        await SessionSync.exportSession(session.id, base)
+        const own = (await fs.readdir(path.join(base, "sessions")))[0]
+        const dir = path.join(base, "sessions", own, session.id)
+        const file = path.join(Global.Path.data, `opencode-${session.id}.db`)
+        try {
+          {
+            using db = new SQLite(file)
+            db.run("CREATE TABLE session (id TEXT PRIMARY KEY)")
+            db.run("INSERT INTO session (id) VALUES (?)", [session.id])
+          }
+          await Session.remove(session.id)
+          await SessionSync.clean(base)
+          expect(await fs.readdir(dir)).toHaveLength(1)
+          await fs.rm(file)
+          await SessionSync.clean(base)
+          expect(await fs.stat(dir).catch(() => undefined)).toBeUndefined()
+        } finally {
+          await fs.rm(file, { force: true })
+        }
+      },
+    })
+  })
+
+  test("bounds full snapshots and cleans deleted sessions without touching other hosts", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({ title: "Retention" })
+        const base = path.join(tmp.path, "sync")
+        await SessionSync.exportSession(session.id, base)
+        const own = (await fs.readdir(path.join(base, "sessions")))[0]
+        const dir = path.join(base, "sessions", own, session.id)
+        for (let i = 0; i < 8; i++) {
+          await Session.setTitle({ sessionID: session.id, title: `Revision ${i}` })
+          await SessionSync.exportSession(session.id, base)
+          expect(await fs.readdir(dir)).toHaveLength(2)
+        }
+        const file = (await fs.readdir(dir)).sort().at(-1)!
+        expect((await Bun.file(path.join(dir, file)).json()).session.title).toBe("Revision 7")
+        await fs.copyFile(path.join(dir, file), path.join(dir, `1-${"0".repeat(64)}.json`))
+        await SessionSync.exportSession(session.id, base)
+        expect(await fs.readdir(dir)).toHaveLength(2)
+        const remote = path.join(base, "sessions", "remote-host", session.id)
+        await fs.mkdir(remote, { recursive: true })
+        await fs.copyFile(path.join(dir, file), path.join(remote, file))
+        await Session.remove(session.id)
+        await SessionSync.clean(base)
+        expect(await fs.stat(dir).catch(() => undefined)).toBeUndefined()
+        expect(await fs.readdir(remote)).toEqual([file])
+      },
+    })
+  })
+
   test("imports complete revisions, updates unchanged copies and branches on local edits", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
@@ -107,6 +199,15 @@ describe("portable session sync", () => {
                 .get()?.title,
           ),
         ).toBe("Local edit")
+        const deleted = SessionID.make(entry().local_id)
+        await Session.remove(deleted)
+        await Session.updatePart({ id: part, sessionID: session.id, messageID: mid, type: "text", text: "fourth" })
+        await publish()
+        await SessionSync.scan(base)
+        expect(entry().local_id).toBe(deleted)
+        expect(
+          Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, deleted)).get()),
+        ).toBeUndefined()
       },
     })
   })
