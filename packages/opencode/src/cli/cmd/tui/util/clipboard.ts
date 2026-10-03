@@ -175,8 +175,21 @@ export namespace Clipboard {
     }
   })
 
-  export async function copy(text: string): Promise<void> {
+  export async function copy(text: string, primary = false): Promise<void> {
     writeOsc52(text)
     await getCopyMethod()(text)
+
+    if (!primary || platform() !== "linux" || process.env["WAYLAND_DISPLAY"]) return
+    const command = which("xclip")
+      ? ["xclip", "-selection", "primary"]
+      : which("xsel")
+        ? ["xsel", "--primary", "--input"]
+        : undefined
+    if (!command) return
+    const proc = Process.spawn(command, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+    if (!proc.stdin) return
+    proc.stdin.write(text)
+    proc.stdin.end()
+    if ((await proc.exited) !== 0) throw new Error("Failed to copy the primary selection")
   }
 }
