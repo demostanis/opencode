@@ -15,7 +15,7 @@ export const TuiOptions = z.object({
     .boolean()
     .optional()
     .describe(
-      "Automatically listen locally for slave/esclave and use ChatGPT OAuth voice on Linux (default: true). Set false to disable microphone access.",
+      "Enable voice automatically on Linux (default: false). Use /voice to toggle microphone access in the TUI.",
     ),
   scroll_speed: z.number().min(0.001).optional().describe("TUI scroll speed"),
   scroll_acceleration: z

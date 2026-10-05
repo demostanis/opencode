@@ -8,6 +8,7 @@ import { usePromptRef } from "./prompt"
 import { useLocal } from "./local"
 import { useTuiConfig } from "./tui-config"
 import { useToast } from "../ui/toast"
+import { useCommandDialog } from "../component/dialog-command"
 import { Voice } from "../voice/runtime"
 import { Tracker } from "../voice/tracker"
 import { Focus } from "../voice/focus"
@@ -26,7 +27,9 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
     const config = useTuiConfig()
     const toast = useToast()
     const renderer = useRenderer()
+    const command = useCommandDialog()
     const tracker = Tracker.create()
+    const [requested, setRequested] = createSignal(config.voice === true)
     const [state, setState] = createSignal<Extract<VoiceEvent, { type: "state" }>["state"]>("off")
     const [focused, setFocused] = createSignal(false)
     const [binding, setBinding] = createSignal("")
@@ -59,8 +62,27 @@ export const { use: useVoice, provider: VoiceProvider } = createSimpleContext({
     }
 
     function enabled() {
-      return !disposed && process.platform === "linux" && config.voice !== false && sync.ready && local.model.ready
+      return !disposed && process.platform === "linux" && requested() && sync.ready && local.model.ready
     }
+
+    command.register(() => [
+      {
+        title: requested() ? "Disable voice" : "Enable voice",
+        value: "voice.toggle",
+        category: "Voice",
+        enabled: process.platform === "linux",
+        slash: { name: "voice" },
+        onSelect(dialog) {
+          clearTimeout(retry)
+          retry = undefined
+          cooling = false
+          failures = 0
+          warned = false
+          setRequested((value) => !value)
+          dialog.clear()
+        },
+      },
+    ])
 
     const active = () => focused() && (state() === "listening" || state() === "speaking")
 
