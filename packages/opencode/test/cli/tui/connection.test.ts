@@ -19,6 +19,19 @@ const remote: Owner.Info = {
 }
 
 describe("tui connection", () => {
+  test("subscribes in the running owner's session directory instead of the launch directory", async () => {
+    const result = await resolve({
+      sessionID: "ses_remote",
+      directory: "/launch",
+      backend,
+      owner: { id: "origin" },
+      find: async () => ({ ...remote, directory: "/session" }),
+    })
+    expect(result.id).toBe("remote:/session")
+    expect(result.directory).toBe("/session")
+    expect(result.url).toBe(remote.url)
+  })
+
   test("keeps the origin backend for a non-running session", async () => {
     const result = await resolve({
       sessionID: "ses_idle",

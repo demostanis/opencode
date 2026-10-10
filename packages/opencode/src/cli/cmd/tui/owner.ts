@@ -20,7 +20,7 @@ export namespace Owner {
   })
 
   type Record = z.infer<typeof Entry>
-  export type Info = Record & { url: string }
+  export type Info = Record & { url: string; directory?: string }
 
   function open(root: string) {
     const db = new Database(location(root), { create: true })
@@ -151,7 +151,7 @@ export namespace Owner {
       probe?: (info: Info) => boolean | Promise<boolean>
       alive?: (pid: number) => boolean | Promise<boolean>
     } = {},
-  ) {
+  ): Promise<Info | undefined> {
     const root = input.root ?? path.join(Global.Path.state, "tui")
     await fs.mkdir(root, { recursive: true, mode: 0o700 })
     const db = open(root)
@@ -176,12 +176,12 @@ export namespace Owner {
         if (info.version !== version || !(await (input.probe ?? probe)(info))) continue
         const latest = db
           .query(
-            "SELECT backend.url FROM active_session JOIN backend ON backend.id = active_session.backend_id WHERE active_session.session_id = ? AND active_session.backend_id = ?",
+            "SELECT backend.url, active_session.directory FROM active_session JOIN backend ON backend.id = active_session.backend_id WHERE active_session.session_id = ? AND active_session.backend_id = ?",
           )
-          .get(sessionID, info.id) as { url: string | null } | null
+          .get(sessionID, info.id) as { url: string | null; directory: string } | null
         if (latest?.url === info.url) {
           db.close()
-          return info
+          return { ...info, directory: latest.directory }
         }
       }
     }

@@ -19,10 +19,11 @@ export async function resolve(input: {
 }): Promise<Backend> {
   const info = await (input.find ?? Owner.find)(input.sessionID)
   if (!info || info.id === input.owner?.id) return input.backend
+  const directory = info.directory ?? input.directory
   return {
-    id: `${info.id}:${input.directory}`,
+    id: `${info.id}:${directory}`,
     url: info.url,
-    directory: input.directory,
+    directory,
     headers: Owner.headers(info),
   }
 }

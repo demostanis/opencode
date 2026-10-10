@@ -121,7 +121,6 @@ async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
 import type { EventSource } from "./context/sdk"
 import { ConnectionProvider, useConnection } from "./context/connection"
 import type { Owner } from "./owner"
-import { resume } from "./resume"
 
 export function tui(input: {
   url: string
@@ -315,12 +314,14 @@ function App() {
   const args = useArgs()
   const connection = useConnection()
   const navigate = (sessionID: string) => {
-    resume({
-      sessionID,
-      fork: args.fork,
-      forkSession: async (id) => (await sdk.client.session.fork({ sessionID: id })).data?.id,
-    })
-      .then((id) => route.navigate({ type: "session", sessionID: id }))
+    connection
+      .open(
+        sessionID,
+        sync.session.get(sessionID)?.directory ?? sdk.directory ?? process.cwd(),
+        undefined,
+        undefined,
+        args.fork,
+      )
       .catch(toast.error)
   }
   onMount(() => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Rpc } from "../../src/util/rpc"
+import { tmpdir } from "../fixture/fixture"
 
 type Target = {
   postMessage(data: string): void
@@ -7,6 +8,40 @@ type Target = {
 }
 
 describe("rpc", () => {
+  test("rejects startup and future calls when a real worker fails before ready", async () => {
+    await using dir = await tmpdir()
+    const file = `${dir.path}/worker.ts`
+    await Bun.write(file, 'throw new Error("startup failed")')
+    const worker = new Worker(file)
+    const client = Rpc.client<{ ping(input: string): string }>(worker)
+    try {
+      await expect(client.call("ping", "hello")).rejects.toThrow("startup failed")
+      await expect(client.call("ping", "again")).rejects.toThrow("startup failed")
+    } finally {
+      worker.terminate()
+    }
+  })
+
+  test("rejects pending and future calls when a ready worker crashes", async () => {
+    await using dir = await tmpdir()
+    const file = `${dir.path}/worker.ts`
+    await Bun.write(
+      file,
+      `
+      onmessage = () => { throw new Error("worker crashed") }
+      postMessage(JSON.stringify({ type: "rpc.ready" }))
+    `,
+    )
+    const worker = new Worker(file)
+    const client = Rpc.client<{ ping(input: string): string }>(worker)
+    try {
+      await expect(client.call("ping", "hello")).rejects.toThrow("worker crashed")
+      await expect(client.call("ping", "again")).rejects.toThrow("worker crashed")
+    } finally {
+      worker.terminate()
+    }
+  })
+
   test("waits for the listener before sending requests", async () => {
     const sent: string[] = []
     const target: Target = {

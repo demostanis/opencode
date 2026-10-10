@@ -8,7 +8,7 @@ import { createOpencodeClient, type SessionSearchHit } from "@opencode-ai/sdk/v2
 import { resume } from "../resume"
 
 const ctx = createContext<{
-  open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string): Promise<void>
+  open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string, fork?: boolean): Promise<void>
   initial: boolean
 }>()
 
@@ -23,7 +23,7 @@ export function ConnectionProvider(
   const [initial, setInitial] = createSignal(true)
 
   const value = {
-    async open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string) {
+    async open(sessionID: string, directory: string, search?: SessionSearchHit, query?: string, fork?: boolean) {
       const next = await resolve({ sessionID, directory, backend: props.backend, owner: props.owner })
       const client = createOpencodeClient({
         baseUrl: next.url,
@@ -33,6 +33,7 @@ export function ConnectionProvider(
       })
       const id = await resume({
         sessionID,
+        fork,
         forkSession: async (id) => (await client.session.fork({ sessionID: id })).data?.id,
       })
       const match =

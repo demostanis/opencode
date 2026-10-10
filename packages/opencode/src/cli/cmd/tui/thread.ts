@@ -194,7 +194,7 @@ export const TuiThreadCommand = cmd({
         ),
       })
       worker.onerror = (e) => {
-        Log.Default.error(e)
+        Log.Default.error("TUI worker failed", { message: e.message, error: e.error?.stack ?? String(e.error) })
         owner?.release().catch(() => {})
       }
 

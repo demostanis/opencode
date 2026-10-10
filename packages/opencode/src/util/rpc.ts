@@ -31,10 +31,20 @@ export namespace Rpc {
   export function client<T extends Definition>(target: {
     postMessage: (data: string) => void | null
     onmessage: ((this: Worker, ev: MessageEvent<any>) => any) | null
+    addEventListener?: (type: "error", listener: (event: ErrorEvent) => void) => void
   }) {
     const pending = new Map<number, { resolve: (result: any) => void; reject: (error: Error) => void }>()
     const listeners = new Map<string, Set<(data: any) => void>>()
     const ready = Promise.withResolvers<void>()
+    void ready.promise.catch(() => {})
+    let failure: Error | undefined
+    target.addEventListener?.("error", (event) => {
+      const err = event.error instanceof Error ? event.error : new Error(event.message || "Worker failed")
+      failure = err
+      ready.reject(err)
+      pending.forEach((call) => call.reject(err))
+      pending.clear()
+    })
     let id = 0
     target.onmessage = async (evt) => {
       const parsed = JSON.parse(evt.data)
@@ -68,6 +78,7 @@ export namespace Rpc {
         input: Parameters<T[Method]>[0],
       ): Promise<ReturnType<T[Method]>> {
         await ready.promise
+        if (failure) throw failure
         const key = id++
         return new Promise((resolve, reject) => {
           pending.set(key, { resolve, reject })

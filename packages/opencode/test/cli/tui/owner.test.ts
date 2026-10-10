@@ -6,6 +6,18 @@ import { Owner } from "../../../src/cli/cmd/tui/owner"
 import { tmpdir } from "../../fixture/fixture"
 
 describe("tui owner", () => {
+  test("returns the active session directory rather than the backend launch directory", async () => {
+    await using tmp = await tmpdir()
+    const root = path.join(tmp.path, "state")
+    const owner = await Owner.create({ dir: "/launch", root })
+    await owner.ready("http://127.0.0.1:12345")
+    owner.active("ses_test", "/session", true)
+    const info = await Owner.find("ses_test", { root, probe: async () => true })
+    expect(info?.dir).toBe("/launch")
+    expect(info?.directory).toBe("/session")
+    await owner.release()
+  })
+
   test("registers independent backends and active sessions", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, "state")
