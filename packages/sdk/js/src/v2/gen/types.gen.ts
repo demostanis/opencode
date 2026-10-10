@@ -1763,6 +1763,10 @@ export type McpResource = {
 
 export type SessionSearchStatus = {
   indexing: boolean
+  ready: boolean
+  refreshed: number | null
+  parts: number
+  conversations: number
 }
 
 export type SessionSearchHit = {

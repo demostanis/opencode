@@ -362,7 +362,11 @@ describe("conversation search", () => {
         }
         await job
         expect(seen).toBe(true)
-        expect(SessionSearch.status()).toEqual({ indexing: false })
+        const status = SessionSearch.Status.parse(SessionSearch.status())
+        expect(status).toMatchObject({ indexing: false, ready: true })
+        expect(status.parts).toBeGreaterThanOrEqual(401)
+        expect(status.conversations).toBeGreaterThanOrEqual(1)
+        expect(status.refreshed).toBeGreaterThan(0)
         await Session.remove(session.id)
       },
     })

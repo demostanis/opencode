@@ -9,6 +9,7 @@ import { Log } from "@/util/log"
 import { Session } from "."
 import { MessageID, PartID, SessionID } from "./schema"
 import type { rpc } from "./search-worker"
+import { SearchIndex } from "./search-index"
 
 declare const OPENCODE_SEARCH_WORKER_PATH: string | undefined
 
@@ -37,7 +38,15 @@ export namespace SessionSearch {
     })
     .meta({ ref: "SessionSearchHit" })
   export type Hit = z.infer<typeof Hit>
-  export const Status = z.object({ indexing: z.boolean() }).meta({ ref: "SessionSearchStatus" })
+  export const Status = z
+    .object({
+      indexing: z.boolean(),
+      ready: z.boolean(),
+      refreshed: z.number().nullable(),
+      parts: z.number().int().nonnegative(),
+      conversations: z.number().int().nonnegative(),
+    })
+    .meta({ ref: "SessionSearchStatus" })
 
   // Queries use read-only connections; neither indexing nor cache writes can hold up the conversation database.
   export class Reader {
@@ -102,9 +111,20 @@ export namespace SessionSearch {
   type State = { reader: Reader; sync: () => Promise<void>; client: ReturnType<typeof Rpc.client<typeof rpc>> }
   const clients = new WeakMap<object, Promise<State>>()
   let indexing = false
+  let summary: { file: string; time: number; data: ReturnType<typeof SearchIndex.status> } | undefined
 
   export function status() {
-    return { indexing }
+    const file = `${Database.Path}.search-v2`
+    if (!summary || summary.file !== file || Date.now() - summary.time >= 5000) {
+      summary = { file, time: Date.now(), data: SearchIndex.status(file) }
+    }
+    return {
+      indexing: indexing || summary.data.expires > Date.now(),
+      ready: summary.data.ready,
+      refreshed: summary.data.refreshed,
+      parts: summary.data.parts,
+      conversations: summary.data.conversations,
+    }
   }
 
   function open() {
@@ -121,6 +141,7 @@ export namespace SessionSearch {
       const client = Rpc.client<typeof rpc>(worker)
       const off = client.on<{ indexing: boolean }>("status", (event) => {
         indexing = event.indexing
+        summary = undefined
       })
       const failure = client.on<string>("failure", (error) => Log.Default.warn("search indexing failed", { error }))
       const initialized = await client.call("init", { source: Database.Path, cache: `${Database.Path}.search-v2` })
@@ -150,8 +171,15 @@ export namespace SessionSearch {
         }, 100)
       }
       GlobalBus.on("event", events)
+      const interval = setInterval(() => {
+        void client
+          .call("refresh", undefined)
+          .catch((err: unknown) => Log.Default.warn("search refresh failed", { error: String(err) }))
+      }, 30_000)
+      interval.unref()
       Database.onclose(() => {
         clearTimeout(timer)
+        clearInterval(interval)
         GlobalBus.off("event", events)
         off()
         failure()

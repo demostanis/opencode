@@ -3,7 +3,19 @@ import { Clipboard } from "@tui/util/clipboard"
 import { Selection } from "@tui/util/selection"
 import { MouseButton, TextAttributes } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"
-import { Switch, Match, createEffect, untrack, ErrorBoundary, createSignal, onMount, onCleanup, batch, Show, on } from "solid-js"
+import {
+  Switch,
+  Match,
+  createEffect,
+  untrack,
+  ErrorBoundary,
+  createSignal,
+  onMount,
+  onCleanup,
+  batch,
+  Show,
+  on,
+} from "solid-js"
 import { win32DisableProcessedInput, win32FlushInputBuffer, win32InstallCtrlCGuard } from "./win32"
 import { Installation } from "@/installation"
 import { Flag } from "@/flag/flag"
@@ -21,6 +33,7 @@ import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command
 import { DialogAgent } from "@tui/component/dialog-agent"
 import { DialogSessionList } from "@tui/component/dialog-session-list"
 import { DialogSearch } from "@tui/component/dialog-search"
+import { DialogSearchStatus } from "@tui/component/dialog-search-status"
 import { DialogWorkspaceList } from "@tui/component/dialog-workspace-list"
 import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
@@ -367,6 +380,12 @@ function App() {
       category: "Session",
       slash: { name: "search" },
       onSelect: () => dialog.replace(() => <DialogSearch />),
+    },
+    {
+      title: "Search index status",
+      value: "session.search.status",
+      category: "Session",
+      onSelect: () => dialog.replace(() => <DialogSearchStatus />),
     },
     {
       title: "Switch session",

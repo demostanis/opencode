@@ -86,20 +86,19 @@ export function DialogSearch(
   )
   const waiting = createMemo(() => results.loading || (valid() && query().trim() !== filter().trim()))
 
-  createEffect(() => {
-    if (!results.loading) {
-      setIndexing(false)
-      return
-    }
+  onMount(() => {
     const poll = () =>
       sdk.client.session
         .searchStatus()
         .then((response) => {
-          if (!disposed && results.loading) setIndexing(response.data?.indexing ?? false)
+          if (disposed) return
+          const active = response.data?.indexing ?? false
+          if (indexing() && !active) setRevision(++version)
+          setIndexing(active)
         })
         .catch(() => {})
     void poll()
-    const timer = setInterval(poll, 100)
+    const timer = setInterval(poll, 500)
     onCleanup(() => clearInterval(timer))
   })
 
@@ -134,7 +133,7 @@ export function DialogSearch(
 
   return (
     <DialogSelect
-      title={`${props.sessionID ? "Find in conversation" : "Search all conversations"}${hits().length ? ` (${hits().length}${hits().length === 50 ? "+" : ""})${!indexed() || indexing() ? " - Indexing..." : ""}` : ""}`}
+      title={`${props.sessionID ? "Find in conversation" : "Search all conversations"}${hits().length ? ` (${hits().length}${hits().length === 50 ? "+" : ""})` : ""}${!indexed() || indexing() ? " - Indexing..." : ""}`}
       placeholder="Search contents"
       options={options()}
       skipFilter

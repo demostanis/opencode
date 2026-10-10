@@ -1,6 +1,27 @@
 import { Database as SQLite } from "bun:sqlite"
+import { existsSync } from "node:fs"
 
 export class SearchIndex {
+  static status(file: string) {
+    if (!existsSync(file)) return { ready: false, refreshed: null, parts: 0, conversations: 0, expires: 0 }
+    using db = new SQLite(file, { readonly: true })
+    db.run("PRAGMA busy_timeout = 1000")
+    const meta = db.query<{ stamp: string }, []>("SELECT stamp FROM part_search_meta WHERE id = 1").get()
+    const counts = db
+      .query<
+        { parts: number; conversations: number },
+        []
+      >("SELECT count(*) AS parts, count(DISTINCT session_id) AS conversations FROM part_search")
+      .get()!
+    const lease = db.query<{ expires: number }, []>("SELECT expires FROM part_search_lock WHERE id = 1").get()
+    return {
+      ready: Boolean(meta),
+      refreshed: meta ? Number(meta.stamp) : null,
+      ...counts,
+      expires: lease?.expires ?? 0,
+    }
+  }
+
   readonly source: SQLite
   readonly cache: SQLite
   readonly file: string
@@ -69,19 +90,21 @@ export class SearchIndex {
     this.job = (async () => {
       this.indexing = true
       notify(true)
-      let cursor = 0
+      let cursor = this.source
+        .query<{ end: number }, []>("SELECT coalesce(max(rowid), 0) + 1 AS end FROM main.part")
+        .get()!.end
       while (true) {
         // Bound the source rows before evaluating JSON, rather than scanning the whole corpus for 100 changes.
         const rows = this.source
           .query<{ rowid: number }, [number]>(
             `
-          SELECT rowid FROM main.part WHERE rowid > ? ORDER BY rowid LIMIT 100
+          SELECT rowid FROM main.part WHERE rowid < ? ORDER BY rowid DESC LIMIT 100
         `,
           )
           .all(cursor)
         if (!rows.length) break
         const end = rows.at(-1)!.rowid
-        this.range(cursor, end)
+        this.range(end - 1, cursor - 1)
         this.cache.query("UPDATE part_search_lock SET expires = ? WHERE owner = ?").run(Date.now() + 60_000, this.owner)
         cursor = end
         await Bun.sleep(0)
@@ -108,14 +131,14 @@ export class SearchIndex {
         cursor = rows.at(-1)!.rowid
         await Bun.sleep(0)
       }
-      this.version = version
       this.cache
         .query(
           "INSERT INTO part_search_meta(id, stamp) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET stamp = excluded.stamp",
         )
         .run(String(Date.now()))
-    })().finally(() => {
+      this.version = version
       this.time = Date.now()
+    })().finally(() => {
       this.indexing = false
       this.cache.query("DELETE FROM part_search_lock WHERE owner = ?").run(this.owner)
       this.job = undefined
