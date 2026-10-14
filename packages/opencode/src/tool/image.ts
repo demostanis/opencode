@@ -5,6 +5,8 @@ import { Filesystem } from "../util/filesystem"
 import { Global } from "../global"
 import { codexAuthHeaders } from "../plugin/codex"
 import { Instance } from "../project/instance"
+import { Config } from "../config/config"
+import { Provider } from "../provider/provider"
 import { assertExternalDirectory } from "./external-directory"
 
 type ImageItem = {
@@ -15,7 +17,6 @@ type ImageItem = {
   result?: string
 }
 
-const ORCHESTRATOR_MODEL = "gpt-5.5"
 const DEFAULT_MODEL = "gpt-image-2.5-flare"
 const OutputFormat = z.enum(["png", "jpeg", "webp"])
 
@@ -232,6 +233,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
     const images: string[] = []
     // Preserve input and permission-request order for local references.
     for (const value of refs) images.push(await reference(value, ctx))
+    const cfg = await Config.get()
     const headers = await codexAuthHeaders()
     headers.set("content-type", "application/json")
 
@@ -240,7 +242,7 @@ export const ImageGenerateTool = Tool.define("image_generate", {
       headers,
       signal: ctx.abort,
       body: JSON.stringify({
-        model: ORCHESTRATOR_MODEL,
+        model: cfg.lightweight_model ? Provider.parseModel(cfg.lightweight_model).modelID : "gpt-5.4-mini",
         instructions: "You generate images by calling the image_generation tool. Do not answer with text only.",
         input: [
           {

@@ -134,8 +134,8 @@ part
 
 ## demolinux
 
-The current release is `3.0.9-demolinux`, with `pkgver=3.0.9+demolinux`,
-`_pkgver=3.0.9-demolinux`, and `pkgrel=1`.
+The current release is `3.0.10-demolinux`, with `pkgver=3.0.10+demolinux`,
+`_pkgver=3.0.10-demolinux`, and `pkgrel=1`.
 
 When I say "sync demolinux", increment the semver patch version unless explicitly
 overridden (for example, `3.0.0-demolinux` -> `3.0.1-demolinux`). Push `dev`,

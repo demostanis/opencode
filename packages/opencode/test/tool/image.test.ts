@@ -41,10 +41,11 @@ async function intercept(
   mock: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
   fn: () => Promise<void>,
 ) {
+  await using tmp = await tmpdir()
   const original = globalThis.fetch
   globalThis.fetch = mock as typeof fetch
   try {
-    await fn()
+    await Instance.provide({ directory: tmp.path, fn })
   } finally {
     globalThis.fetch = original
   }
@@ -65,6 +66,30 @@ function response() {
 }
 
 describe("tool.image", () => {
+  test("uses the configured lightweight model for orchestration", async () => {
+    await using tmp = await tmpdir({ config: { lightweight_model: "openai/gpt-6-luna" } })
+    await auth(async () => {
+      await intercept(
+        async (_input, init) => {
+          expect(JSON.parse(init?.body as string)).toMatchObject({
+            model: "gpt-6-luna",
+            tools: [{ model: "gpt-image-2.5-flare" }],
+          })
+          return response()
+        },
+        async () => {
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              const tool = await ImageGenerateTool.init()
+              await tool.execute({ prompt: "A red circle", short_name: "test" }, ctx)
+            },
+          })
+        },
+      )
+    })
+  })
+
   test.each([undefined, "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1.5"] as const)(
     "routes transparent backgrounds for model %s without switching models",
     async (model) => {
@@ -78,7 +103,12 @@ describe("tool.image", () => {
           async () => {
             const tool = await ImageGenerateTool.init()
             await tool.execute(
-              { prompt: "A glass teapot", short_name: "transparent", model, background: "transparent" },
+              {
+                prompt: "A glass teapot",
+                short_name: "transparent",
+                model,
+                background: "transparent",
+              },
               ctx,
             )
           },
@@ -112,6 +142,7 @@ describe("tool.image", () => {
       await intercept(
         async (_input, init) => {
           expect(JSON.parse(init?.body as string)).toMatchObject({
+            model: "gpt-5.4-mini",
             tools: [{ model: "gpt-image-2.5-flare" }],
           })
           return response()
@@ -204,7 +235,10 @@ describe("tool.image", () => {
         {
           role: "user",
           content: [
-            { type: "input_text", text: expect.stringContaining("Use the provided reference image") },
+            {
+              type: "input_text",
+              text: expect.stringContaining("Use the provided reference image"),
+            },
             { type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` },
           ],
         },
@@ -282,7 +316,9 @@ describe("tool.image", () => {
     expect(bodies).toMatchObject([
       {
         input: [
-          { content: [{ type: "input_text" }, { type: "input_image", image_url: "https://example.com/source.png" }] },
+          {
+            content: [{ type: "input_text" }, { type: "input_image", image_url: "https://example.com/source.png" }],
+          },
         ],
       },
       {
@@ -325,7 +361,10 @@ describe("tool.image", () => {
       input: [
         {
           content: [
-            { type: "input_text", text: expect.stringContaining("reference images in their supplied order") },
+            {
+              type: "input_text",
+              text: expect.stringContaining("reference images in their supplied order"),
+            },
             { type: "input_image", image_url: "https://example.com/subject.png" },
             { type: "input_image", image_url: `data:image/png;base64,${png.toString("base64")}` },
           ],
