@@ -1414,6 +1414,10 @@ export class Session2 extends HeyApiClient {
         providerID: string
         modelID: string
       }
+      history?: Array<{
+        role: "user" | "assistant"
+        content: string
+      }>
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1427,6 +1431,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "question" },
             { in: "body", key: "model" },
+            { in: "body", key: "history" },
           ],
         },
       ],

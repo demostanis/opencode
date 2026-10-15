@@ -70,7 +70,14 @@ test("btw answers during an active turn without changing history or status", asy
         const res = await Server.Default().request(`/session/${session.id}/btw`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-opencode-directory": tmp.path },
-          body: JSON.stringify({ model, question: "What is the main task?" }),
+          body: JSON.stringify({
+            model,
+            question: "What is the main task?",
+            history: [
+              { role: "user", content: "Previous BTW question" },
+              { role: "assistant", content: "Previous BTW answer" },
+            ],
+          }),
         })
         expect({ status: res.status, body: await res.json() }).toEqual({
           status: 200,
@@ -79,6 +86,12 @@ test("btw answers during an active turn without changing history or status", asy
         expect(requests).toHaveLength(2)
         expect(requests[1]).toContain("Main task context")
         expect(requests[1]).toContain("What is the main task?")
+        const messages = JSON.parse(requests[1]).messages
+        expect(messages.slice(-3)).toEqual([
+          { role: "user", content: "Previous BTW question" },
+          { role: "assistant", content: "Previous BTW answer" },
+          { role: "user", content: "What is the main task?" },
+        ])
         expect(JSON.parse(requests[1]).tools ?? []).toHaveLength(0)
         expect(SessionStatus.get(session.id).type).toBe("busy")
         expect(await Session.messages({ sessionID: session.id })).toEqual(before)

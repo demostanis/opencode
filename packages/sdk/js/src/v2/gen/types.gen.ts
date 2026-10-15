@@ -2958,6 +2958,10 @@ export type SessionBtwData = {
       providerID: string
       modelID: string
     }
+    history?: Array<{
+      role: "user" | "assistant"
+      content: string
+    }>
   }
   path: {
     sessionID: string
