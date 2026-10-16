@@ -101,6 +101,8 @@ export function DialogModel(props: { providerID?: string }) {
             return true
           }),
           sortBy(
+            (x) =>
+              !favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID),
             (x) => x.footer !== "Free",
             (x) => x.title,
           ),
@@ -121,7 +123,10 @@ export function DialogModel(props: { providerID?: string }) {
 
     if (needle) {
       return [
-        ...fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
+        ...sortBy(
+          fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
+          (x) => !favorites.some((item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID),
+        ),
         ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
       ]
     }
