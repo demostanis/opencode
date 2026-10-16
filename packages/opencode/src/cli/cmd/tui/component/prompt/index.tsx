@@ -1218,6 +1218,16 @@ export function Prompt(props: PromptProps) {
                   clear(true)
                   return
                 }
+                if (
+                  keybind.match("input_delete_to_line_start", e) &&
+                  input.cursorOffset > 0 &&
+                  input.plainText[input.cursorOffset - 1] !== "\n"
+                ) {
+                  history.append({
+                    ...store.prompt,
+                    mode: store.mode,
+                  })
+                }
                 if (keybind.match("app_exit", e)) {
                   if (store.prompt.input === "") {
                     await exit()
