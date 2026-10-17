@@ -275,6 +275,19 @@ export function Session() {
 
   let scroll: ScrollBoxRenderable
   let prompt: PromptRef
+  createEffect(
+    on(
+      () => route.sessionID,
+      (id) => {
+        onCleanup(
+          sync.session.watch(
+            id,
+            () => !!scroll && !scroll.isDestroyed && scroll.scrollTop < scroll.scrollHeight - scroll.viewport.height,
+          ),
+        )
+      },
+    ),
+  )
   const keybind = useKeybind()
   const dialog = useDialog()
   const renderer = useRenderer()

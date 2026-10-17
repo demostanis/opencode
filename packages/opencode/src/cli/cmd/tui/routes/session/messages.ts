@@ -14,7 +14,7 @@ export function order(messages: Message[]) {
     .concat([...deferred.values()])
 }
 
-export function retain(messages: Message[], pinned: ReadonlySet<string>, limit = 100) {
-  if (messages.length <= limit) return messages
+export function retain(messages: Message[], pinned: ReadonlySet<string>, limit = 100, paused = false) {
+  if (paused || messages.length <= limit) return messages
   return messages.filter((msg, index) => index >= messages.length - limit || pinned.has(msg.id))
 }

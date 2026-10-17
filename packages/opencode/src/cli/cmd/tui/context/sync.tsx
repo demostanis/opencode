@@ -116,6 +116,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const sdk = useSDK()
     const kv = useKV()
     const pinned = new Map<string, Set<string>>()
+    const readers = new Map<string, () => boolean>()
     let revision = 0
     const [autoaccept] = kv.signal<"none" | "edit" | "yolo" | "autoreject">("permission_auto_accept", "edit")
 
@@ -425,7 +426,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     function trim(id: string) {
       const messages = store.message[id] ?? []
-      const kept = retain(messages, pinned.get(id) ?? new Set<string>())
+      const kept = retain(messages, pinned.get(id) ?? new Set<string>(), 100, readers.get(id)?.())
       if (kept.length === messages.length) return
       const ids = new Set(kept.map((msg) => msg.id))
       const removed = messages.filter((msg) => !ids.has(msg.id)).map((msg) => msg.id)
@@ -543,6 +544,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
 
       session: {
+        watch(id: string, reading: () => boolean) {
+          readers.set(id, reading)
+          return () => {
+            readers.delete(id)
+            trim(id)
+          }
+        },
         async reveal(id: string, mid: string, signal?: AbortSignal) {
           const ticket = ++revision
           await result.session.sync(id)

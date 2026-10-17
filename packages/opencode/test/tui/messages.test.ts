@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AssistantMessage, UserMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2"
 import { order, retain } from "../../src/cli/cmd/tui/routes/session/messages"
 
 function user(id: string, deferred = false): UserMessage {
@@ -67,6 +67,30 @@ describe("TUI message order", () => {
 })
 
 describe("TUI search history retention", () => {
+  test("does not evict history while reading above the bottom", () => {
+    const messages = Array.from({ length: 100 }, (_, index) => user(String(index)))
+    const pinned = new Set<string>()
+    const kept = Array.from({ length: 120 }, (_, index) => user(String(index + 100))).reduce<Message[]>(
+      (messages, message) => retain([...messages, message], pinned, 100, true),
+      messages,
+    )
+    expect(kept).toHaveLength(220)
+    expect(kept.slice(0, 100)).toEqual(messages)
+    expect(retain(kept, pinned, 100, true)).toBe(kept)
+    expect(retain(kept, pinned)).toEqual(kept.slice(-100))
+  })
+
+  test("keeps search hits when trimming resumes after reading history", () => {
+    const messages = Array.from({ length: 120 }, (_, index) => user(String(index)))
+    const pinned = new Set(["2", "3"])
+    expect(retain(messages, pinned, 100, true)).toBe(messages)
+    expect(retain(messages, pinned).map((msg) => msg.id)).toEqual([
+      "2",
+      "3",
+      ...messages.slice(-100).map((msg) => msg.id),
+    ])
+  })
+
   test("keeps a bounded recent window plus the selected older message and parent", () => {
     const messages = Array.from({ length: 120 }, (_, index) => user(String(index)))
     const kept = retain(messages, new Set(["2", "3"]))
