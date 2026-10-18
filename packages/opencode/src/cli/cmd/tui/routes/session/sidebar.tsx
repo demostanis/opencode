@@ -125,7 +125,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     const seen = new Set<string>()
     return messages().flatMap((message) =>
       (sync.data.part[message.id] ?? []).flatMap((part) => {
-        if (part.type !== "tool" || part.tool !== "image_generate" || part.state.status !== "completed") return []
+        if (
+          part.type !== "tool" ||
+          !["image_generate", "image_generation"].includes(part.tool) ||
+          part.state.status !== "completed"
+        )
+          return []
         const files = (part.state.metadata?.files ?? []) as Array<{
           path?: string
           mime?: string

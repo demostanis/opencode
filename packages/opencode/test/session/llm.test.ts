@@ -242,6 +242,201 @@ function createHangingResponse(chunks: unknown[]) {
 }
 
 describe("session.llm.stream", () => {
+  test.each([undefined, false, true])("replays native history using the merged store option %s", async (store) => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const source = await loadFixture("openai", "gpt-5.2")
+    const request = waitRequest(
+      "/responses",
+      createEventResponse([
+        {
+          type: "response.completed",
+          response: { incomplete_details: null, usage: { input_tokens: 1, output_tokens: 1 } },
+        },
+      ]),
+    )
+    await using tmp = await tmpdir({
+      config: {
+        enabled_providers: ["openai"],
+        provider: {
+          openai: {
+            npm: "@ai-sdk/openai",
+            models: { [source.model.id]: source.model },
+            options: { apiKey: "test", baseURL: `${server.url.origin}/v1` },
+          },
+        },
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await Provider.getModel(ProviderID.openai, ModelID.make(source.model.id))
+        // Explicit false must override a model's store:true, not just follow provider defaults.
+        if (store === false) model.options.store = true
+        const sessionID = SessionID.make("session-native-replay")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          ultra_mode_allowed: false,
+          options: store === undefined ? {} : { store },
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const stream = await LLM.stream({
+          sessionID,
+          model,
+          agent,
+          user: {
+            id: MessageID.make("user-native-replay"),
+            sessionID,
+            role: "user",
+            time: { created: 0 },
+            agent: agent.name,
+            model: { providerID: model.providerID, modelID: model.id },
+          },
+          system: [],
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "text", text: "Before" },
+                {
+                  type: "tool-call",
+                  providerExecuted: true,
+                  toolCallId: "search-native",
+                  toolName: "websearch",
+                  input: {},
+                },
+                {
+                  type: "tool-result",
+                  toolCallId: "search-native",
+                  toolName: "websearch",
+                  output: { type: "json", value: { action: { type: "search", query: "Bun" } } },
+                },
+                {
+                  type: "tool-call",
+                  providerExecuted: true,
+                  toolCallId: "image-native",
+                  toolName: "image_generation",
+                  input: {},
+                },
+                {
+                  type: "tool-result",
+                  toolCallId: "image-native",
+                  toolName: "image_generation",
+                  output: { type: "json", value: { result: "Zm9v" } },
+                },
+                { type: "text", text: "After" },
+              ],
+            },
+            { role: "user", content: "Continue" },
+          ],
+          abort: new AbortController().signal,
+          tools: {},
+        })
+        expect((await Array.fromAsync(stream.fullStream)).filter((chunk) => chunk.type === "error")).toEqual([])
+        const capture = await request
+        expect(capture.body.store).toBe(store === true)
+        const items = capture.body.input as { type?: string; id?: string; role?: string; content?: unknown }[]
+        expect(items.some((item) => item.type === "function_call_output" || item.type === "function_call")).toBe(false)
+        if (store === true) {
+          // The existing non-Azure transport strips IDs; middleware still leaves native references intact.
+          expect(items.filter((item) => item.type === "item_reference")).toHaveLength(2)
+          expect(JSON.stringify(items)).not.toContain("Zm9v")
+          return
+        }
+        expect(items.filter((item) => item.role !== "developer" && item.role !== "system")).toEqual([
+          { role: "assistant", content: [{ type: "output_text", text: "Before" }] },
+          {
+            role: "assistant",
+            content: [{ type: "output_text", text: 'websearch: {"action":{"type":"search","query":"Bun"}}' }],
+          },
+          { role: "assistant", content: [{ type: "output_text", text: "image_generation: Generated image" }] },
+          { role: "user", content: [{ type: "input_image", image_url: "data:image/png;base64,Zm9v" }] },
+          { role: "assistant", content: [{ type: "output_text", text: "After" }] },
+          { role: "user", content: [{ type: "input_text", text: "Continue" }] },
+        ])
+        expect(JSON.stringify(items)).not.toContain("search-native")
+        expect(JSON.stringify(items)).not.toContain("image-native")
+      },
+    })
+  })
+
+  test.each([
+    ["allow", false, ["web_search", "image_generation"]],
+    ["ask", false, ["websearch", "image_generate"]],
+    ["deny", false, []],
+    ["allow", true, []],
+  ] as const)("selects Responses tools with %s permission and disabled=%s", async (action, disabled, names) => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+    const source = await loadFixture("openai", "gpt-5.2")
+    const request = waitRequest(
+      "/responses",
+      createEventResponse([
+        {
+          type: "response.completed",
+          response: { incomplete_details: null, usage: { input_tokens: 1, output_tokens: 1 } },
+        },
+      ]),
+    )
+    await using tmp = await tmpdir({
+      config: {
+        enabled_providers: ["openai"],
+        provider: {
+          openai: {
+            npm: "@ai-sdk/openai",
+            models: { [source.model.id]: source.model },
+            options: { apiKey: "test", baseURL: `${server.url.origin}/v1` },
+          },
+        },
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await Provider.getModel(ProviderID.openai, ModelID.make(source.model.id))
+        expect((await Provider.getLanguage(model)).provider).toBe("openai.responses")
+        const sessionID = SessionID.make("session-native-tools")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          ultra_mode_allowed: false,
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const stream = await LLM.stream({
+          sessionID,
+          model,
+          agent,
+          permission: [{ permission: "*", pattern: "*", action }],
+          user: {
+            id: MessageID.make("user-native-tools"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderID.openai, modelID: model.id },
+            tools: disabled ? { websearch: false, image_generate: false } : undefined,
+          },
+          system: [],
+          messages: [{ role: "user", content: "Search and draw" }],
+          abort: new AbortController().signal,
+          tools: {
+            websearch: tool({ inputSchema: z.object({}) }),
+            image_generate: tool({ inputSchema: z.object({}) }),
+          },
+        })
+        expect((await Array.fromAsync(stream.fullStream)).filter((chunk) => chunk.type === "error")).toEqual([])
+        const capture = await request
+        expect(
+          ((capture.body.tools ?? []) as { type: string; name?: string }[]).map((item) =>
+            item.type === "function" ? item.name : item.type,
+          ),
+        ).toEqual([...names])
+      },
+    })
+  })
+
   test("sends OpenCode identity on Zen model requests", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")

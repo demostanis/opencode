@@ -17,6 +17,7 @@ import { PermissionNext } from "@/permission"
 import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
+import { nativeResult } from "./native-result"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -98,6 +99,7 @@ export namespace SessionProcessor {
           try {
             let hasTextOutput = false
             let hasToolCall = false
+            let native = false
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -165,6 +167,10 @@ export namespace SessionProcessor {
                     type: "tool",
                     tool: value.toolName,
                     callID: value.id,
+                    metadata: {
+                      ...value.providerMetadata,
+                      ...(value.providerExecuted ? { providerExecuted: true } : {}),
+                    },
                     state: {
                       status: "pending",
                       input: {},
@@ -182,68 +188,85 @@ export namespace SessionProcessor {
 
                 case "tool-call": {
                   const match = toolcalls[value.toolCallId]
-                  if (match) {
-                    hasToolCall = true
-                    const part = await Session.updatePart({
-                      ...match,
-                      tool: value.toolName,
-                      state: {
-                        status: "running",
-                        input: value.input,
-                        time: {
-                          start: Date.now(),
-                        },
+                  const executed = value.providerExecuted || match?.metadata?.providerExecuted === true
+                  if (!executed) hasToolCall = true
+                  const part = await Session.updatePart({
+                    ...match,
+                    id: match?.id ?? PartID.ascending(),
+                    messageID: input.assistantMessage.id,
+                    sessionID: input.assistantMessage.sessionID,
+                    type: "tool",
+                    tool: value.toolName,
+                    callID: value.toolCallId,
+                    state: {
+                      status: "running",
+                      input: value.input,
+                      time: {
+                        start: Date.now(),
                       },
-                      metadata: value.providerMetadata,
+                    },
+                    metadata: {
+                      ...match?.metadata,
+                      ...value.providerMetadata,
+                      ...(executed ? { providerExecuted: true } : {}),
+                    },
+                  })
+                  toolcalls[value.toolCallId] = part as MessageV2.ToolPart
+
+                  if (executed) break
+                  const parts = await MessageV2.parts(input.assistantMessage.id)
+                  const lastThree = parts.slice(-DOOM_LOOP_THRESHOLD)
+
+                  if (
+                    lastThree.length === DOOM_LOOP_THRESHOLD &&
+                    lastThree.every(
+                      (p) =>
+                        p.type === "tool" &&
+                        p.metadata?.providerExecuted !== true &&
+                        p.tool === value.toolName &&
+                        p.state.status !== "pending" &&
+                        JSON.stringify(p.state.input) === JSON.stringify(value.input),
+                    )
+                  ) {
+                    const agent = await Agent.get(input.assistantMessage.agent)
+                    await PermissionNext.ask({
+                      permission: "doom_loop",
+                      patterns: [value.toolName],
+                      sessionID: input.assistantMessage.sessionID,
+                      metadata: {
+                        tool: value.toolName,
+                        input: value.input,
+                      },
+                      always: [value.toolName],
+                      ruleset: agent.permission,
                     })
-                    toolcalls[value.toolCallId] = part as MessageV2.ToolPart
-
-                    const parts = await MessageV2.parts(input.assistantMessage.id)
-                    const lastThree = parts.slice(-DOOM_LOOP_THRESHOLD)
-
-                    if (
-                      lastThree.length === DOOM_LOOP_THRESHOLD &&
-                      lastThree.every(
-                        (p) =>
-                          p.type === "tool" &&
-                          p.tool === value.toolName &&
-                          p.state.status !== "pending" &&
-                          JSON.stringify(p.state.input) === JSON.stringify(value.input),
-                      )
-                    ) {
-                      const agent = await Agent.get(input.assistantMessage.agent)
-                      await PermissionNext.ask({
-                        permission: "doom_loop",
-                        patterns: [value.toolName],
-                        sessionID: input.assistantMessage.sessionID,
-                        metadata: {
-                          tool: value.toolName,
-                          input: value.input,
-                        },
-                        always: [value.toolName],
-                        ruleset: agent.permission,
-                      })
-                    }
                   }
                   break
                 }
                 case "tool-result": {
                   const match = toolcalls[value.toolCallId]
                   if (match && match.state.status === "running") {
-                    const output = value.output?.output ? stripAnsi(value.output.output) : ""
+                    const executed = value.providerExecuted || match.metadata?.providerExecuted === true
+                    const output = executed ? await nativeResult(match, value.output) : value.output
+                    if (executed) native = true
                     await Session.updatePart({
                       ...match,
+                      metadata: {
+                        ...match.metadata,
+                        ...value.providerMetadata,
+                        ...(executed ? { providerExecuted: true } : {}),
+                      },
                       state: {
                         status: "completed",
                         input: value.input ?? match.state.input,
-                        output,
-                        metadata: value.output.metadata,
-                        title: value.output.title,
+                        output: output?.output ? stripAnsi(output.output) : "",
+                        metadata: output.metadata,
+                        title: output.title,
                         time: {
                           start: match.state.time.start,
                           end: Date.now(),
                         },
-                        attachments: value.output.attachments,
+                        attachments: output.attachments,
                       },
                     })
 
@@ -300,10 +323,10 @@ export namespace SessionProcessor {
                     metadata: value.providerMetadata,
                   })
                   const finishReason =
-                    value.finishReason === "unknown"
+                    value.finishReason === "unknown" || (value.finishReason === "tool-calls" && native && !hasToolCall)
                       ? hasToolCall
                         ? "tool-calls"
-                        : hasTextOutput
+                        : hasTextOutput || native
                           ? "stop"
                           : value.finishReason
                       : value.finishReason
@@ -417,7 +440,7 @@ export namespace SessionProcessor {
               if (hasToolCall) {
                 input.assistantMessage.finish = "tool-calls"
                 await Session.updateMessage(input.assistantMessage)
-              } else if (hasTextOutput) {
+              } else if (hasTextOutput || native) {
                 input.assistantMessage.finish = "stop"
                 await Session.updateMessage(input.assistantMessage)
               } else if (emptyResponseRetries < EMPTY_RESPONSE_MAX_RETRIES) {

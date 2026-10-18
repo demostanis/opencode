@@ -12,6 +12,11 @@ import { MessageID } from "../../src/session/schema"
 import { SessionSummary } from "../../src/session/summary"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
+import { PermissionNext } from "../../src/permission"
+import { Global } from "../../src/global"
+import path from "path"
+import { fileURLToPath } from "url"
+import { rm } from "fs/promises"
 
 const model = {
   id: ModelID.make("test-model"),
@@ -229,6 +234,187 @@ describe("session.processor stream retries", () => {
         } finally {
           stream.mockRestore()
           sleep.mockRestore()
+          summarize.mockRestore()
+        }
+      },
+    })
+  })
+})
+
+describe("session.processor native tools", () => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+
+  test.each(["unknown", "tool-calls", "stop", undefined])(
+    "persists web results without input-start and finishes native-only streams (%s)",
+    async (reason) => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const fixture = await setup()
+          const output = {
+            action: { type: "search", query: "Bun" },
+            sources: [{ type: "url", url: "https://bun.sh" }],
+          }
+          const events = [
+            { type: "start-step" },
+            ...[0, 1, 2].flatMap((id) => [
+              {
+                type: "tool-call",
+                toolCallId: `web-${id}`,
+                toolName: "websearch",
+                input: {},
+                providerExecuted: true,
+                providerMetadata: { openai: { itemId: `item-${id}` } },
+              },
+              {
+                type: "tool-result",
+                toolCallId: `web-${id}`,
+                toolName: "websearch",
+                input: {},
+                output,
+                providerExecuted: true,
+              },
+            ]),
+            ...(reason ? [{ ...emptyResponse[1], finishReason: reason }] : []),
+          ]
+          const stream = spyOn(LLM, "stream").mockResolvedValue(fakeStream(events))
+          const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+          const ask = spyOn(PermissionNext, "ask")
+          try {
+            await fixture.processor.process(fixture.input)
+            const parts = await MessageV2.parts(fixture.processor.message.id)
+            const tools = parts.filter((part) => part.type === "tool")
+            expect(tools).toHaveLength(3)
+            expect(tools[0]).toMatchObject({
+              tool: "websearch",
+              metadata: { providerExecuted: true, openai: { itemId: "item-0" } },
+              state: {
+                status: "completed",
+                input: {},
+                title: "Web search",
+                output: JSON.stringify(output),
+                metadata: { native: output },
+              },
+            })
+            expect(fixture.processor.message.finish).toBe("stop")
+            expect(fixture.processor.message.error).toBeUndefined()
+            expect(stream).toHaveBeenCalledTimes(1)
+            expect(ask).not.toHaveBeenCalled()
+          } finally {
+            stream.mockRestore()
+            summarize.mockRestore()
+            ask.mockRestore()
+          }
+        },
+      })
+    },
+  )
+
+  test.each([true, false])("saves native image bytes and attachment IDs (input-start: %s)", async (start) => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const events = [
+          { type: "start-step" },
+          ...(start
+            ? [
+                {
+                  type: "tool-input-start",
+                  id: "image/1",
+                  toolName: "image_generation",
+                  providerExecuted: true,
+                  providerMetadata: { openai: { itemId: "image-item" } },
+                },
+              ]
+            : []),
+          {
+            type: "tool-call",
+            toolCallId: "image/1",
+            toolName: "image_generation",
+            input: {},
+            ...(!start ? { providerExecuted: true, providerMetadata: { openai: { itemId: "image-item" } } } : {}),
+          },
+          {
+            type: "tool-result",
+            toolCallId: "image/1",
+            toolName: "image_generation",
+            input: {},
+            output: { result: png },
+          },
+          { ...emptyResponse[1], finishReason: "tool-calls" },
+        ]
+        const stream = spyOn(LLM, "stream").mockResolvedValue(fakeStream(events))
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+        try {
+          await fixture.processor.process(fixture.input)
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          const part = parts.find((part) => part.type === "tool")
+          expect(part?.metadata).toEqual({ providerExecuted: true, openai: { itemId: "image-item" } })
+          expect(part?.state.status).toBe("completed")
+          if (part?.state.status !== "completed") throw new Error("Missing completed image")
+          expect(part.state.metadata.native).toEqual({ result: png })
+          expect(part.state.title).toBe("Generated image")
+          expect(part.state.attachments).toHaveLength(1)
+          const attachment = part.state.attachments![0]
+          expect(attachment.id).toStartWith("prt_")
+          expect(attachment.sessionID).toBe(fixture.session.id)
+          expect(attachment.messageID).toBe(fixture.processor.message.id)
+          expect(attachment.mime).toBe("image/png")
+          const file = path.join(Global.Path.data, "generated_images", fixture.session.id, "image_1.png")
+          expect(fileURLToPath(attachment.url)).toBe(file)
+          expect(await Bun.file(file).bytes()).toEqual(Buffer.from(png, "base64"))
+          expect(part.state.metadata.files).toEqual([{ path: file, mime: "image/png", shortName: "Generated image" }])
+          expect(part.state.output).toBe(`Generated image: ${file}`)
+          expect(JSON.stringify(part).split(png)).toHaveLength(2)
+          expect(fixture.processor.message.finish).toBe("stop")
+          expect(stream).toHaveBeenCalledTimes(1)
+        } finally {
+          stream.mockRestore()
+          summarize.mockRestore()
+          await rm(path.join(Global.Path.data, "generated_images", fixture.session.id), {
+            recursive: true,
+            force: true,
+          })
+        }
+      },
+    })
+  })
+
+  test("mixed native and local calls still request a local follow-up", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const events = [
+          { type: "start-step" },
+          ...[
+            { toolName: "websearch", providerExecuted: true, output: { action: { type: "search", query: "Bun" } } },
+            {
+              toolName: "local",
+              providerExecuted: false,
+              output: { title: "Local", output: "\u001b[31mok\u001b[0m", metadata: {} },
+            },
+          ].flatMap((tool) => [
+            { type: "tool-call", toolCallId: tool.toolName, input: {}, ...tool },
+            { type: "tool-result", toolCallId: tool.toolName, input: {}, ...tool },
+          ]),
+          emptyResponse[1],
+        ]
+        const stream = spyOn(LLM, "stream").mockResolvedValue(fakeStream(events))
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+        try {
+          await fixture.processor.process(fixture.input)
+          expect(fixture.processor.message.finish).toBe("tool-calls")
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          expect(parts.find((part) => part.type === "tool" && part.tool === "local")).toMatchObject({
+            state: { status: "completed", title: "Local", output: "ok", metadata: {} },
+          })
+        } finally {
+          stream.mockRestore()
           summarize.mockRestore()
         }
       },

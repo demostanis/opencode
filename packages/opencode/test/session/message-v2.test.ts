@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { APICallError } from "ai"
+import { APICallError, generateText } from "ai"
+import { createOpenAI } from "@ai-sdk/openai"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -886,6 +887,212 @@ describe("session.message-v2.toModelMessage", () => {
             toolCallId: "call-running",
             toolName: "read",
             output: { type: "error-text", value: "[Tool execution was interrupted]" },
+          },
+        ],
+      },
+    ])
+  })
+})
+
+describe("session.message-v2 native replay", () => {
+  function history(tool = "websearch", native: unknown = { action: { type: "search", query: "Bun" } }) {
+    const part: MessageV2.ToolPart = {
+      ...basePart("m-native", "p-native"),
+      type: "tool",
+      tool,
+      callID: "native-item",
+      metadata: { providerExecuted: true, openai: { itemId: "native-item" } },
+      state: {
+        status: "completed",
+        input: {},
+        output: tool === "image_generation" ? "Generated image: /tmp/generated.png" : "Found Bun documentation",
+        title: tool,
+        metadata: { native },
+        time: { start: 0, end: 1 },
+        ...(tool === "image_generation"
+          ? {
+              attachments: [
+                {
+                  ...basePart("m-native", "p-image"),
+                  type: "file" as const,
+                  mime: "image/png",
+                  url: "file:///tmp/generated.png",
+                },
+              ],
+            }
+          : {}),
+      },
+    }
+    const input: MessageV2.WithParts[] = [{ info: assistantInfo("m-native", "m-user"), parts: [part] }]
+    return { part, input }
+  }
+
+  test.each([
+    ["websearch", { action: { type: "search", query: "Bun" }, sources: [{ type: "url", url: "https://bun.sh" }] }],
+    ["image_generation", { result: "Zm9v" }],
+  ])("preserves raw %s output as an assistant JSON result without duplicate attachments", (tool, native) => {
+    const fixture = history(tool, native)
+    expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "native-item",
+            toolName: tool,
+            input: {},
+            providerExecuted: true,
+            providerOptions: { openai: { itemId: "native-item" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "native-item",
+            toolName: tool,
+            output: { type: "json", value: native },
+            providerOptions: { openai: { itemId: "native-item" } },
+          },
+        ],
+      },
+    ])
+  })
+
+  test.each(["websearch", "image_generation"])(
+    "uses Responses item references for %s, never function outputs",
+    async (tool) => {
+      const fixture = history(
+        tool,
+        tool === "image_generation" ? { result: "Zm9v" } : { action: { type: "search", query: "Bun" } },
+      )
+      const requests: Record<string, unknown>[] = []
+      const provider = createOpenAI({
+        apiKey: "test",
+        fetch: Object.assign(
+          async (_url: URL | RequestInfo, init?: RequestInit) => {
+            requests.push(JSON.parse(String(init?.body)))
+            return Response.json({
+              id: "resp-test",
+              created_at: 0,
+              model: "gpt-4.1",
+              output: [],
+              usage: { input_tokens: 0, output_tokens: 0 },
+            })
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      })
+      for (const store of [true, false]) {
+        const result = await generateText({
+          model: provider.responses("gpt-4.1"),
+          messages: MessageV2.toModelMessages(fixture.input, model),
+          providerOptions: { openai: { store } },
+        })
+        expect(requests.at(-1)?.input).toEqual(store ? [{ type: "item_reference", id: "native-item" }] : [])
+        if (!store)
+          expect(result.warnings).toContainEqual({
+            type: "other",
+            message: `Results for OpenAI tool ${tool} are not sent to the API when store is false`,
+          })
+      }
+    },
+  )
+
+  test.each([
+    { ...model, id: ModelID.make("other") },
+    { ...model, providerID: ProviderID.make("other") },
+  ])("uses portable text/media without native IDs on a model/provider switch: %j", (target) => {
+    const search = history()
+    expect(MessageV2.toModelMessages(search.input, target)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "websearch: Found Bun documentation" }] },
+    ])
+    const image = history("image_generation", { result: "Zm9v" })
+    expect(MessageV2.toModelMessages(image.input, target)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "image_generation: Generated image: /tmp/generated.png" }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Attached image(s) from tool result:" },
+          { type: "file", mediaType: "image/png", data: "data:image/png;base64,Zm9v" },
+        ],
+      },
+    ])
+  })
+
+  test("does not restore native bytes or attachments when compacted or stripping media", () => {
+    const fixture = history("image_generation", { result: "Zm9v" })
+    expect(MessageV2.toModelMessages(fixture.input, model, { stripMedia: true })).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "image_generation: Generated image: /tmp/generated.png" }] },
+    ])
+    if (fixture.part.state.status !== "completed") throw new Error("Expected completed tool")
+    fixture.part.state.time.compacted = 1
+    expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "image_generation: [Old tool result content cleared]" }] },
+    ])
+  })
+
+  test("degrades legacy native results without raw output to text", () => {
+    const fixture = history()
+    if (fixture.part.state.status !== "completed") throw new Error("Expected completed tool")
+    fixture.part.state.metadata = {}
+    expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "websearch: Found Bun documentation" }] },
+    ])
+  })
+
+  test("keeps local and native calls with the same tool name separate across steps", () => {
+    const fixture = history()
+    fixture.input[0].parts.push(
+      { ...basePart("m-native", "p-step"), type: "step-start" },
+      {
+        ...fixture.part,
+        ...basePart("m-native", "p-local"),
+        callID: "local-call",
+        metadata: undefined,
+        state: {
+          status: "completed",
+          input: { query: "Bun" },
+          output: "Local search result",
+          title: "Local search",
+          metadata: {},
+          time: { start: 2, end: 3 },
+        },
+      },
+    )
+    const messages = MessageV2.toModelMessages(fixture.input, model)
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "assistant", "tool"])
+    expect(messages[2]).toEqual({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "local-call",
+          toolName: "websearch",
+          output: { type: "text", value: "Local search result" },
+        },
+      ],
+    })
+    expect(messages[0]).toMatchObject({
+      content: [
+        { type: "tool-call", providerExecuted: true },
+        { type: "tool-result", output: { type: "json", value: { action: { type: "search", query: "Bun" } } } },
+      ],
+    })
+  })
+
+  test.each(["pending", "running", "error"] as const)("does not fabricate native results for %s tools", (status) => {
+    const fixture = history()
+    fixture.part.state =
+      status === "pending"
+        ? { status, input: {}, raw: "" }
+        : status === "running"
+          ? { status, input: {}, time: { start: 0 } }
+          : { status, input: {}, error: "Native search failed", time: { start: 0, end: 1 } }
+    expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: `websearch: ${status === "error" ? "Native search failed" : "[Tool execution was interrupted]"}`,
           },
         ],
       },

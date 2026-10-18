@@ -23,6 +23,8 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission"
 import { Auth } from "@/auth"
+import { ResponsesTools } from "./responses-tools"
+import { nativeReplay } from "./native-replay"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -160,7 +162,12 @@ export namespace LLM {
     const maxOutputTokens =
       isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
-    const tools = await resolveTools(input)
+    const tools = ResponsesTools.select({
+      language,
+      tools: await resolveTools(input),
+      permission: PermissionNext.merge(input.agent.permission, input.permission ?? []),
+      disabled: input.user.tools,
+    })
     // Zen free models reject tool-free requests, including compaction and title generation.
     const placeholder =
       input.model.providerID.startsWith("opencode") && input.model.cost.input === 0 && Object.keys(tools).length === 0
@@ -254,6 +261,9 @@ export namespace LLM {
         middleware: [
           {
             async transformParams(args) {
+              if (language.provider === "openai.responses" && params.options.store === false) {
+                args.params.prompt = nativeReplay(args.params.prompt)
+              }
               if (args.type === "stream") {
                 // @ts-expect-error
                 args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)

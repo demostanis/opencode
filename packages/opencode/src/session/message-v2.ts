@@ -589,6 +589,9 @@ export namespace MessageV2 {
     })()
 
     const toModelOutput = (output: unknown) => {
+      if (typeof output === "object" && output !== null && "native" in output) {
+        return { type: "json", value: output.native }
+      }
       if (typeof output === "string") {
         return { type: "text", value: output }
       }
@@ -699,6 +702,59 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            if (part.metadata?.providerExecuted === true) {
+              const metadata = Object.fromEntries(
+                Object.entries(part.metadata).filter(([key]) => key !== "providerExecuted"),
+              )
+              if (
+                !differentModel &&
+                part.state.status === "completed" &&
+                !part.state.time.compacted &&
+                part.state.metadata.native !== undefined &&
+                !(options?.stripMedia && part.tool === "image_generation")
+              ) {
+                toolNames.add(part.tool)
+                assistantMessage.parts.push({
+                  type: `tool-${part.tool}`,
+                  state: "output-available",
+                  toolCallId: part.callID,
+                  input: part.state.input,
+                  output: { native: part.state.metadata.native },
+                  providerExecuted: true,
+                  callProviderMetadata: metadata,
+                })
+                continue
+              }
+
+              assistantMessage.parts.push({
+                type: "text",
+                text: `${part.tool}: ${
+                  part.state.status === "completed"
+                    ? part.state.time.compacted
+                      ? "[Old tool result content cleared]"
+                      : part.state.output
+                    : part.state.status === "error"
+                      ? part.state.error
+                      : "[Tool execution was interrupted]"
+                }`,
+              })
+              if (part.state.status === "completed" && !part.state.time.compacted && !options?.stripMedia) {
+                const native: unknown = part.state.metadata.native
+                // Native images are persisted as file URLs; use the stored SDK bytes for portable replay.
+                if (
+                  part.tool === "image_generation" &&
+                  typeof native === "object" &&
+                  native !== null &&
+                  "result" in native &&
+                  typeof native.result === "string"
+                ) {
+                  media.push({ mime: "image/png", url: `data:image/png;base64,${native.result}` })
+                } else {
+                  media.push(...(part.state.attachments ?? []).filter((file) => isMedia(file.mime)))
+                }
+              }
+              continue
+            }
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
               const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output

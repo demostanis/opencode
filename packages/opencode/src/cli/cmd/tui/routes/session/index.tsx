@@ -96,6 +96,7 @@ import { formatTranscript } from "../../util/transcript"
 import { useTuiConfig } from "../../context/tui-config"
 import { writable } from "./worker"
 import { order } from "./messages"
+import { websearch } from "./websearch"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
@@ -2210,12 +2211,11 @@ function CodeSearch(props: ToolProps<any>) {
   )
 }
 
-function WebSearch(props: ToolProps<any>) {
-  const input = props.input as any
-  const metadata = props.metadata as any
+function WebSearch(props: { input: Record<string, unknown>; metadata: Record<string, unknown>; part: ToolPart }) {
+  const view = createMemo(() => websearch(props.input, props.metadata, props.part.state.status))
   return (
-    <InlineTool icon="◈" pending="Searching web..." complete={input.query} part={props.part}>
-      Web Search "{input.query}" <Show when={metadata.numResults}>({metadata.numResults} results)</Show>
+    <InlineTool icon="◈" pending={view().pending} complete={view().complete} part={props.part}>
+      {view().label}
     </InlineTool>
   )
 }
