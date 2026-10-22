@@ -126,11 +126,8 @@ export namespace Owner {
         if (result.changes !== 1) throw new Error("OpenCode backend registration changed during startup")
       },
       active(sessionID: string, directory: string, value: boolean) {
-        if (released) return
-        if (!value) {
-          db.query("DELETE FROM active_session WHERE session_id = ? AND backend_id = ?").run(sessionID, info.id)
-          return
-        }
+        // Keep idle sessions discoverable without renewing an older backend's claim.
+        if (released || !value) return
         db.query(
           "INSERT INTO active_session (session_id, backend_id, directory, started) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, backend_id) DO UPDATE SET directory = excluded.directory, started = excluded.started",
         ).run(sessionID, info.id, directory, Date.now())

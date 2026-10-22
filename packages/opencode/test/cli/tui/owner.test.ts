@@ -40,7 +40,7 @@ describe("tui owner", () => {
     await second.release()
   })
 
-  test("removes a session when it becomes idle", async () => {
+  test("keeps an idle session discoverable until its backend exits", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, "state")
     const owner = await Owner.create({ dir: tmp.path, root })
@@ -48,8 +48,9 @@ describe("tui owner", () => {
     owner.active("ses_test", tmp.path, true)
     owner.active("ses_test", tmp.path, false)
 
-    expect(await Owner.find("ses_test", { root, probe: async () => true })).toBeUndefined()
+    expect((await Owner.find("ses_test", { root, probe: async () => true }))?.id).toBe(owner.info.id)
     await owner.release()
+    expect(await Owner.find("ses_test", { root, probe: async () => true })).toBeUndefined()
   })
 
   test("does not let an old backend clear a newer session owner", async () => {
@@ -60,7 +61,9 @@ describe("tui owner", () => {
     await first.ready("http://127.0.0.1:12345")
     await second.ready("http://127.0.0.1:23456")
     first.active("ses_test", "/first", true)
+    await Bun.sleep(2)
     second.active("ses_test", "/second", true)
+    await Bun.sleep(2)
     first.active("ses_test", "/first", false)
 
     expect((await Owner.find("ses_test", { root, probe: async () => true }))?.id).toBe(second.info.id)
@@ -68,7 +71,7 @@ describe("tui owner", () => {
     await second.release()
   })
 
-  test("falls back when the newest backend becomes idle", async () => {
+  test("keeps the newest idle backend and falls back when it exits", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, "state")
     const first = await Owner.create({ dir: "/first", root })
@@ -80,9 +83,10 @@ describe("tui owner", () => {
     second.active("ses_test", "/second", true)
     second.active("ses_test", "/second", false)
 
+    expect((await Owner.find("ses_test", { root, probe: async () => true }))?.id).toBe(second.info.id)
+    await second.release()
     expect((await Owner.find("ses_test", { root, probe: async () => true }))?.id).toBe(first.info.id)
     await first.release()
-    await second.release()
   })
 
   test("revalidates ownership after probing", async () => {
@@ -97,7 +101,7 @@ describe("tui owner", () => {
       root,
       probe: async (info) => {
         if (info.id === first.info.id) {
-          first.active("ses_test", "/first", false)
+          await first.release()
           second.active("ses_test", "/second", true)
         }
         return true
@@ -115,6 +119,7 @@ describe("tui owner", () => {
     const owner = await Owner.create({ dir: tmp.path, root })
     await owner.ready("http://127.0.0.1:12345")
     owner.active("ses_test", tmp.path, true)
+    owner.active("ses_test", tmp.path, false)
 
     expect(
       await Owner.find("ses_test", {
