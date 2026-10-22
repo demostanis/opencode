@@ -37,12 +37,12 @@ describe("websearch presentation", () => {
     }
   })
 
-  test("native open_page shows URL", () => {
+  test("native openPage shows URL", () => {
     expect(
       websearch(
         {},
         {
-          native: { action: { type: "open_page", url: "https://bun.sh/docs" } },
+          native: { action: { type: "openPage", url: "https://bun.sh/docs" } },
         },
         "completed",
       ),
@@ -53,12 +53,12 @@ describe("websearch presentation", () => {
     })
   })
 
-  test("native find shows pattern and URL", () => {
+  test("native findInPage shows pattern and URL", () => {
     expect(
       websearch(
         {},
         {
-          native: { action: { type: "find", pattern: "install", url: "https://bun.sh/docs" } },
+          native: { action: { type: "findInPage", pattern: "install", url: "https://bun.sh/docs" } },
         },
         "completed",
       ),

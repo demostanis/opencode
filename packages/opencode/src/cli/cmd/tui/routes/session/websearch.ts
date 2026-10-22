@@ -14,8 +14,8 @@ export function websearch(input: Record<string, unknown>, metadata: Record<strin
   const pattern = text(action.pattern)
   const terminal = status === "completed" || status === "error"
   const label = (() => {
-    if (action.type === "open_page") return url ? `Open Page ${url}` : "Open Page"
-    if (action.type === "find") return `Find${pattern ? ` "${pattern}"` : ""}${url ? ` in ${url}` : ""}`
+    if (action.type === "openPage") return url ? `Open Page ${url}` : "Open Page"
+    if (action.type === "findInPage") return `Find${pattern ? ` "${pattern}"` : ""}${url ? ` in ${url}` : ""}`
     if (query) return `Web Search "${query}"`
     if (status === "completed") return "Web Search completed"
     if (status === "error") return "Web Search failed"
@@ -35,9 +35,9 @@ export function websearch(input: Record<string, unknown>, metadata: Record<strin
     label: label + suffix,
     complete: terminal || Boolean(query || url || pattern),
     pending:
-      action.type === "open_page"
+      action.type === "openPage"
         ? "Opening page..."
-        : action.type === "find"
+        : action.type === "findInPage"
           ? "Finding in page..."
           : "Searching web...",
   }
