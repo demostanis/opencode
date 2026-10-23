@@ -635,6 +635,22 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           }
         }
 
+        for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]) {
+          const model = provider.models[id]
+          if (!model) continue
+          for (const tier of ["fast", "ultrafast"]) {
+            if (tier === "ultrafast" && id !== "gpt-6-astra" && id !== "gpt-6.1-sol") continue
+            const key = `${id}-${tier}`
+            if (provider.models[key]) continue
+            provider.models[key] = {
+              ...structuredClone(model),
+              id: ModelID.make(key),
+              name: `${model.name} (${tier === "fast" ? "Fast" : "Ultrafast"})`,
+              api: { ...model.api, id: key },
+            }
+          }
+        }
+
         return {
           apiKey: OAUTH_DUMMY_KEY,
           timeout: false,
@@ -712,6 +728,15 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
                 : parsed
 
             const body = init?.body ? ((await new Response(init.body).json()) as Record<string, unknown>) : undefined
+            const speed =
+              typeof body?.model === "string"
+                ? /^(gpt-6(?:\.1)?-(?:astra|sol|luna))-(fast|ultrafast)$/.exec(body.model)
+                : null
+            if (body && speed) {
+              body.model = speed[1]
+              body.service_tier = speed[2]
+              init = { ...init, body: JSON.stringify(body) }
+            }
             if (body?.model && CODEX_WEBSOCKET_MODELS.has(String(body.model))) {
               headers.set("originator", "codex_cli_rs")
               headers.set("OpenAI-Beta", "responses_websockets=2026-02-06")

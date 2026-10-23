@@ -93,6 +93,52 @@ describe("plugin.codex", () => {
     expect([...CODEX_WEBSOCKET_MODELS]).toEqual(["gpt-5.6-luna"])
   })
 
+  test.each([
+    ["gpt-6-astra", "fast"],
+    ["gpt-6-astra", "ultrafast"],
+    ["gpt-6-sol", "fast"],
+    ["gpt-6.1-sol", "fast"],
+    ["gpt-6.1-sol", "ultrafast"],
+    ["gpt-6-luna", "fast"],
+  ])("adds and routes %s %s without changing reasoning effort", async (id, tier) => {
+    const hooks = await CodexAuthPlugin({} as PluginInput)
+    const loader = hooks.auth!.loader!
+    const provider = { models: {} } as Parameters<typeof loader>[1]
+    const options = await loader(
+      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+      provider,
+    )
+    const key = `${id}-${tier}`
+    expect(provider.models[key]).toMatchObject({
+      id: key,
+      api: { id: key },
+      variants: Reflect.get(provider.models[id], "variants"),
+      limit: provider.models[id].limit,
+      cost: provider.models[id].cost,
+    })
+    expect(provider.models[id].api.id).toBe(id)
+    expect(provider.models["gpt-6-sol-ultrafast"]).toBeUndefined()
+    expect(provider.models["gpt-6-luna-ultrafast"]).toBeUndefined()
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return Response.json(await req.json())
+      },
+    })
+    const request = options.fetch as typeof fetch
+    const response = await request(server.url, {
+      method: "POST",
+      body: JSON.stringify({ model: key, reasoning: { effort: "max" } }),
+    })
+    expect(await response.json()).toEqual({ model: id, service_tier: tier, reasoning: { effort: "max" } })
+    const standard = await request(server.url, {
+      method: "POST",
+      body: JSON.stringify({ model: id }),
+    })
+    expect(await standard.json()).toEqual({ model: id })
+  })
+
   describe("codexWebsocket", () => {
     test("streams through a completed terminal event", async () => {
       const call = socket((ws) => ws.send(JSON.stringify({ type: "response.completed" })))
