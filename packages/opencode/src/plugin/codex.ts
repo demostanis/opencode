@@ -734,7 +734,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
                 : null
             if (body && speed) {
               body.model = speed[1]
-              body.service_tier = speed[2]
+              body.service_tier = speed[2] === "fast" ? "priority" : speed[2]
               init = { ...init, body: JSON.stringify(body) }
             }
             if (body?.model && CODEX_WEBSOCKET_MODELS.has(String(body.model))) {

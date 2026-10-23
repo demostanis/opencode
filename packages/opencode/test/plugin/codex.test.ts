@@ -131,7 +131,11 @@ describe("plugin.codex", () => {
       method: "POST",
       body: JSON.stringify({ model: key, reasoning: { effort: "max" } }),
     })
-    expect(await response.json()).toEqual({ model: id, service_tier: tier, reasoning: { effort: "max" } })
+    expect(await response.json()).toEqual({
+      model: id,
+      service_tier: tier === "fast" ? "priority" : tier,
+      reasoning: { effort: "max" },
+    })
     const standard = await request(server.url, {
       method: "POST",
       body: JSON.stringify({ model: id }),
