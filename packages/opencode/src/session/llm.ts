@@ -200,6 +200,8 @@ export namespace LLM {
     }
 
     return streamText({
+      // The SDK strips native image prompts and settings from normalized tool events.
+      includeRawChunks: tools.image_generation?.type === "provider-defined",
       onError(error) {
         l.error("stream error", {
           error,

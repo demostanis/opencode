@@ -97,6 +97,7 @@ import { useTuiConfig } from "../../context/tui-config"
 import { writable } from "./worker"
 import { order } from "./messages"
 import { websearch } from "./websearch"
+import { image } from "./image"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
@@ -1794,6 +1795,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "websearch"}>
           <WebSearch {...toolprops} />
         </Match>
+        <Match when={["image_generation", "image_generate"].includes(props.part.tool)}>
+          <Image {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "write"}>
           <Write {...toolprops} />
         </Match>
@@ -2217,6 +2221,89 @@ function WebSearch(props: { input: Record<string, unknown>; metadata: Record<str
     <InlineTool icon="◈" pending={view().pending} complete={view().complete} part={props.part}>
       {view().label}
     </InlineTool>
+  )
+}
+
+function Image(props: { input: Record<string, unknown>; metadata: Record<string, unknown>; part: ToolPart }) {
+  const { theme } = useTheme()
+  const ctx = use()
+  const view = createMemo(() =>
+    image(
+      props.input,
+      props.metadata,
+      props.part.state.status === "completed" || props.part.state.status === "running"
+        ? props.part.state.title
+        : undefined,
+    ),
+  )
+  const running = createMemo(() => props.part.state.status === "running")
+  const details = createMemo(
+    () =>
+      (running() || ctx.showDetails() || ctx.focus() === props.part.id) &&
+      Boolean(
+        view().prompt ||
+          view().request ||
+          view().revised.length ||
+          view().settings.length ||
+          view().refs.length ||
+          view().files.length,
+      ),
+  )
+
+  return (
+    <Show
+      when={details()}
+      fallback={
+        <InlineTool
+          icon="*"
+          pending="Preparing image..."
+          complete={props.part.state.status !== "pending"}
+          spinner={running()}
+          part={props.part}
+        >
+          {view().title}
+        </InlineTool>
+      }
+    >
+      <BlockTool title={"# " + view().title} part={props.part} spinner={running()}>
+        <Show when={view().request}>
+          <text fg={theme.text} wrapMode="word">
+            Requested prompt: {view().request}
+          </text>
+        </Show>
+        <Show when={view().prompt}>
+          <text fg={theme.text} wrapMode="word">
+            Prompt: {view().prompt}
+          </text>
+        </Show>
+        <For each={view().revised}>
+          {(prompt) => (
+            <text fg={theme.text} wrapMode="word">
+              Revised prompt: {prompt}
+            </text>
+          )}
+        </For>
+        <Show when={view().settings.length}>
+          <text fg={theme.textMuted} wrapMode="word">
+            {view().settings.join(" · ")}
+          </text>
+        </Show>
+        <For each={view().refs}>
+          {(ref) => (
+            <text fg={theme.textMuted} wrapMode="word">
+              Reference: {ref}
+            </text>
+          )}
+        </For>
+        <For each={view().files}>
+          {(file) => (
+            <text fg={theme.text} wrapMode="word">
+              Output: {normalizePath(file)}
+            </text>
+          )}
+        </For>
+      </BlockTool>
+    </Show>
   )
 }
 

@@ -42,6 +42,7 @@ export namespace Flag {
 
   // Experimental
   export const OPENCODE_EXPERIMENTAL = truthy("OPENCODE_EXPERIMENTAL")
+  export const OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION = truthy("OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION")
   export const OPENCODE_EXPERIMENTAL_FILEWATCHER = Config.boolean("OPENCODE_EXPERIMENTAL_FILEWATCHER").pipe(
     Config.withDefault(false),
   )

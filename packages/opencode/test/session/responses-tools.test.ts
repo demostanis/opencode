@@ -1,11 +1,19 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createOpenAI } from "@ai-sdk/openai"
 import { jsonSchema, streamText, tool, type Tool } from "ai"
 import { PermissionNext } from "../../src/permission"
 import { ResponsesTools } from "../../src/session/responses-tools"
+import { Flag } from "../../src/flag/flag"
 
 function local() {
-  return tool({ inputSchema: jsonSchema({ type: "object", properties: {} }) })
+  return tool({
+    inputSchema: jsonSchema<{ prompt: string }>({
+      type: "object",
+      properties: { prompt: { type: "string" } },
+      required: ["prompt"],
+    }),
+    execute: async (input) => ({ output: input.prompt }),
+  })
 }
 
 function select(permission: PermissionNext.Ruleset, opts?: { disabled?: Record<string, boolean> }) {
@@ -16,19 +24,42 @@ function select(permission: PermissionNext.Ruleset, opts?: { disabled?: Record<s
   }
 }
 
-describe("session.responses-tools", () => {
-  test("uses provider tools with SDK-supported names without mutating the local tools", () => {
+describe.each([false, true])("session.responses-tools native=%s", (enabled) => {
+  const original = Flag.OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION
+
+  beforeEach(() => {
+    Object.assign(Flag, { OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION: enabled })
+  })
+
+  afterEach(() => {
+    Object.assign(Flag, { OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION: original })
+  })
+
+  test("gates native images without changing websearch or mutating local tools", async () => {
     const result = select(PermissionNext.fromConfig({ "*": "allow" }))
     expect(result.selected.websearch).toMatchObject({ type: "provider-defined", id: "openai.web_search" })
+    expect(result.selected.bash).toBe(result.tools.bash)
+    expect(result.tools.websearch.type).not.toBe("provider-defined")
+    expect(result.tools.image_generate.type).not.toBe("provider-defined")
+    if (!enabled) {
+      expect(result.selected.image_generation).toBeUndefined()
+      expect(result.selected.image_generate).toBe(result.tools.image_generate)
+      expect(result.selected.image_generate.inputSchema).toBe(result.tools.image_generate.inputSchema)
+      expect(result.selected.image_generate.execute).toBe(result.tools.image_generate.execute)
+      expect(
+        await result.selected.image_generate.execute?.(
+          { prompt: "A red circle" },
+          { toolCallId: "local-image", messages: [] },
+        ),
+      ).toEqual({ output: "A red circle" })
+      return
+    }
     expect(result.selected.image_generation).toMatchObject({
       type: "provider-defined",
       id: "openai.image_generation",
       args: { outputFormat: "png" },
     })
     expect(result.selected.image_generate).toBeUndefined()
-    expect(result.selected.bash).toBe(result.tools.bash)
-    expect(result.tools.websearch.type).not.toBe("provider-defined")
-    expect(result.tools.image_generate).toBeDefined()
   })
 
   test.each(["openai.chat", "openai.completion", "azure.responses", "xai.responses", "anthropic.messages"])(
@@ -119,6 +150,7 @@ describe("session.responses-tools", () => {
   })
 
   test("the installed Responses adapter sends native tools and streams their names and raw results", async () => {
+    Object.assign(Flag, { OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION: true })
     const requests: unknown[] = []
     const items = [
       {
@@ -127,7 +159,18 @@ describe("session.responses-tools", () => {
         status: "completed",
         action: { type: "search", query: "OpenAI", sources: [{ type: "url", url: "https://openai.com" }] },
       },
-      { id: "ig_1", type: "image_generation_call", status: "completed", result: "aW1hZ2U=" },
+      {
+        id: "ig_1",
+        type: "image_generation_call",
+        status: "completed",
+        result: "aW1hZ2U=",
+        revised_prompt: "A red circle on white.",
+        action: "generate",
+        background: "opaque",
+        output_format: "png",
+        quality: "low",
+        size: "1254x1254",
+      },
     ]
     const events = [
       ...items.flatMap((item, index) => [
@@ -160,11 +203,17 @@ describe("session.responses-tools", () => {
     const language = sdk.responses("gpt-5")
     const tools: Record<string, Tool> = { websearch: local(), image_generate: local() }
     const stream = streamText({
+      includeRawChunks: true,
       model: language,
       messages: [{ role: "user", content: "Search and draw" }],
       tools: ResponsesTools.select({ language, tools, permission: PermissionNext.fromConfig({ "*": "allow" }) }),
     })
     const chunks = await Array.fromAsync(stream.fullStream)
+    expect(
+      chunks
+        .filter((chunk) => chunk.type === "raw")
+        .some((chunk) => JSON.stringify(chunk.rawValue).includes('"revised_prompt":"A red circle on white."')),
+    ).toBe(true)
     expect(chunks.filter((chunk) => chunk.type === "error")).toEqual([])
     expect(requests).toHaveLength(1)
     expect(requests[0]).toMatchObject({

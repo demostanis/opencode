@@ -18,6 +18,7 @@ import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
 import { nativeResult } from "./native-result"
+import { NativeImage } from "./native-image"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -52,6 +53,10 @@ export namespace SessionProcessor {
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
+          const images: Record<string, ReturnType<typeof NativeImage.fields>> = {}
+          const names: Record<string, Promise<string | undefined>> = {}
+          const naming = new AbortController()
+          let description = ""
           let currentText: MessageV2.TextPart | undefined
           let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
           const created = new Set<string>()
@@ -105,6 +110,16 @@ export namespace SessionProcessor {
             for await (const value of stream.fullStream) {
               input.abort.throwIfAborted()
               switch (value.type) {
+                case "raw": {
+                  const image = NativeImage.parse(value.rawValue)
+                  if (!image) break
+                  images[image.id] = { ...images[image.id], ...image.fields }
+                  const part = toolcalls[image.id]
+                  if (part?.tool !== "image_generation" || part.state.status !== "running") break
+                  part.state.input = { ...part.state.input, ...images[image.id] }
+                  await Session.updatePart(part)
+                  break
+                }
                 case "start":
                   SessionStatus.set(input.sessionID, { type: "busy" })
                   break
@@ -200,7 +215,13 @@ export namespace SessionProcessor {
                     callID: value.toolCallId,
                     state: {
                       status: "running",
-                      input: value.input,
+                      input: {
+                        ...value.input,
+                        ...(value.toolName === "image_generation" ? images[value.toolCallId] : {}),
+                      },
+                      ...(executed && value.toolName === "image_generation"
+                        ? { metadata: { request: NativeImage.request(streamInput.messages) } }
+                        : {}),
                       time: {
                         start: Date.now(),
                       },
@@ -212,6 +233,23 @@ export namespace SessionProcessor {
                     },
                   })
                   toolcalls[value.toolCallId] = part as MessageV2.ToolPart
+
+                  if (executed && value.toolName === "image_generation" && !names[value.toolCallId]) {
+                    names[value.toolCallId] = NativeImage.name(
+                      streamInput,
+                      description,
+                      Object.keys(names).length + 1,
+                      naming.signal,
+                    ).then(async (title) => {
+                      const part = toolcalls[value.toolCallId]
+                      if (!title || naming.signal.aborted || input.abort.aborted || part?.state.status !== "running")
+                        return title
+                      part.state.title = title
+                      part.state.metadata = { ...part.state.metadata, title }
+                      await Session.updatePart(part).catch((error) => log.warn("image title update failed", { error }))
+                      return title
+                    })
+                  }
 
                   if (executed) break
                   const parts = await MessageV2.parts(input.assistantMessage.id)
@@ -247,7 +285,16 @@ export namespace SessionProcessor {
                   const match = toolcalls[value.toolCallId]
                   if (match && match.state.status === "running") {
                     const executed = value.providerExecuted || match.metadata?.providerExecuted === true
-                    const output = executed ? await nativeResult(match, value.output) : value.output
+                    const result =
+                      executed &&
+                      match.tool === "image_generation" &&
+                      typeof value.output === "object" &&
+                      value.output !== null
+                        ? { ...value.output, ...images[value.toolCallId] }
+                        : value.output
+                    const output = executed
+                      ? await nativeResult(match, result, await names[value.toolCallId])
+                      : value.output
                     if (executed) native = true
                     await Session.updatePart({
                       ...match,
@@ -258,7 +305,11 @@ export namespace SessionProcessor {
                       },
                       state: {
                         status: "completed",
-                        input: value.input ?? match.state.input,
+                        input: {
+                          ...match.state.input,
+                          ...value.input,
+                          ...(executed && match.tool === "image_generation" ? NativeImage.fields(result) : {}),
+                        },
                         output: output?.output ? stripAnsi(output.output) : "",
                         metadata: output.metadata,
                         title: output.title,
@@ -271,6 +322,7 @@ export namespace SessionProcessor {
                     })
 
                     delete toolcalls[value.toolCallId]
+                    delete images[value.toolCallId]
                   }
                   break
                 }
@@ -387,6 +439,7 @@ export namespace SessionProcessor {
                   break
 
                 case "text-delta":
+                  description += value.text
                   if (currentText) {
                     currentText.text += value.text
                     if (value.text.trim().length > 0) hasTextOutput = true
@@ -516,6 +569,8 @@ export namespace SessionProcessor {
               })
               SessionStatus.set(input.sessionID, { type: "idle" })
             }
+          } finally {
+            naming.abort()
           }
           if (snapshot) {
             const patch = await Snapshot.patch(snapshot)

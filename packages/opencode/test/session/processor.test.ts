@@ -17,6 +17,7 @@ import { Global } from "../../src/global"
 import path from "path"
 import { fileURLToPath } from "url"
 import { rm } from "fs/promises"
+import { NativeImage } from "../../src/session/native-image"
 
 const model = {
   id: ModelID.make("test-model"),
@@ -372,6 +373,105 @@ describe("session.processor native tools", () => {
           expect(fixture.processor.message.finish).toBe("stop")
           expect(stream).toHaveBeenCalledTimes(1)
         } finally {
+          stream.mockRestore()
+          summarize.mockRestore()
+          await rm(path.join(Global.Path.data, "generated_images", fixture.session.id), {
+            recursive: true,
+            force: true,
+          })
+        }
+      },
+    })
+  })
+
+  test.each(["Red Circle", undefined])("preserves raw image settings and names concurrently (%s)", async (name) => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        fixture.input.messages = [{ role: "user", content: "Draw a red circle on white." }]
+        const fields = {
+          action: "generate",
+          background: "opaque",
+          output_format: "png",
+          quality: "low",
+          revised_prompt: "A single red circle centered on white.",
+          size: "1254x1254",
+        }
+        const pending = Promise.withResolvers<string | undefined>()
+        const naming = spyOn(NativeImage, "name").mockReturnValue(pending.promise)
+        const stream = spyOn(LLM, "stream").mockResolvedValue({
+          fullStream: (async function* () {
+            yield { type: "start-step" }
+            yield { type: "text-start", id: "description" }
+            yield { type: "text-delta", id: "description", text: "Creating a red circle." }
+            yield { type: "text-end", id: "description" }
+            yield {
+              type: "raw",
+              rawValue: { type: "response.output_item.added", item: { id: "image/1", type: "image_generation_call" } },
+            }
+            yield {
+              type: "tool-call",
+              toolCallId: "image/1",
+              toolName: "image_generation",
+              input: {},
+              providerExecuted: true,
+            }
+            expect(naming).toHaveBeenCalledTimes(1)
+            expect(naming.mock.calls[0][1]).toBe("Creating a red circle.")
+            expect(naming.mock.calls[0][2]).toBe(1)
+            expect(fixture.processor.partFromToolCall("image/1")?.state.status).toBe("running")
+            expect(fixture.processor.partFromToolCall("image/1")?.state).toMatchObject({
+              input: {},
+              metadata: { request: "Draw a red circle on white." },
+            })
+            pending.resolve(name)
+            await pending.promise
+            const parts = await MessageV2.parts(fixture.processor.message.id)
+            const running = parts.find((part) => part.type === "tool")
+            expect(running?.state.status).toBe("running")
+            if (running?.state.status !== "running") throw new Error("Missing running image")
+            expect(running.state.title).toBe(name)
+            expect(running.state.metadata?.request).toBe("Draw a red circle on white.")
+            yield {
+              type: "raw",
+              rawValue: {
+                type: "response.output_item.done",
+                item: { id: "image/1", type: "image_generation_call", result: png, ...fields },
+              },
+            }
+            expect(fixture.processor.partFromToolCall("image/1")?.state.input).toEqual(fields)
+            if (name) expect(fixture.processor.partFromToolCall("image/1")?.state).toMatchObject({ title: name })
+            yield {
+              type: "tool-result",
+              toolCallId: "image/1",
+              toolName: "image_generation",
+              input: {},
+              output: { result: png },
+              providerExecuted: true,
+            }
+            yield { ...emptyResponse[1], finishReason: "stop" }
+          })(),
+        } as unknown as Awaited<ReturnType<typeof LLM.stream>>)
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+        try {
+          await fixture.processor.process(fixture.input)
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          const part = parts.find((part) => part.type === "tool")
+          if (part?.state.status !== "completed") throw new Error("Missing completed image")
+          expect(part.state.input).toEqual(fields)
+          expect(part.state.title).toBe(name ?? fields.revised_prompt)
+          expect(part.state.metadata.native).toEqual({ result: png, ...fields })
+          expect(part.state.metadata.files[0]).toMatchObject({
+            shortName: name ?? fields.revised_prompt,
+            revisedPrompt: fields.revised_prompt,
+          })
+          expect(JSON.stringify(part).split(png)).toHaveLength(2)
+          expect(naming.mock.calls[0][3].aborted).toBe(true)
+          expect(stream).toHaveBeenCalledTimes(1)
+        } finally {
+          naming.mockRestore()
           stream.mockRestore()
           summarize.mockRestore()
           await rm(path.join(Global.Path.data, "generated_images", fixture.session.id), {

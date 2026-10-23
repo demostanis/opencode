@@ -2,6 +2,7 @@ import { openai } from "@ai-sdk/openai"
 import type { Tool } from "ai"
 import { PermissionNext } from "@/permission"
 import { Wildcard } from "@/util/wildcard"
+import { Flag } from "@/flag/flag"
 
 export namespace ResponsesTools {
   function allowed(name: string, rules: PermissionNext.Ruleset) {
@@ -34,6 +35,7 @@ export namespace ResponsesTools {
         delete tools[native]
         continue
       }
+      if (native === "image_generation" && !Flag.OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION) continue
       if (native !== name && tools[native]) continue
 
       if (!allowed(name, input.permission)) continue

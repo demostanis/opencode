@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { tool, type ModelMessage } from "ai"
 import z from "zod"
@@ -17,6 +17,7 @@ import { Session } from "../../src/session"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Installation } from "../../src/installation"
+import { Flag } from "../../src/flag/flag"
 
 describe("session.llm.hasToolCalls", () => {
   test("returns false for empty messages array", () => {
@@ -242,6 +243,12 @@ function createHangingResponse(chunks: unknown[]) {
 }
 
 describe("session.llm.stream", () => {
+  const original = Flag.OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION
+
+  afterEach(() => {
+    Object.assign(Flag, { OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION: original })
+  })
+
   test.each([undefined, false, true])("replays native history using the merged store option %s", async (store) => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
@@ -362,80 +369,90 @@ describe("session.llm.stream", () => {
   })
 
   test.each([
-    ["allow", false, ["web_search", "image_generation"]],
-    ["ask", false, ["websearch", "image_generate"]],
-    ["deny", false, []],
-    ["allow", true, []],
-  ] as const)("selects Responses tools with %s permission and disabled=%s", async (action, disabled, names) => {
-    const server = state.server
-    if (!server) throw new Error("Server not initialized")
-    const source = await loadFixture("openai", "gpt-5.2")
-    const request = waitRequest(
-      "/responses",
-      createEventResponse([
-        {
-          type: "response.completed",
-          response: { incomplete_details: null, usage: { input_tokens: 1, output_tokens: 1 } },
-        },
-      ]),
-    )
-    await using tmp = await tmpdir({
-      config: {
-        enabled_providers: ["openai"],
-        provider: {
-          openai: {
-            npm: "@ai-sdk/openai",
-            models: { [source.model.id]: source.model },
-            options: { apiKey: "test", baseURL: `${server.url.origin}/v1` },
+    ["allow", false, false, ["image_generate", "web_search"]],
+    ["allow", false, true, ["web_search", "image_generation"]],
+    ["ask", false, false, ["websearch", "image_generate"]],
+    ["ask", false, true, ["websearch", "image_generate"]],
+    ["deny", false, false, []],
+    ["deny", false, true, []],
+    ["allow", true, false, []],
+    ["allow", true, true, []],
+  ] as const)(
+    "selects Responses tools with %s permission, disabled=%s, native=%s",
+    async (action, disabled, enabled, names) => {
+      Object.assign(Flag, { OPENCODE_EXPERIMENTAL_NATIVE_IMAGE_GENERATION: enabled })
+      const server = state.server
+      if (!server) throw new Error("Server not initialized")
+      const source = await loadFixture("openai", "gpt-5.2")
+      const request = waitRequest(
+        "/responses",
+        createEventResponse([
+          {
+            type: "response.completed",
+            response: { incomplete_details: null, usage: { input_tokens: 1, output_tokens: 1 } },
+          },
+        ]),
+      )
+      await using tmp = await tmpdir({
+        config: {
+          enabled_providers: ["openai"],
+          provider: {
+            openai: {
+              npm: "@ai-sdk/openai",
+              models: { [source.model.id]: source.model },
+              options: { apiKey: "test", baseURL: `${server.url.origin}/v1` },
+            },
           },
         },
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const model = await Provider.getModel(ProviderID.openai, ModelID.make(source.model.id))
-        expect((await Provider.getLanguage(model)).provider).toBe("openai.responses")
-        const sessionID = SessionID.make("session-native-tools")
-        const agent = {
-          name: "test",
-          mode: "primary",
-          ultra_mode_allowed: false,
-          options: {},
-          permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        } satisfies Agent.Info
-        const stream = await LLM.stream({
-          sessionID,
-          model,
-          agent,
-          permission: [{ permission: "*", pattern: "*", action }],
-          user: {
-            id: MessageID.make("user-native-tools"),
+      })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const model = await Provider.getModel(ProviderID.openai, ModelID.make(source.model.id))
+          expect((await Provider.getLanguage(model)).provider).toBe("openai.responses")
+          const sessionID = SessionID.make("session-native-tools")
+          const agent = {
+            name: "test",
+            mode: "primary",
+            ultra_mode_allowed: false,
+            options: {},
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          } satisfies Agent.Info
+          const stream = await LLM.stream({
             sessionID,
-            role: "user",
-            time: { created: Date.now() },
-            agent: agent.name,
-            model: { providerID: ProviderID.openai, modelID: model.id },
-            tools: disabled ? { websearch: false, image_generate: false } : undefined,
-          },
-          system: [],
-          messages: [{ role: "user", content: "Search and draw" }],
-          abort: new AbortController().signal,
-          tools: {
-            websearch: tool({ inputSchema: z.object({}) }),
-            image_generate: tool({ inputSchema: z.object({}) }),
-          },
-        })
-        expect((await Array.fromAsync(stream.fullStream)).filter((chunk) => chunk.type === "error")).toEqual([])
-        const capture = await request
-        expect(
-          ((capture.body.tools ?? []) as { type: string; name?: string }[]).map((item) =>
-            item.type === "function" ? item.name : item.type,
-          ),
-        ).toEqual([...names])
-      },
-    })
-  })
+            model,
+            agent,
+            permission: [{ permission: "*", pattern: "*", action }],
+            user: {
+              id: MessageID.make("user-native-tools"),
+              sessionID,
+              role: "user",
+              time: { created: Date.now() },
+              agent: agent.name,
+              model: { providerID: ProviderID.openai, modelID: model.id },
+              tools: disabled ? { websearch: false, image_generate: false } : undefined,
+            },
+            system: [],
+            messages: [{ role: "user", content: "Search and draw" }],
+            abort: new AbortController().signal,
+            tools: {
+              websearch: tool({ inputSchema: z.object({}) }),
+              image_generate: tool({ inputSchema: z.object({}) }),
+            },
+          })
+          const chunks = await Array.fromAsync(stream.fullStream)
+          expect(chunks.filter((chunk) => chunk.type === "error")).toEqual([])
+          expect(chunks.some((chunk) => chunk.type === "raw")).toBe(names.some((name) => name === "image_generation"))
+          const capture = await request
+          expect(
+            ((capture.body.tools ?? []) as { type: string; name?: string }[]).map((item) =>
+              item.type === "function" ? item.name : item.type,
+            ),
+          ).toEqual([...names])
+        },
+      })
+    },
+  )
 
   test("sends OpenCode identity on Zen model requests", async () => {
     const server = state.server

@@ -4,8 +4,9 @@ import { Global } from "@/global"
 import { Filesystem } from "@/util/filesystem"
 import { PartID } from "./schema"
 import type { MessageV2 } from "./message-v2"
+import { NativeImage } from "./native-image"
 
-export async function nativeResult(part: MessageV2.ToolPart, output: unknown) {
+export async function nativeResult(part: MessageV2.ToolPart, output: unknown, name?: string) {
   if (
     part.tool === "image_generation" &&
     typeof output === "object" &&
@@ -13,6 +14,9 @@ export async function nativeResult(part: MessageV2.ToolPart, output: unknown) {
     "result" in output &&
     typeof output.result === "string"
   ) {
+    const fields = NativeImage.fields(output)
+    const title =
+      NativeImage.label(name) ?? NativeImage.label(fields.revised_prompt ?? fields.prompt) ?? "Generated image"
     const file = path.join(
       Global.Path.data,
       "generated_images",
@@ -21,11 +25,19 @@ export async function nativeResult(part: MessageV2.ToolPart, output: unknown) {
     )
     await Filesystem.write(file, Buffer.from(output.result, "base64"))
     return {
-      title: "Generated image",
+      title,
       output: `Generated image: ${file}`,
       metadata: {
         native: output,
-        files: [{ path: file, mime: "image/png", shortName: "Generated image" }],
+        files: [
+          {
+            path: file,
+            mime: "image/png",
+            shortName: title,
+            ...(fields.prompt ? { prompt: fields.prompt } : {}),
+            ...(fields.revised_prompt ? { revisedPrompt: fields.revised_prompt } : {}),
+          },
+        ],
         truncated: false,
       },
       attachments: [
