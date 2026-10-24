@@ -2329,7 +2329,7 @@ function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration
     )
   })
 
-  const current = createMemo(() => tools().findLast((x) => (x.state as any).title))
+  const current = createMemo(() => tools().findLast((x) => x.tool !== "lsp" && "title" in x.state && x.state.title))
 
   const isRunning = createMemo(() => {
     const sessionID = props.metadata.sessionId
