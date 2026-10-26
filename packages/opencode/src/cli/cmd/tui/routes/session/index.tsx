@@ -98,6 +98,7 @@ import { writable } from "./worker"
 import { order } from "./messages"
 import { websearch } from "./websearch"
 import { image } from "./image"
+import { patchFileID } from "./patch"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
@@ -2493,8 +2494,8 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
     <Switch>
       <Match when={files().length > 0}>
         <For each={files()}>
-          {(file) => (
-            <BlockTool id={"tool-" + props.part.id + "-" + file.filePath} title={title(file)} part={props.part}>
+          {(file, index) => (
+            <BlockTool id={patchFileID(props.part.id, index())} title={title(file)} part={props.part}>
               <Show
                 when={file.type !== "delete"}
                 fallback={
