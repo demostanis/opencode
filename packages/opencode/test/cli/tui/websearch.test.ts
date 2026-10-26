@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { websearch } from "../../../src/cli/cmd/tui/routes/session/websearch"
 
 describe("websearch presentation", () => {
+  test("running native search uses its query in task summaries", () => {
+    expect(websearch({}, { native: { action: { type: "search", query: "review redaction" } } }, "running").label).toBe(
+      'Web Search "review redaction"',
+    )
+  })
+
   test("completed native search uses action query and sources with empty input", () => {
     expect(
       websearch(

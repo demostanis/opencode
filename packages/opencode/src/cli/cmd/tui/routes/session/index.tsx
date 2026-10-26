@@ -2353,8 +2353,14 @@ function Task(props: ToolProps<typeof TaskTool> | ToolProps<typeof Collaboration
 
     if (isRunning() && tools().length > 0) {
       // content[0] += ` · ${tools().length} toolcalls`
-      if (current()) content.push(`↳ ${Locale.titlecase(current()!.tool)} ${(current()!.state as any).title}`)
-      else content.push(`↳ ${tools().length} toolcalls`)
+      const tool = current()
+      if (tool && "title" in tool.state) {
+        const label =
+          tool.tool === "websearch"
+            ? websearch(tool.state.input, tool.state.metadata ?? {}, tool.state.status).label
+            : `${Locale.titlecase(tool.tool)} ${tool.state.title}`
+        content.push(`↳ ${label}`)
+      } else content.push(`↳ ${tools().length} toolcalls`)
     }
 
     if (!isRunning() && messages().length > 0) {
