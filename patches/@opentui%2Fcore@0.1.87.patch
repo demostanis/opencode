@@ -1,5 +1,5 @@
 diff --git a/index-0wbvecnk.js b/index-0wbvecnk.js
-index 0c926100c..dbb236319 100644
+index 0c926100cef4bfc551c0656416278cbc5a1213b3..dbb2363192633046d1ef301cfd583f05e4d76c01 100644
 --- a/index-0wbvecnk.js
 +++ b/index-0wbvecnk.js
 @@ -6370,7 +6370,7 @@ class MouseParser {
@@ -62,10 +62,46 @@ index 0c926100c..dbb236319 100644
      return {
        type,
 diff --git a/index.js b/index.js
-index 1970eef38..725b6e15e 100644
+index 1970eef38804d12c705d463189081497e0c02a18..447e6c7623e1df503a4046580ad80f708e498f49 100644
 --- a/index.js
 +++ b/index.js
-@@ -9817,19 +9817,19 @@ class SliderRenderable extends Renderable {
+@@ -4414,6 +4414,7 @@ class DiffRenderable extends Renderable {
+   errorCodeRenderable = null;
+   _waitingForHighlight = false;
+   _lineInfoChangeHandler = null;
++  resizes = new Map;
+   constructor(ctx, options) {
+     super(ctx, {
+       ...options,
+@@ -4570,6 +4571,8 @@ class DiffRenderable extends Renderable {
+   }
+   destroyRecursively() {
+     this.detachLineInfoListeners();
++    this.resizes.forEach((resize, code) => code.off("line-info-change", resize));
++    this.resizes.clear();
+     this.pendingRebuild = false;
+     this.leftSideAdded = false;
+     this.rightSideAdded = false;
+@@ -4648,6 +4651,18 @@ class DiffRenderable extends Renderable {
+         ...this._treeSitterClient !== undefined && { treeSitterClient: this._treeSitterClient }
+       };
+       const newRenderable = new CodeRenderable(this.ctx, codeOptions);
++      let width = newRenderable.width;
++      // TextBufferRenderable emits line-info-change on resize, not resize.
++      const resize = () => {
++        if (width === newRenderable.width)
++          return;
++        width = newRenderable.width;
++        if (this._view === "split" && (this._wrapMode === "word" || this._wrapMode === "char")) {
++          this.requestRebuild();
++        }
++      };
++      this.resizes.set(newRenderable, resize);
++      newRenderable.on("line-info-change", resize);
+       if (side === "left") {
+         this.leftCodeRenderable = newRenderable;
+       } else {
+@@ -9817,19 +9832,19 @@ class SliderRenderable extends Renderable {
    }
    setupMouseHandling() {
      let isDragging = false;
@@ -88,7 +124,7 @@ index 1970eef38..725b6e15e 100644
        }
      };
      this.onMouseDrag = (event) => {
-@@ -9839,10 +9839,13 @@ class SliderRenderable extends Renderable {
+@@ -9839,10 +9854,13 @@ class SliderRenderable extends Renderable {
        this.updateValueFromMouseWithOffset(event, dragOffsetVirtual);
      };
      this.onMouseUp = (event) => {
