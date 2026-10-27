@@ -55,7 +55,7 @@ export const rpc = {
     heartbeat = setInterval(() => {
       if (owner) owner = lease.claim()
     }, 10_000)
-    timer = setInterval(() => tick().catch((err) => Rpc.emit("failure", String(err))), 5000)
+    timer = setInterval(() => tick().catch((err) => Rpc.emit("failure", String(err))), 30_000)
     setTimeout(() => tick().catch((err) => Rpc.emit("failure", String(err))), 0)
   },
   status() {

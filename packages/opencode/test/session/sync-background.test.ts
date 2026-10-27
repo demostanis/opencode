@@ -9,7 +9,7 @@ import { Rpc } from "../../src/util/rpc"
 import { Database } from "../../src/storage/db"
 import type { rpc } from "../../src/session/sync-worker"
 
-test("independent workers elect one owner and idle without rebuilding unchanged conversations", async () => {
+test("independent workers elect one owner and batch changed conversations", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
@@ -42,12 +42,20 @@ test("independent workers elect one owner and idle without rebuilding unchanged 
         expect(idle.reduce((sum, state) => sum + state.exported, 0)).toBe(1)
         expect(await fs.readdir(folder)).toEqual(files)
         await Session.setTitle({ sessionID: session.id, title: "Updated from the request thread" })
-        for (let i = 0; i < 100; i++) {
+        await Bun.sleep(5500)
+        const pending = await Promise.all(clients.map((client) => client.call("status", undefined)))
+        expect(pending.reduce((sum, state) => sum + state.exported, 0)).toBe(1)
+        expect(await fs.readdir(folder)).toEqual(files)
+        await Session.setTitle({ sessionID: session.id, title: "Latest batched update" })
+        for (let i = 0; i < 350; i++) {
           const states = await Promise.all(clients.map((client) => client.call("status", undefined)))
           if (states.reduce((sum, state) => sum + state.exported, 0) === 2) break
           await Bun.sleep(100)
         }
-        expect((await fs.readdir(folder)).length).toBe(2)
+        const archives = (await fs.readdir(folder)).sort()
+        expect(archives).toHaveLength(2)
+        const bundle = await Bun.file(path.join(folder, archives.at(-1)!)).json()
+        expect(bundle.session.title).toBe("Latest batched update")
       } finally {
         await Promise.all(clients.map((client) => client.call("stop", undefined)))
         workers.forEach((worker) => worker.terminate())
@@ -55,4 +63,4 @@ test("independent workers elect one owner and idle without rebuilding unchanged 
       }
     },
   })
-}, 30_000)
+}, 60_000)
