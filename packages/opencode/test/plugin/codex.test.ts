@@ -47,29 +47,32 @@ describe("plugin.codex", () => {
     expect(CODEX_MODELS.has("gpt-6-astra")).toBe(true)
   })
 
-  test.each(["gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"])("adds %s when the model catalog is stale", async (id) => {
-    expect(CODEX_MODELS.has(id)).toBe(true)
-    const hooks = await CodexAuthPlugin({} as PluginInput)
-    const loader = hooks.auth!.loader!
-    const provider = { models: {} } as Parameters<typeof loader>[1]
-    await loader(
-      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
-      provider,
-    )
+  test.each(["gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"])(
+    "adds %s when the model catalog is stale",
+    async (id) => {
+      expect(CODEX_MODELS.has(id)).toBe(true)
+      const hooks = await CodexAuthPlugin({} as PluginInput)
+      const loader = hooks.auth!.loader!
+      const provider = { models: {} } as Parameters<typeof loader>[1]
+      await loader(
+        async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+        provider,
+      )
 
-    const effort = id === "gpt-6.1-sol" ? "high" : "medium"
-    expect(provider.models[id]).toMatchObject({
-      id,
-      limit: { context: 1_050_000, input: 922_000, output: 128_000 },
-      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-      variants: {
-        [effort]: { reasoningEffort: effort },
-        max: { reasoningEffort: "max" },
-        ultra: { reasoningEffort: "max" },
-      },
-    })
-    if (id === "gpt-6.1-sol") expect(provider.models[id]).not.toHaveProperty("variants.medium")
-  })
+      const effort = id === "gpt-6.1-sol" ? "high" : "medium"
+      expect(provider.models[id]).toMatchObject({
+        id,
+        limit: { context: 1_050_000, input: 922_000, output: 128_000 },
+        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+        variants: {
+          [effort]: { reasoningEffort: effort },
+          max: { reasoningEffort: "max" },
+          ultra: { reasoningEffort: "max" },
+        },
+      })
+      if (id === "gpt-6.1-sol") expect(provider.models[id]).not.toHaveProperty("variants.medium")
+    },
+  )
 
   test("adds GPT-6 Astra when the model catalog is stale", async () => {
     const hooks = await CodexAuthPlugin({} as PluginInput)
@@ -99,6 +102,7 @@ describe("plugin.codex", () => {
     ["gpt-6-sol", "fast"],
     ["gpt-6.1-sol", "fast"],
     ["gpt-6.1-sol", "ultrafast"],
+    ["gpt-6.1-terra", "fast"],
     ["gpt-6-luna", "fast"],
   ])("adds and routes %s %s without changing reasoning effort", async (id, tier) => {
     const hooks = await CodexAuthPlugin({} as PluginInput)
@@ -119,6 +123,7 @@ describe("plugin.codex", () => {
     expect(provider.models[id].api.id).toBe(id)
     expect(provider.models["gpt-6-sol-ultrafast"]).toBeUndefined()
     expect(provider.models["gpt-6-luna-ultrafast"]).toBeUndefined()
+    expect(provider.models["gpt-6.1-terra-ultrafast"]).toBeUndefined()
 
     using server = Bun.serve({
       port: 0,

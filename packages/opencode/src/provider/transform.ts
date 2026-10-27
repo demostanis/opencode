@@ -334,7 +334,7 @@ export namespace ProviderTransform {
     const supported =
       Object.hasOwn(model.variants ?? {}, "ultra") ||
       [model.id, model.api.id].some((id) =>
-        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"].some((name) =>
+        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"].some((name) =>
           id.toLowerCase().includes(name),
         ),
       )
@@ -351,7 +351,11 @@ export namespace ProviderTransform {
   }
 
   function efforts(model: Provider.Model, fallback: string[]) {
-    if ([model.id, model.api.id].some((id) => id.toLowerCase().includes("gpt-6-luna")))
+    if (
+      [model.id, model.api.id].some((id) =>
+        ["gpt-6-luna", "gpt-6.1-terra"].some((name) => id.toLowerCase().includes(name)),
+      )
+    )
       return ["none", "low", "medium", "high", "xhigh", "max"]
     if (
       [model.id, model.api.id].some((id) =>

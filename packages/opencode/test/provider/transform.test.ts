@@ -2417,6 +2417,18 @@ describe("ProviderTransform.variants", () => {
     })
   })
 
+  test.each(["gpt-6.1-terra", "gpt-6.1-terra-fast"])("%s exposes all reasoning efforts", (id) => {
+    const model = createMockModel({
+      id,
+      providerID: "openai",
+      api: { id, url: "https://api.openai.com", npm: "@ai-sdk/openai" },
+    })
+    const variants = ProviderTransform.variants(model)
+    expect(Object.keys(variants)).toEqual(["none", "low", "medium", "high", "xhigh", "max", "ultra"])
+    expect(variants.max).toMatchObject({ reasoningEffort: "max" })
+    expect(variants.ultra).toEqual(variants.max)
+  })
+
   test.each([
     ["@ai-sdk/openai", "openai/gpt-6.1-sol", "alias"],
     ["@ai-sdk/openai", "alias", "GPT-6.1-SOL"],
