@@ -7,6 +7,7 @@ import { Provider } from "../../src/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
 import { Auth } from "../../src/auth"
+import { SessionCompaction } from "../../src/session/compaction"
 
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
@@ -317,6 +318,57 @@ test.each([undefined, false, 120_000])("OpenAI OAuth respects chunkTimeout %s", 
         expect(providers[ProviderID.openai]).toBeDefined()
         expect(providers[ProviderID.openai].options.timeout).toBe(false)
         expect(providers[ProviderID.openai].options.chunkTimeout).toBe(timeout ?? 20_000)
+      },
+    })
+  } finally {
+    if (auth) await Auth.set("openai", auth)
+    else await Auth.remove("openai")
+  }
+})
+
+test.each(["api", "oauth"] as const)("OpenAI %s models share the Sol 5.6 compaction budget", async (type) => {
+  const auth = await Auth.get("openai")
+  await Auth.set(
+    "openai",
+    type === "api"
+      ? { type: "api", key: "test-api-key" }
+      : { type: "oauth", access: "test-access", refresh: "test-refresh", expires: Date.now() + 3_600_000 },
+  )
+  try {
+    await using tmp = await tmpdir({
+      config: {
+        provider: {
+          anthropic: {
+            models: { "test-model": { limit: { context: 200_000, output: 8_000 } } },
+          },
+        },
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const providers = await Provider.list()
+        const models = Object.values(providers[ProviderID.openai].models)
+        expect(models.length).toBeGreaterThan(0)
+        for (const model of models) {
+          expect(model.limit).toEqual({ context: 372_000, input: 244_000, output: 128_000 })
+        }
+        if (type === "oauth") {
+          expect(providers[ProviderID.openai].models["gpt-6-astra-ultrafast"]).toBeDefined()
+          expect(providers[ProviderID.openai].models["gpt-6.1-terra-fast"]).toBeDefined()
+        }
+        expect(providers[ProviderID.anthropic].models["test-model"].limit).toEqual({
+          context: 200_000,
+          output: 8_000,
+        })
+        for (const count of [223_999, 224_000]) {
+          expect(
+            await SessionCompaction.isOverflow({
+              model: models[0],
+              tokens: { total: count, input: count, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            }),
+          ).toBe(count >= 224_000)
+        }
       },
     })
   } finally {

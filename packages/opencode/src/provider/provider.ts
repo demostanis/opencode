@@ -1038,6 +1038,10 @@ export namespace Provider {
       const configProvider = config.provider?.[providerID]
 
       for (const [modelID, model] of Object.entries(provider.models)) {
+        // Use Sol 5.6's compaction budget after all catalog and plugin overrides.
+        if (providerID === ProviderID.openai) {
+          model.limit = { context: 372_000, input: 244_000, output: 128_000 }
+        }
         model.api.id = model.api.id ?? model.id ?? modelID
         if (
           modelID === "gpt-5-chat-latest" ||
