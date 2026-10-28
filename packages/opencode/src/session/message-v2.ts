@@ -13,7 +13,6 @@ import { STATUS_CODES } from "http"
 import { Storage } from "@/storage/storage"
 import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
-import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { SSE_READ_TIMEOUT } from "@/provider/timeout"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -984,7 +983,47 @@ export namespace MessageV2 {
     return result
   }
 
+  function network(
+    error: unknown,
+    seen = new Set<unknown>(),
+  ): { code: string; syscall: string; message: string } | undefined {
+    if (!error || typeof error !== "object" || seen.has(error)) return
+    seen.add(error)
+    if ("name" in error && error.name === "AbortError") return
+    if (APICallError.isInstance(error) && error.statusCode !== undefined) return
+    if (
+      "code" in error &&
+      typeof error.code === "string" &&
+      [
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "EADDRNOTAVAIL",
+        "ENETDOWN",
+        "ENETUNREACH",
+        "EHOSTDOWN",
+        "EHOSTUNREACH",
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ECONNABORTED",
+        "ETIMEDOUT",
+        "EPIPE",
+        "UND_ERR_CONNECT_TIMEOUT",
+        "UND_ERR_HEADERS_TIMEOUT",
+        "UND_ERR_BODY_TIMEOUT",
+        "UND_ERR_SOCKET",
+      ].includes(error.code)
+    ) {
+      return {
+        code: error.code,
+        syscall: "syscall" in error && typeof error.syscall === "string" ? error.syscall : "",
+        message: "message" in error && typeof error.message === "string" ? error.message : "",
+      }
+    }
+    if ("cause" in error) return network(error.cause, seen)
+  }
+
   export function fromError(e: unknown, ctx: { providerID: ProviderID }): NonNullable<Assistant["error"]> {
+    const connection = network(e)
     switch (true) {
       case e instanceof DOMException && e.name === "AbortError":
         return new MessageV2.AbortedError(
@@ -1003,16 +1042,15 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
-      case (e as SystemError)?.code === "ECONNRESET":
+      case connection !== undefined:
         return new MessageV2.APIError(
           {
-            message: "Connection reset by server",
+            message:
+              connection.code === "ECONNRESET"
+                ? "Connection reset by server"
+                : `Network connection unavailable (${connection.code})`,
             isRetryable: true,
-            metadata: {
-              code: (e as SystemError).code ?? "",
-              syscall: (e as SystemError).syscall ?? "",
-              message: (e as SystemError).message ?? "",
-            },
+            metadata: connection,
           },
           { cause: e },
         ).toObject()

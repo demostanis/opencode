@@ -201,6 +201,40 @@ describe("session.processor empty responses", () => {
 })
 
 describe("session.processor stream retries", () => {
+  test("keeps retrying DNS failures until the connection recovers", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const responses = [
+          ...Array.from({ length: 12 }, () => [
+            { type: "error", error: Object.assign(new Error("DNS lookup failed"), { code: "ENOTFOUND" }) },
+          ]),
+          textResponse,
+        ]
+        const stream = spyOn(LLM, "stream").mockImplementation(async () => fakeStream(responses.shift()!))
+        const sleep = spyOn(SessionRetry, "sleep").mockResolvedValue()
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+
+        try {
+          expect(await fixture.processor.process(fixture.input)).toBe("continue")
+          expect(stream).toHaveBeenCalledTimes(13)
+          expect(sleep.mock.calls.map(([delay]) => delay)).toEqual([
+            2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000,
+          ])
+          expect(fixture.processor.message.error).toBeUndefined()
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          expect(parts.filter((part) => part.type === "text").map((part) => part.text)).toEqual(["Recovered"])
+        } finally {
+          stream.mockRestore()
+          sleep.mockRestore()
+          summarize.mockRestore()
+        }
+      },
+    })
+  })
+
   test("removes partial output before retrying", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

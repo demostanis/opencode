@@ -22,6 +22,10 @@ function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
 }
 
 describe("session.retry.delay", () => {
+  test("does not wait when already cancelled", async () => {
+    await expect(SessionRetry.sleep(30_000, AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" })
+  })
+
   test("caps delay at 30 seconds when headers missing", () => {
     const error = apiError()
     const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.delay(index + 1, error))
@@ -129,6 +133,73 @@ describe("session.retry.retryable", () => {
 })
 
 describe("session.message-v2.fromError", () => {
+  test.each([
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "EADDRNOTAVAIL",
+    "ENETDOWN",
+    "ENETUNREACH",
+    "EHOSTDOWN",
+    "EHOSTUNREACH",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ECONNABORTED",
+    "ETIMEDOUT",
+    "EPIPE",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_BODY_TIMEOUT",
+    "UND_ERR_SOCKET",
+  ])("retries direct and wrapped %s errors", (code) => {
+    const cause = Object.assign(new Error("Connection failed"), { code, syscall: "connect" })
+    const errors = [
+      cause,
+      new TypeError("fetch failed", { cause }),
+      new APICallError({
+        message: "fetch failed",
+        url: "https://example.com",
+        requestBodyValues: {},
+        isRetryable: false,
+        cause,
+      }),
+    ]
+    for (const error of errors) {
+      const result = MessageV2.fromError(error, { providerID }) as MessageV2.APIError
+      expect(result.name).toBe("APIError")
+      expect(result.data.isRetryable).toBe(true)
+      expect(result.data.metadata).toEqual({ code, syscall: "connect", message: "Connection failed" })
+      expect(SessionRetry.retryable(result)).toBeDefined()
+      expect(SessionRetry.delay(1000, result)).toBe(30_000)
+    }
+  })
+
+  test("does not retry unrelated failures or cyclic causes", () => {
+    const cyclic = new Error("Unexpected failure")
+    cyclic.cause = cyclic
+    for (const error of [
+      cyclic,
+      new Error("Invalid configuration"),
+      Object.assign(new Error("Invalid certificate"), { code: "CERT_HAS_EXPIRED" }),
+    ]) {
+      expect(SessionRetry.retryable(MessageV2.fromError(error, { providerID }))).toBeUndefined()
+    }
+  })
+
+  test("does not override cancellation or HTTP failures with network causes", () => {
+    const cause = Object.assign(new Error("DNS failed"), { code: "ENOTFOUND" })
+    const abort = Object.assign(new DOMException("Cancelled", "AbortError"), { cause })
+    expect(MessageV2.fromError(abort, { providerID }).name).toBe("MessageAbortedError")
+    const error = new APICallError({
+      message: "Unauthorized",
+      url: "https://example.com",
+      requestBodyValues: {},
+      statusCode: 401,
+      isRetryable: false,
+      cause,
+    })
+    expect(SessionRetry.retryable(MessageV2.fromError(error, { providerID }))).toBeUndefined()
+  })
+
   test.concurrent(
     "converts ECONNRESET socket errors to retryable APIError",
     async () => {
