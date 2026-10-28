@@ -1,4 +1,5 @@
 import { PlanExitTool } from "./plan"
+import { CompactTool } from "./compact"
 import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
 import { EditTool } from "./edit"
@@ -109,6 +110,7 @@ export namespace ToolRegistry {
 
     return [
       InvalidTool,
+      CompactTool,
       ...(question ? [QuestionTool] : []),
       BashTool,
       ReadTool,

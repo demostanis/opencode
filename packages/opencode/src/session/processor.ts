@@ -105,6 +105,7 @@ export namespace SessionProcessor {
             let hasTextOutput = false
             let hasToolCall = false
             let native = false
+            let compact = false
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -296,6 +297,7 @@ export namespace SessionProcessor {
                       ? await nativeResult(match, result, await names[value.toolCallId])
                       : value.output
                     if (executed) native = true
+                    if (!executed && match.tool === "compact" && output.metadata?.compact === true) compact = true
                     await Session.updatePart({
                       ...match,
                       metadata: {
@@ -416,7 +418,7 @@ export namespace SessionProcessor {
                   })
                   if (
                     !input.assistantMessage.summary &&
-                    (await SessionCompaction.isOverflow({ tokens: usage.tokens, model: input.model }))
+                    (compact || (await SessionCompaction.isOverflow({ tokens: usage.tokens, model: input.model })))
                   ) {
                     needsCompaction = true
                   }

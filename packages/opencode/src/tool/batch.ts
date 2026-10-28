@@ -3,7 +3,7 @@ import { Tool } from "./tool"
 import { ProviderID, ModelID } from "../provider/schema"
 import DESCRIPTION from "./batch.txt"
 
-const DISALLOWED = new Set(["batch"])
+const DISALLOWED = new Set(["batch", "compact"])
 const FILTERED_FROM_SUGGESTIONS = new Set(["invalid", "patch", ...DISALLOWED])
 
 export const BatchTool = Tool.define("batch", async () => {

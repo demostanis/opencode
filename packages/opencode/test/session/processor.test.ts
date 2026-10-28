@@ -18,6 +18,8 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { rm } from "fs/promises"
 import { NativeImage } from "../../src/session/native-image"
+import { CompactTool } from "../../src/tool/compact"
+import { BatchTool } from "../../src/tool/batch"
 
 const model = {
   id: ModelID.make("test-model"),
@@ -269,6 +271,136 @@ describe("session.processor stream retries", () => {
         } finally {
           stream.mockRestore()
           sleep.mockRestore()
+          summarize.mockRestore()
+        }
+      },
+    })
+  })
+})
+
+describe("session.processor compact tool", () => {
+  test("rejects compact inside batch instead of reporting a successful request", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const tool = await BatchTool.init()
+        const output = await tool.execute(
+          { tool_calls: [{ tool: "compact", parameters: {} }] },
+          {
+            sessionID: fixture.session.id,
+            messageID: fixture.processor.message.id,
+            agent: agent.name,
+            abort: fixture.input.abort,
+            messages: [],
+            metadata: () => {},
+            ask: async () => {},
+          },
+        )
+        expect(output.metadata.successful).toBe(0)
+        expect(output.metadata.failed).toBe(1)
+        const parts = await MessageV2.parts(fixture.processor.message.id)
+        expect(parts.find((part) => part.type === "tool")?.state).toMatchObject({
+          status: "error",
+          error: "Tool 'compact' is not allowed in batch. Disallowed tools: batch, compact",
+        })
+      },
+    })
+  })
+
+  test("compacts after a successful tool result even with automatic compaction disabled and a stop finish", async () => {
+    await using tmp = await tmpdir({ git: true, config: { compaction: { auto: false } } })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const tool = await CompactTool.init()
+        const output = await tool.execute(
+          {},
+          {
+            sessionID: fixture.session.id,
+            messageID: fixture.processor.message.id,
+            agent: agent.name,
+            abort: fixture.input.abort,
+            messages: [],
+            metadata: () => {},
+            ask: async () => {},
+          },
+        )
+        expect(output.metadata.compact).toBe(true)
+        expect(await MessageV2.parts(fixture.processor.message.id)).toEqual([])
+        const stream = spyOn(LLM, "stream").mockResolvedValue({
+          fullStream: (async function* () {
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "compact-1", toolName: "compact" }
+            yield { type: "tool-call", toolCallId: "compact-1", toolName: "compact", input: {} }
+            yield { type: "tool-result", toolCallId: "compact-1", toolName: "compact", input: {}, output }
+            const parts = await MessageV2.parts(fixture.processor.message.id)
+            expect(parts.find((part) => part.type === "tool")).toMatchObject({
+              tool: "compact",
+              callID: "compact-1",
+              state: { status: "completed", input: {}, ...output },
+            })
+            yield { ...emptyResponse[1], finishReason: "stop" }
+          })(),
+        } as unknown as Awaited<ReturnType<typeof LLM.stream>>)
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+        try {
+          expect(await fixture.processor.process(fixture.input)).toBe("compact")
+          expect(stream).toHaveBeenCalledTimes(1)
+          expect(fixture.processor.message.finish).toBe("stop")
+          expect(fixture.processor.message.error).toBeUndefined()
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
+          expect(parts.find((part) => part.type === "tool")).toMatchObject({
+            tool: "compact",
+            state: { status: "completed", input: {}, ...output },
+          })
+          expect(parts.find((part) => part.type === "step-finish")).toMatchObject({ reason: "stop" })
+        } finally {
+          stream.mockRestore()
+          summarize.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("does not compact after a tool error", async () => {
+    await using tmp = await tmpdir({ git: true, config: { compaction: { auto: false } } })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const fixture = await setup()
+        const stream = spyOn(LLM, "stream").mockResolvedValue(
+          fakeStream([
+            { type: "start-step" },
+            { type: "tool-input-start", id: "compact-1", toolName: "compact" },
+            { type: "tool-call", toolCallId: "compact-1", toolName: "compact", input: {} },
+            {
+              type: "tool-error",
+              toolCallId: "compact-1",
+              toolName: "compact",
+              input: {},
+              error: new Error("Compaction cancelled"),
+            },
+            { ...emptyResponse[1], finishReason: "stop" },
+          ]),
+        )
+        const summarize = spyOn(SessionSummary, "summarize").mockResolvedValue()
+        try {
+          expect(await fixture.processor.process(fixture.input)).toBe("continue")
+          expect(stream).toHaveBeenCalledTimes(1)
+          expect(fixture.processor.message.finish).toBe("stop")
+          expect(fixture.processor.message.error).toBeUndefined()
+          const parts = await MessageV2.parts(fixture.processor.message.id)
+          expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
+          expect(parts.find((part) => part.type === "tool")).toMatchObject({
+            tool: "compact",
+            state: { status: "error", input: {}, error: "Compaction cancelled" },
+          })
+        } finally {
+          stream.mockRestore()
           summarize.mockRestore()
         }
       },
