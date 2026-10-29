@@ -9,6 +9,39 @@ import { Env } from "../../src/env"
 import { Auth } from "../../src/auth"
 import { SessionCompaction } from "../../src/session/compaction"
 
+test("abliteration loads from stored auth without custom provider config", async () => {
+  await using tmp = await tmpdir({ config: {} })
+  const previous = await Auth.get("abliteration")
+  await Auth.set("abliteration", { type: "api", key: "test-abliteration-key" })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const provider = (await Provider.list())[ProviderID.make("abliteration")]
+        expect(provider.name).toBe("abliteration.ai")
+        expect(provider.source).toBe("api")
+        expect(Object.keys(provider.models).sort()).toEqual([
+          "abliterated-model",
+          "abliterated-model-large",
+          "abliterated-model-large-flash",
+          "abliterated-model-large-v2",
+        ])
+        for (const model of Object.values(provider.models)) {
+          expect(model.api).toMatchObject({
+            url: "https://api.abliteration.ai/v1",
+            npm: "@ai-sdk/openai-compatible",
+          })
+          const sdk = await Provider.getLanguage(model)
+          expect(sdk.modelId).toBe(model.id)
+        }
+      },
+    })
+  } finally {
+    if (previous) await Auth.set("abliteration", previous)
+    if (!previous) await Auth.remove("abliteration")
+  }
+})
+
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

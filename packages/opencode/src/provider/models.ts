@@ -100,6 +100,64 @@ export namespace ModelsDev {
 
   export async function get() {
     const result = (await Data()) as Record<string, Provider>
+    result.abliteration = {
+      id: "abliteration",
+      name: "abliteration.ai",
+      env: ["ABLITERATION_API_KEY"],
+      npm: "@ai-sdk/openai-compatible",
+      api: "https://api.abliteration.ai/v1",
+      models: Object.fromEntries(
+        [
+          {
+            id: "abliterated-model",
+            name: "Abliterated Model",
+            context: 262_144,
+            output: 262_134,
+            image: true,
+            cost: { input: 1, output: 3, cache_read: 0.1 },
+          },
+          {
+            id: "abliterated-model-large",
+            name: "Abliterated Large",
+            context: 1_000_000,
+            output: 999_990,
+            image: false,
+            cost: { input: 3, output: 5, cache_read: 0.3 },
+          },
+          {
+            id: "abliterated-model-large-v2",
+            name: "Abliterated Large v2",
+            context: 1_000_000,
+            output: 999_990,
+            image: false,
+            cost: { input: 3, output: 5, cache_read: 0.3 },
+          },
+          {
+            id: "abliterated-model-large-flash",
+            name: "Abliterated Large Flash",
+            context: 1_048_576,
+            output: 262_144,
+            image: true,
+            cost: { input: 1, output: 2, cache_read: 0.1 },
+          },
+        ].map((entry) => [
+          entry.id,
+          {
+            id: entry.id,
+            name: entry.name,
+            release_date: "",
+            attachment: entry.image,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            modalities: { input: entry.image ? ["text", "image"] : ["text"], output: ["text"] },
+            limit: { context: entry.context, output: entry.output },
+            cost: entry.cost,
+            options: {},
+          },
+        ]),
+      ),
+    }
     if (result.openai) {
       for (const entry of [
         { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
