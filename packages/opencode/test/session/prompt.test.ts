@@ -287,6 +287,33 @@ describe("session.prompt agent variant", () => {
 })
 
 describe("session.prompt agent model", () => {
+  for (const configured of [{}, { model: "other/configured" }, { subagent_model: "other/subagent" }]) {
+    for (const override of [false, true]) {
+      test(`Abliteration general subtasks inherit the parent with ${JSON.stringify(configured)}, override=${override}`, async () => {
+        await using tmp = await tmpdir({ config: { agent: { general: configured } } })
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            for (const mid of ["qwen3-32b", "llama-3.3-70b"]) {
+              const fallback = { providerID: ProviderID.make("abliteration"), modelID: ModelID.make(mid) }
+              expect(
+                await SessionPrompt.resolveSubtaskModel({
+                  task: {
+                    agent: "general",
+                    model: override
+                      ? { providerID: ProviderID.make("other"), modelID: ModelID.make("override") }
+                      : undefined,
+                  },
+                  fallback,
+                }),
+              ).toEqual(fallback)
+            }
+          },
+        })
+      })
+    }
+  }
+
   test("does not use subagent model for primary prompt", async () => {
     await using tmp = await tmpdir({
       git: true,

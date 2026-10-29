@@ -6,6 +6,49 @@ import { resolveModel, TaskTool } from "../../src/tool/task"
 import { tmpdir } from "../fixture/fixture"
 
 describe("tool.task", () => {
+  for (const provider of ["abliteration", "openai"]) {
+    for (const name of ["general", "browser", "explore"]) {
+      for (const override of [false, true]) {
+        test(`${provider} ${name} preserves model precedence with override=${override}`, async () => {
+          await using tmp = await tmpdir({
+            config: {
+              agent: {
+                [name]: {
+                  model: "openai/configured",
+                  subagent_model: "openai/subagent",
+                },
+              },
+            },
+          })
+
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              const agent = await Agent.get(name)
+              for (const mid of ["qwen3-32b", "llama-3.3-70b"]) {
+                const fallback = { providerID: ProviderID.make(provider), modelID: ModelID.make(mid) }
+                const model = await resolveModel({
+                  agent: agent!,
+                  fallback,
+                  extra: override
+                    ? { subagentModel: { providerID: ProviderID.make("other"), id: ModelID.make("override") } }
+                    : undefined,
+                })
+                expect(model).toEqual(
+                  provider === "abliteration" && name === "general"
+                    ? fallback
+                    : override
+                      ? { providerID: ProviderID.make("other"), modelID: ModelID.make("override") }
+                      : { providerID: ProviderID.make("openai"), modelID: ModelID.make("subagent") },
+                )
+              }
+            },
+          })
+        })
+      }
+    }
+  }
+
   test("description sorts subagents by name and is stable across calls", async () => {
     await using tmp = await tmpdir({
       config: {

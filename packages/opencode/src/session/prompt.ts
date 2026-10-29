@@ -1097,6 +1097,7 @@ export namespace SessionPrompt {
       modelID: ModelID
     }
   }) {
+    if (input.fallback.providerID === "abliteration" && input.task.agent === "general") return input.fallback
     const agent = input.agent ?? (await Agent.get(input.task.agent))
     return (
       input.task.model ??
@@ -2179,7 +2180,7 @@ You should build your plan incrementally by writing to or editing this file. NOT
     }
 
     const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
-    const taskModel = await (async () => {
+    const selected = await (async () => {
       if (command.model) {
         return Provider.parseModel(command.model)
       }
@@ -2195,7 +2196,10 @@ You should build your plan incrementally by writing to or editing this file. NOT
       ? input.model
         ? Provider.parseModel(input.model)
         : await lastModel(input.sessionID)
-      : taskModel
+      : selected
+    const taskModel = isSubtask
+      ? await resolveSubtaskModel({ task: { agent: agent.name, model: selected }, agent, fallback: userModel })
+      : selected
     await validate({
       sessionID: input.sessionID,
       agent: userAgent,
