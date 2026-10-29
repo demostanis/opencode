@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "3.0.25+demolinux",
+  "version": "3.0.26+demolinux",
   "name": "opencode",
   "type": "module",
   "license": "MIT",
