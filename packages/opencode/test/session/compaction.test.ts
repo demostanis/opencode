@@ -8,8 +8,100 @@ import { tmpdir } from "../fixture/fixture"
 import { Session } from "../../src/session"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID } from "../../src/session/schema"
 
 Log.init({ print: false })
+
+test.each([false, true])("prune counts actual search JSON without truncating storage, native=%s", async (native) => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const session = await Session.create({})
+      const model = createModel({ context: 200_000, output: 32_000 })
+      const user = await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: session.id,
+        role: "user",
+        time: { created: 0 },
+        agent: "build",
+        model: { providerID: model.providerID, modelID: model.id },
+      })
+      const assistant = await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: session.id,
+        role: "assistant",
+        parentID: user.id,
+        modelID: model.id,
+        providerID: model.providerID,
+        agent: "build",
+        mode: "build",
+        path: { cwd: tmp.path, root: tmp.path },
+        time: { created: 1 },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      })
+      const payload = { results: [{ snippet: "x".repeat(120_000), extra: [null, 42] }] }
+      const parts = await Promise.all(
+        [0, 1].map((index) =>
+          Session.updatePart({
+            id: PartID.ascending(),
+            messageID: assistant.id,
+            sessionID: session.id,
+            type: "tool",
+            tool: "websearch",
+            callID: `search-${index}`,
+            ...(native ? { metadata: { providerExecuted: true } } : {}),
+            state: {
+              status: "completed",
+              input: {},
+              output: "Short summary",
+              title: "search",
+              metadata: { native: native ? payload : { backend: "codex", items: [payload] } },
+              time: { start: 0, end: 1 },
+            },
+          }),
+        ),
+      )
+      for (const index of [2, 3]) {
+        await Session.updateMessage({
+          ...user,
+          id: MessageID.ascending(),
+          time: { created: index },
+        })
+      }
+      const before = await Session.messages({ sessionID: session.id })
+      const replay = MessageV2.toModelMessages(before, model)
+      const outputs = replay.flatMap((message) => (message.role === "tool" ? message.content : []))
+      expect(outputs).toHaveLength(2)
+      for (const [index, output] of outputs.entries()) {
+        const part = parts[index]
+        if (part.type !== "tool") throw new Error("Expected search tool")
+        const selected = MessageV2.toolOutput(part)
+        if (typeof selected === "string") throw new Error("Expected raw search JSON")
+        expect(output.output).toEqual({ type: "json", value: selected.native })
+        expect(Token.estimate(JSON.stringify(selected.native))).toBeGreaterThan(SessionCompaction.PRUNE_MINIMUM)
+        expect(Token.estimate(JSON.stringify(selected.native))).toBeLessThan(SessionCompaction.PRUNE_PROTECT)
+      }
+      await SessionCompaction.prune({ sessionID: session.id })
+      const after = await Session.messages({ sessionID: session.id })
+      const stored = after.flatMap((message) => message.parts).filter((part) => part.type === "tool")
+      expect(stored).toHaveLength(2)
+      for (const [index, part] of stored.entries()) {
+        if (part.state.status !== "completed") throw new Error("Expected completed search")
+        expect(Boolean(part.state.time.compacted)).toBe(index === 0)
+        expect(part.state.output).toBe("Short summary")
+        expect(part.state.metadata).toEqual({ native: native ? payload : { backend: "codex", items: [payload] } })
+      }
+      const compacted = MessageV2.toModelMessages(after, model).flatMap((message) =>
+        message.role === "tool" ? message.content : [],
+      )
+      expect(compacted[0].output).toEqual({ type: "text", value: "[Old tool result content cleared]" })
+      expect(compacted[1].output).toEqual(outputs[1].output)
+    },
+  })
+})
 
 function createModel(opts: {
   context: number

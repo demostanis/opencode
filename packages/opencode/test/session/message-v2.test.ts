@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError, generateText } from "ai"
 import { createOpenAI } from "@ai-sdk/openai"
+import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -927,83 +928,325 @@ describe("session.message-v2 native replay", () => {
     return { part, input }
   }
 
+  test.each([["image_generation", { result: "Zm9v" }]])(
+    "preserves raw %s output as an assistant JSON result without duplicate attachments",
+    (tool, native) => {
+      const fixture = history(tool, native)
+      expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "native-item",
+              toolName: tool,
+              input: {},
+              providerExecuted: true,
+              providerOptions: { openai: { itemId: "native-item" } },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "native-item",
+              toolName: tool,
+              output: { type: "json", value: native },
+              providerOptions: { openai: { itemId: "native-item" } },
+            },
+          ],
+        },
+      ])
+    },
+  )
+
+  test.each([false, true])("serializes whole stored search results with paired call IDs, store=%s", async (store) => {
+    const native = {
+      id: "ws_original",
+      type: "web_search_call",
+      status: "completed",
+      action: {
+        type: "search",
+        query: "Bun",
+        queries: ["Bun"],
+        sources: [{ type: "url", url: "https://bun.sh", extra: null }],
+      },
+      results: [{ type: "text_result", snippet: "Exact snippet\n", title: "Bun", url: "https://bun.sh" }],
+      extra: { untouched: [null, 7] },
+    }
+    const requests: Record<string, unknown>[] = []
+    const sdk = createOpenAI({
+      apiKey: "test",
+      fetch: Object.assign(
+        async (_: RequestInfo | URL, init?: RequestInit) => {
+          requests.push(JSON.parse(String(init?.body)))
+          return Response.json({
+            id: "resp-test",
+            created_at: 0,
+            model: "gpt-4.1",
+            output: [],
+            usage: { input_tokens: 0, output_tokens: 0 },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    for (const target of [
+      model,
+      { ...model, id: ModelID.make("other") },
+      { ...model, providerID: ProviderID.make("other") },
+    ]) {
+      const fixture = history("websearch", native)
+      const messages = MessageV2.toModelMessages(fixture.input, target)
+      expect(JSON.stringify(messages)).not.toContain("websearch:")
+      expect(messages).toMatchObject([
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: "native-item", toolName: "websearch" }] },
+        {
+          role: "tool",
+          content: [{ type: "tool-result", toolCallId: "native-item", output: { type: "json", value: native } }],
+        },
+      ])
+      await generateText({ model: sdk.responses("gpt-4.1"), messages, providerOptions: { openai: { store } } })
+      expect(requests.at(-1)?.input).toEqual([
+        { type: "function_call", call_id: "native-item", name: "websearch", arguments: "{}" },
+        { type: "function_call_output", call_id: "native-item", output: JSON.stringify(native) },
+      ])
+    }
+  })
+
   test.each([
-    ["websearch", { action: { type: "search", query: "Bun" }, sources: [{ type: "url", url: "https://bun.sh" }] }],
-    ["image_generation", { result: "Zm9v" }],
-  ])("preserves raw %s output as an assistant JSON result without duplicate attachments", (tool, native) => {
-    const fixture = history(tool, native)
-    expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
-      {
-        role: "assistant",
+    [],
+    [{ type: "web_search_call", action: { type: "search", query: "Bun" }, extra: null }],
+    [{ type: "web_search_call", results: [{ snippet: "Exact\n", extra: [null, 42] }] }],
+  ])(
+    "local search retains summary and raw items, preserving Gemini signatures and parallel calls: %j",
+    async (...items) => {
+      const native = { backend: "codex", items }
+      const fixture = history("websearch", native)
+      fixture.part.metadata = { google: { thoughtSignature: "signed-call" } }
+      fixture.input[0].parts.push({
+        ...fixture.part,
+        id: PartID.make("parallel"),
+        callID: "parallel",
+        tool: "bash",
+        metadata: undefined,
+        state: {
+          status: "completed",
+          input: {},
+          output: "ok",
+          title: "bash",
+          metadata: {},
+          time: { start: 0, end: 1 },
+        },
+      })
+      const messages = MessageV2.toModelMessages(fixture.input, model)
+      expect(messages.map((message) => message.role)).toEqual(["assistant", "tool"])
+      expect(messages[0]).toMatchObject({
         content: [
           {
             type: "tool-call",
             toolCallId: "native-item",
-            toolName: tool,
-            input: {},
-            providerExecuted: true,
-            providerOptions: { openai: { itemId: "native-item" } },
+            providerOptions: { google: { thoughtSignature: "signed-call" } },
           },
-          {
-            type: "tool-result",
-            toolCallId: "native-item",
-            toolName: tool,
-            output: { type: "json", value: native },
-            providerOptions: { openai: { itemId: "native-item" } },
-          },
+          { type: "tool-call", toolCallId: "parallel" },
         ],
-      },
-    ])
-  })
-
-  test.each(["websearch", "image_generation"])(
-    "uses Responses item references for %s, never function outputs",
-    async (tool) => {
-      const fixture = history(
-        tool,
-        tool === "image_generation" ? { result: "Zm9v" } : { action: { type: "search", query: "Bun" } },
-      )
+      })
+      const value = { output: "Found Bun documentation", native }
+      expect(messages[1]).toMatchObject({
+        content: [
+          { type: "tool-result", toolCallId: "native-item", output: { type: "json", value } },
+          { type: "tool-result", toolCallId: "parallel" },
+        ],
+      })
       const requests: Record<string, unknown>[] = []
-      const provider = createOpenAI({
+      const sdk = createGoogleGenerativeAI({
         apiKey: "test",
         fetch: Object.assign(
-          async (_url: URL | RequestInfo, init?: RequestInit) => {
+          async (_: RequestInfo | URL, init?: RequestInit) => {
             requests.push(JSON.parse(String(init?.body)))
             return Response.json({
-              id: "resp-test",
-              created_at: 0,
-              model: "gpt-4.1",
-              output: [],
-              usage: { input_tokens: 0, output_tokens: 0 },
+              candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }],
             })
           },
           { preconnect: fetch.preconnect },
         ),
       })
-      for (const store of [true, false]) {
-        const result = await generateText({
-          model: provider.responses("gpt-4.1"),
-          messages: MessageV2.toModelMessages(fixture.input, model),
-          providerOptions: { openai: { store } },
+      await generateText({ model: sdk("gemini-3-pro-preview"), messages })
+      expect(requests[0].contents).toMatchObject([
+        {
+          role: "model",
+          parts: [
+            { functionCall: { name: "websearch", args: {} }, thoughtSignature: "signed-call" },
+            { functionCall: { name: "bash", args: {} } },
+          ],
+        },
+        {
+          role: "user",
+          parts: [
+            { functionResponse: { name: "websearch", response: { name: "websearch", content: value } } },
+            { functionResponse: { name: "bash" } },
+          ],
+        },
+      ])
+      const switched = MessageV2.toModelMessages(fixture.input, { ...model, id: ModelID.make("other") })
+      expect(JSON.stringify(switched)).not.toContain("signed-call")
+      expect(switched.map((message) => message.role)).toEqual(["assistant", "tool"])
+    },
+  )
+
+  test.each(["error", "pending", "running"] as const)(
+    "native search %s replays a matched error, not assistant prose",
+    async (status) => {
+      const fixture = history()
+      fixture.part.state =
+        status === "error"
+          ? { status, input: { query: "Bun" }, error: "Search failed", time: { start: 0, end: 1 } }
+          : status === "pending"
+            ? { status, input: { query: "Bun" }, raw: "" }
+            : { status, input: { query: "Bun" }, time: { start: 0 } }
+      for (const target of [model, { ...model, id: ModelID.make("other") }]) {
+        const messages = MessageV2.toModelMessages(fixture.input, target)
+        expect(JSON.stringify(messages)).not.toContain("websearch:")
+        expect(messages).toMatchObject([
+          { role: "assistant", content: [{ type: "tool-call", toolCallId: "native-item", toolName: "websearch" }] },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "native-item",
+                output: {
+                  type: "error-text",
+                  value: status === "error" ? "Search failed" : "[Tool execution was interrupted]",
+                },
+              },
+            ],
+          },
+        ])
+        const requests: Record<string, unknown>[] = []
+        const sdk = createOpenAI({
+          apiKey: "test",
+          fetch: Object.assign(
+            async (_: RequestInfo | URL, init?: RequestInit) => {
+              requests.push(JSON.parse(String(init?.body)))
+              return Response.json({
+                id: "resp-test",
+                created_at: 0,
+                model: "gpt-4.1",
+                output: [],
+                usage: { input_tokens: 0, output_tokens: 0 },
+              })
+            },
+            { preconnect: fetch.preconnect },
+          ),
         })
-        expect(requests.at(-1)?.input).toEqual(store ? [{ type: "item_reference", id: "native-item" }] : [])
-        if (!store)
-          expect(result.warnings).toContainEqual({
-            type: "other",
-            message: `Results for OpenAI tool ${tool} are not sent to the API when store is false`,
-          })
+        await generateText({ model: sdk.responses("gpt-4.1"), messages, providerOptions: { openai: { store: false } } })
+        expect(requests[0].input).toEqual([
+          { type: "function_call", call_id: "native-item", name: "websearch", arguments: '{"query":"Bun"}' },
+          {
+            type: "function_call_output",
+            call_id: "native-item",
+            output: status === "error" ? "Search failed" : "[Tool execution was interrupted]",
+          },
+        ])
       }
     },
   )
+
+  test("keeps search results before later reasoning, text, and calls in the same step", () => {
+    const fixture = history()
+    fixture.input[0].parts.unshift({
+      ...basePart("m-native", "p-before"),
+      type: "reasoning",
+      text: "Before",
+      time: { start: 0, end: 1 },
+      metadata: { openai: { itemId: "rs_before" } },
+    })
+    fixture.input[0].parts.push(
+      {
+        ...basePart("m-native", "p-after"),
+        type: "reasoning",
+        text: "After",
+        time: { start: 2, end: 3 },
+        metadata: { openai: { itemId: "rs_after" } },
+      },
+      { ...basePart("m-native", "p-text"), type: "text", text: "After result" },
+      {
+        ...fixture.part,
+        ...basePart("m-native", "p-local"),
+        callID: "local",
+        tool: "bash",
+        metadata: undefined,
+        state: {
+          status: "completed",
+          input: {},
+          output: "ok",
+          title: "bash",
+          metadata: {},
+          time: { start: 2, end: 3 },
+        },
+      },
+    )
+    const messages = MessageV2.toModelMessages(fixture.input, model)
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant", "tool"])
+    expect(messages[0]).toMatchObject({
+      content: [
+        { type: "reasoning", text: "Before" },
+        { type: "tool-call", toolCallId: "native-item" },
+      ],
+    })
+    expect(messages[1]).toMatchObject({ content: [{ type: "tool-result", toolCallId: "native-item" }] })
+    expect(messages[2]).toMatchObject({
+      content: [
+        { type: "reasoning", text: "After" },
+        { type: "text", text: "After result" },
+        { type: "tool-call", toolCallId: "local" },
+      ],
+    })
+    expect(messages[3]).toMatchObject({ content: [{ type: "tool-result", toolCallId: "local" }] })
+  })
+
+  test.each(["image_generation"])("uses Responses item references for %s, never function outputs", async (tool) => {
+    const fixture = history(
+      tool,
+      tool === "image_generation" ? { result: "Zm9v" } : { action: { type: "search", query: "Bun" } },
+    )
+    const requests: Record<string, unknown>[] = []
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: Object.assign(
+        async (_url: URL | RequestInfo, init?: RequestInit) => {
+          requests.push(JSON.parse(String(init?.body)))
+          return Response.json({
+            id: "resp-test",
+            created_at: 0,
+            model: "gpt-4.1",
+            output: [],
+            usage: { input_tokens: 0, output_tokens: 0 },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    for (const store of [true, false]) {
+      const result = await generateText({
+        model: provider.responses("gpt-4.1"),
+        messages: MessageV2.toModelMessages(fixture.input, model),
+        providerOptions: { openai: { store } },
+      })
+      expect(requests.at(-1)?.input).toEqual(store ? [{ type: "item_reference", id: "native-item" }] : [])
+      if (!store)
+        expect(result.warnings).toContainEqual({
+          type: "other",
+          message: `Results for OpenAI tool ${tool} are not sent to the API when store is false`,
+        })
+    }
+  })
 
   test.each([
     { ...model, id: ModelID.make("other") },
     { ...model, providerID: ProviderID.make("other") },
   ])("uses portable text/media without native IDs on a model/provider switch: %j", (target) => {
     const search = history()
-    expect(MessageV2.toModelMessages(search.input, target)).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "websearch: Found Bun documentation" }] },
-    ])
+    expect(MessageV2.toModelMessages(search.input, target)).toEqual(MessageV2.toModelMessages(search.input, model))
+    expect(JSON.stringify(MessageV2.toModelMessages(search.input, target))).not.toContain("websearch:")
     const image = history("image_generation", { result: "Zm9v" })
     expect(MessageV2.toModelMessages(image.input, target)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "image_generation: Generated image: /tmp/generated.png" }] },
@@ -1029,12 +1272,26 @@ describe("session.message-v2 native replay", () => {
     ])
   })
 
-  test("degrades legacy native results without raw output to text", () => {
+  test("keeps legacy completed search results as tool output without raw fields", () => {
     const fixture = history()
     if (fixture.part.state.status !== "completed") throw new Error("Expected completed tool")
     fixture.part.state.metadata = {}
     expect(MessageV2.toModelMessages(fixture.input, model)).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "websearch: Found Bun documentation" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "native-item", toolName: "websearch", input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "native-item",
+            toolName: "websearch",
+            output: { type: "text", value: "Found Bun documentation" },
+          },
+        ],
+      },
     ])
   })
 
@@ -1058,8 +1315,8 @@ describe("session.message-v2 native replay", () => {
       },
     )
     const messages = MessageV2.toModelMessages(fixture.input, model)
-    expect(messages.map((message) => message.role)).toEqual(["assistant", "assistant", "tool"])
-    expect(messages[2]).toEqual({
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant", "tool"])
+    expect(messages[3]).toEqual({
       role: "tool",
       content: [
         {
@@ -1071,15 +1328,16 @@ describe("session.message-v2 native replay", () => {
       ],
     })
     expect(messages[0]).toMatchObject({
-      content: [
-        { type: "tool-call", providerExecuted: true },
-        { type: "tool-result", output: { type: "json", value: { action: { type: "search", query: "Bun" } } } },
-      ],
+      content: [{ type: "tool-call", toolCallId: "native-item", toolName: "websearch", input: {} }],
+    })
+    expect(messages[1]).toMatchObject({
+      role: "tool",
+      content: [{ type: "tool-result", output: { type: "json", value: { action: { type: "search", query: "Bun" } } } }],
     })
   })
 
-  test.each(["pending", "running", "error"] as const)("does not fabricate native results for %s tools", (status) => {
-    const fixture = history()
+  test.each(["pending", "running", "error"] as const)("keeps native image fallback for %s tools", (status) => {
+    const fixture = history("image_generation")
     fixture.part.state =
       status === "pending"
         ? { status, input: {}, raw: "" }
@@ -1092,7 +1350,7 @@ describe("session.message-v2 native replay", () => {
         content: [
           {
             type: "text",
-            text: `websearch: ${status === "error" ? "Native search failed" : "[Tool execution was interrupted]"}`,
+            text: `image_generation: ${status === "error" ? "Native search failed" : "[Tool execution was interrupted]"}`,
           },
         ],
       },

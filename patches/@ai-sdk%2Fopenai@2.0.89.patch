@@ -1,0 +1,222 @@
+diff --git a/dist/index.js b/dist/index.js
+index ba86783033e3fa24faf7c919374d548316f2cd1f..859d63a9039124b4ebe516d5cfac013443428587 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -2463,11 +2463,7 @@ var openaiResponsesChunkSchema = (0, import_provider_utils21.lazyValidator)(
+             name: import_v416.z.string(),
+             arguments: import_v416.z.string()
+           }),
+-          import_v416.z.object({
+-            type: import_v416.z.literal("web_search_call"),
+-            id: import_v416.z.string(),
+-            status: import_v416.z.string()
+-          }),
++          import_v416.z.object({ type: import_v416.z.literal("web_search_call"), id: import_v416.z.string(), status: import_v416.z.string() }).passthrough(),
+           import_v416.z.object({
+             type: import_v416.z.literal("computer_call"),
+             id: import_v416.z.string(),
+@@ -2534,32 +2530,7 @@ var openaiResponsesChunkSchema = (0, import_provider_utils21.lazyValidator)(
+             id: import_v416.z.string(),
+             result: import_v416.z.string()
+           }),
+-          import_v416.z.object({
+-            type: import_v416.z.literal("web_search_call"),
+-            id: import_v416.z.string(),
+-            status: import_v416.z.string(),
+-            action: import_v416.z.discriminatedUnion("type", [
+-              import_v416.z.object({
+-                type: import_v416.z.literal("search"),
+-                query: import_v416.z.string().nullish(),
+-                sources: import_v416.z.array(
+-                  import_v416.z.discriminatedUnion("type", [
+-                    import_v416.z.object({ type: import_v416.z.literal("url"), url: import_v416.z.string() }),
+-                    import_v416.z.object({ type: import_v416.z.literal("api"), name: import_v416.z.string() })
+-                  ])
+-                ).nullish()
+-              }),
+-              import_v416.z.object({
+-                type: import_v416.z.literal("open_page"),
+-                url: import_v416.z.string().nullish()
+-              }),
+-              import_v416.z.object({
+-                type: import_v416.z.literal("find_in_page"),
+-                url: import_v416.z.string().nullish(),
+-                pattern: import_v416.z.string().nullish()
+-              })
+-            ])
+-          }),
++          import_v416.z.object({ type: import_v416.z.literal("web_search_call"), id: import_v416.z.string(), status: import_v416.z.string() }).passthrough(),
+           import_v416.z.object({
+             type: import_v416.z.literal("file_search_call"),
+             id: import_v416.z.string(),
+@@ -2744,32 +2715,7 @@ var openaiResponsesResponseSchema = (0, import_provider_utils21.lazyValidator)(
+               })
+             )
+           }),
+-          import_v416.z.object({
+-            type: import_v416.z.literal("web_search_call"),
+-            id: import_v416.z.string(),
+-            status: import_v416.z.string(),
+-            action: import_v416.z.discriminatedUnion("type", [
+-              import_v416.z.object({
+-                type: import_v416.z.literal("search"),
+-                query: import_v416.z.string().nullish(),
+-                sources: import_v416.z.array(
+-                  import_v416.z.discriminatedUnion("type", [
+-                    import_v416.z.object({ type: import_v416.z.literal("url"), url: import_v416.z.string() }),
+-                    import_v416.z.object({ type: import_v416.z.literal("api"), name: import_v416.z.string() })
+-                  ])
+-                ).nullish()
+-              }),
+-              import_v416.z.object({
+-                type: import_v416.z.literal("open_page"),
+-                url: import_v416.z.string().nullish()
+-              }),
+-              import_v416.z.object({
+-                type: import_v416.z.literal("find_in_page"),
+-                url: import_v416.z.string().nullish(),
+-                pattern: import_v416.z.string().nullish()
+-              })
+-            ])
+-          }),
++          import_v416.z.object({ type: import_v416.z.literal("web_search_call"), id: import_v416.z.string(), status: import_v416.z.string() }).passthrough(),
+           import_v416.z.object({
+             type: import_v416.z.literal("file_search_call"),
+             id: import_v416.z.string(),
+@@ -3232,6 +3178,7 @@ var OpenAIResponsesLanguageModel = class {
+     )) == null ? void 0 : _c.name;
+     if (webSearchToolName) {
+       addInclude("web_search_call.action.sources");
++      addInclude("web_search_call.results");
+     }
+     if (hasOpenAITool("openai.code_interpreter")) {
+       addInclude("code_interpreter_call.outputs");
+@@ -3559,7 +3506,7 @@ var OpenAIResponsesLanguageModel = class {
+             type: "tool-result",
+             toolCallId: part.id,
+             toolName: webSearchToolName != null ? webSearchToolName : "web_search",
+-            result: mapWebSearchOutput(part.action),
++            result: part,
+             providerExecuted: true
+           });
+           break;
+@@ -3871,7 +3818,7 @@ var OpenAIResponsesLanguageModel = class {
+                   type: "tool-result",
+                   toolCallId: value.item.id,
+                   toolName: webSearchToolName != null ? webSearchToolName : "web_search",
+-                  result: mapWebSearchOutput(value.item.action),
++                  result: value.item,
+                   providerExecuted: true
+                 });
+               } else if (value.item.type === "computer_call") {
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a740f1650ff7cf157bd5b7dc78b1256e5a204292..8e5a5b1afe988c509b1176b90da42b293c62e8ab 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -2531,11 +2531,7 @@ var openaiResponsesChunkSchema = lazyValidator8(
+             name: z16.string(),
+             arguments: z16.string()
+           }),
+-          z16.object({
+-            type: z16.literal("web_search_call"),
+-            id: z16.string(),
+-            status: z16.string()
+-          }),
++          z16.object({ type: z16.literal("web_search_call"), id: z16.string(), status: z16.string() }).passthrough(),
+           z16.object({
+             type: z16.literal("computer_call"),
+             id: z16.string(),
+@@ -2602,32 +2598,7 @@ var openaiResponsesChunkSchema = lazyValidator8(
+             id: z16.string(),
+             result: z16.string()
+           }),
+-          z16.object({
+-            type: z16.literal("web_search_call"),
+-            id: z16.string(),
+-            status: z16.string(),
+-            action: z16.discriminatedUnion("type", [
+-              z16.object({
+-                type: z16.literal("search"),
+-                query: z16.string().nullish(),
+-                sources: z16.array(
+-                  z16.discriminatedUnion("type", [
+-                    z16.object({ type: z16.literal("url"), url: z16.string() }),
+-                    z16.object({ type: z16.literal("api"), name: z16.string() })
+-                  ])
+-                ).nullish()
+-              }),
+-              z16.object({
+-                type: z16.literal("open_page"),
+-                url: z16.string().nullish()
+-              }),
+-              z16.object({
+-                type: z16.literal("find_in_page"),
+-                url: z16.string().nullish(),
+-                pattern: z16.string().nullish()
+-              })
+-            ])
+-          }),
++          z16.object({ type: z16.literal("web_search_call"), id: z16.string(), status: z16.string() }).passthrough(),
+           z16.object({
+             type: z16.literal("file_search_call"),
+             id: z16.string(),
+@@ -2812,32 +2783,7 @@ var openaiResponsesResponseSchema = lazyValidator8(
+               })
+             )
+           }),
+-          z16.object({
+-            type: z16.literal("web_search_call"),
+-            id: z16.string(),
+-            status: z16.string(),
+-            action: z16.discriminatedUnion("type", [
+-              z16.object({
+-                type: z16.literal("search"),
+-                query: z16.string().nullish(),
+-                sources: z16.array(
+-                  z16.discriminatedUnion("type", [
+-                    z16.object({ type: z16.literal("url"), url: z16.string() }),
+-                    z16.object({ type: z16.literal("api"), name: z16.string() })
+-                  ])
+-                ).nullish()
+-              }),
+-              z16.object({
+-                type: z16.literal("open_page"),
+-                url: z16.string().nullish()
+-              }),
+-              z16.object({
+-                type: z16.literal("find_in_page"),
+-                url: z16.string().nullish(),
+-                pattern: z16.string().nullish()
+-              })
+-            ])
+-          }),
++          z16.object({ type: z16.literal("web_search_call"), id: z16.string(), status: z16.string() }).passthrough(),
+           z16.object({
+             type: z16.literal("file_search_call"),
+             id: z16.string(),
+@@ -3305,6 +3251,7 @@ var OpenAIResponsesLanguageModel = class {
+     )) == null ? void 0 : _c.name;
+     if (webSearchToolName) {
+       addInclude("web_search_call.action.sources");
++      addInclude("web_search_call.results");
+     }
+     if (hasOpenAITool("openai.code_interpreter")) {
+       addInclude("code_interpreter_call.outputs");
+@@ -3632,7 +3579,7 @@ var OpenAIResponsesLanguageModel = class {
+             type: "tool-result",
+             toolCallId: part.id,
+             toolName: webSearchToolName != null ? webSearchToolName : "web_search",
+-            result: mapWebSearchOutput(part.action),
++            result: part,
+             providerExecuted: true
+           });
+           break;
+@@ -3944,7 +3891,7 @@ var OpenAIResponsesLanguageModel = class {
+                   type: "tool-result",
+                   toolCallId: value.item.id,
+                   toolName: webSearchToolName != null ? webSearchToolName : "web_search",
+-                  result: mapWebSearchOutput(value.item.action),
++                  result: value.item,
+                   providerExecuted: true
+                 });
+               } else if (value.item.type === "computer_call") {

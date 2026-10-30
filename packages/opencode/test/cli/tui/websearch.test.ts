@@ -2,6 +2,29 @@ import { describe, expect, test } from "bun:test"
 import { websearch } from "../../../src/cli/cmd/tui/routes/session/websearch"
 
 describe("websearch presentation", () => {
+  test("displays raw native action sources and query arrays", () => {
+    expect(
+      websearch(
+        {},
+        {
+          native: {
+            action: { type: "search", queries: ["Bun", "Docs"], sources: [{ type: "url", url: "https://bun.sh" }] },
+          },
+        },
+        "completed",
+      ).label,
+    ).toBe('Web Search "Bun, Docs" (1 source)')
+    expect(
+      websearch({}, { native: { action: { type: "open_page", url: "https://bun.sh" } } }, "completed"),
+    ).toMatchObject({ label: "Open Page https://bun.sh", pending: "Opening page..." })
+    expect(
+      websearch(
+        {},
+        { native: { action: { type: "find_in_page", url: "https://bun.sh", pattern: "install" } } },
+        "completed",
+      ),
+    ).toMatchObject({ label: 'Find "install" in https://bun.sh', pending: "Finding in page..." })
+  })
   test("running native search uses its query in task summaries", () => {
     expect(websearch({}, { native: { action: { type: "search", query: "review redaction" } } }, "running").label).toBe(
       'Web Search "review redaction"',

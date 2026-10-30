@@ -558,6 +558,20 @@ export namespace MessageV2 {
     }))
   }
 
+  export function toolOutput(part: ToolPart) {
+    if (part.state.status !== "completed")
+      return part.state.status === "error" ? part.state.error : "[Tool execution was interrupted]"
+    if (part.state.time.compacted) return "[Old tool result content cleared]"
+    if (part.tool === "websearch" && part.state.metadata.native !== undefined)
+      return {
+        native:
+          part.metadata?.providerExecuted === true
+            ? part.state.metadata.native
+            : { output: part.state.output, native: part.state.metadata.native },
+      }
+    return part.state.output
+  }
+
   export function toModelMessages(
     input: WithParts[],
     model: Provider.Model,
@@ -701,6 +715,23 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            if (part.tool === "websearch" && part.metadata?.providerExecuted === true) {
+              toolNames.add(part.tool)
+              assistantMessage.parts.push({
+                type: "tool-websearch",
+                toolCallId: part.callID,
+                input: part.state.input,
+                ...(part.state.status === "completed"
+                  ? { state: "output-available" as const, output: toolOutput(part) }
+                  : {
+                      state: "output-error" as const,
+                      errorText: part.state.status === "error" ? part.state.error : "[Tool execution was interrupted]",
+                    }),
+              })
+              // The SDK groups function outputs at the end of a step; keep this result before later parts.
+              assistantMessage.parts.push({ type: "step-start" })
+              continue
+            }
             if (part.metadata?.providerExecuted === true) {
               const metadata = Object.fromEntries(
                 Object.entries(part.metadata).filter(([key]) => key !== "providerExecuted"),
@@ -774,7 +805,7 @@ export namespace MessageV2 {
                       text: outputText,
                       attachments: finalAttachments,
                     }
-                  : outputText
+                  : toolOutput(part)
 
               assistantMessage.parts.push({
                 type: ("tool-" + part.tool) as `tool-${string}`,

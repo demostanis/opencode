@@ -42,6 +42,8 @@ interface McpSearchResponse {
 }
 
 type CodexItem = {
+  [key: string]: unknown
+  id?: string
   type?: string
   content?: Array<{
     type?: string
@@ -168,7 +170,12 @@ async function stream(response: Response) {
   }
 
   events.push(...parse(pending))
-  return collect(events)
+  const done = items(events).filter((item) => item.type === "web_search_call")
+  const ids = new Set(done.map((item) => item.id).filter(Boolean))
+  const extra = (events.findLast((event) => event.response)?.response?.output ?? []).filter(
+    (item) => item.type === "web_search_call" && !ids.has(item.id),
+  )
+  return { output: collect(events), native: { backend: "codex", items: [...done, ...extra] } }
 }
 
 async function codex(params: { query: string; type?: "auto" | "fast" | "deep" }, signal: AbortSignal) {
@@ -206,6 +213,7 @@ async function codex(params: { query: string; type?: "auto" | "fast" | "deep" },
         },
       ],
       tool_choice: "auto",
+      include: ["web_search_call.action.sources", "web_search_call.results"],
       stream: true,
       store: false,
     }),
@@ -244,7 +252,14 @@ export const WebSearchTool = Tool.define("websearch", async () => {
         .optional()
         .describe("Maximum characters for context string optimized for LLMs (default: 10000)"),
     }),
-    async execute(params, ctx) {
+    async execute(
+      params,
+      ctx,
+    ): Promise<{
+      output: string
+      title: string
+      metadata: { backend: string; native?: { backend: string; items: CodexItem[] } }
+    }> {
       await ctx.ask({
         permission: "websearch",
         patterns: [params.query],
@@ -262,12 +277,12 @@ export const WebSearchTool = Tool.define("websearch", async () => {
       if (auth?.type === "oauth") {
         const { signal, clearTimeout } = abortAfterAny(45000, ctx.abort)
         try {
-          const output = await codex(params, signal)
+          const result = await codex(params, signal)
           clearTimeout()
           return {
-            output,
+            output: result.output,
             title: `Web search: ${params.query}`,
-            metadata: { backend: "codex" },
+            metadata: { backend: "codex", native: result.native },
           }
         } catch (error) {
           clearTimeout()

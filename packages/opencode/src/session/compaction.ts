@@ -82,7 +82,8 @@ export namespace SessionCompaction {
             if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
 
             if (part.state.time.compacted) break loop
-            const estimate = Token.estimate(part.state.output)
+            const output = MessageV2.toolOutput(part)
+            const estimate = Token.estimate(typeof output === "string" ? output : JSON.stringify(output.native))
             total += estimate
             if (total > PRUNE_PROTECT) {
               pruned += estimate

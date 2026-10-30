@@ -158,6 +158,8 @@ describe.each([false, true])("session.responses-tools native=%s", (enabled) => {
         type: "web_search_call",
         status: "completed",
         action: { type: "search", query: "OpenAI", sources: [{ type: "url", url: "https://openai.com" }] },
+        results: [{ type: "text_result", title: "OpenAI", url: "https://openai.com", snippet: "Exact snippet\n" }],
+        extra: { nested: [null, "unchanged"] },
       },
       {
         id: "ig_1",
@@ -218,7 +220,7 @@ describe.each([false, true])("session.responses-tools native=%s", (enabled) => {
     expect(requests).toHaveLength(1)
     expect(requests[0]).toMatchObject({
       tools: [{ type: "web_search" }, { type: "image_generation", output_format: "png" }],
-      include: ["web_search_call.action.sources"],
+      include: ["web_search_call.action.sources", "web_search_call.results"],
     })
     expect(chunks.filter((chunk) => chunk.type === "tool-call")).toMatchObject([
       { toolName: "websearch", input: {}, providerExecuted: true },
@@ -228,10 +230,7 @@ describe.each([false, true])("session.responses-tools native=%s", (enabled) => {
       {
         toolName: "websearch",
         providerExecuted: true,
-        output: {
-          action: { type: "search", query: "OpenAI" },
-          sources: [{ type: "url", url: "https://openai.com" }],
-        },
+        output: items[0],
       },
       { toolName: "image_generation", providerExecuted: true, output: { result: "aW1hZ2U=" } },
     ])
