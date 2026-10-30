@@ -10,6 +10,8 @@ await Log.init({ print: process.argv.includes("--print-logs"), dev: Installation
 
 let lease: SyncLease
 let timer: Timer
+let initial: Timer
+let next: number | null = null
 let heartbeat: Timer
 let job: Promise<void> | undefined
 let cleaned = 0
@@ -28,12 +30,14 @@ function tick() {
       await SessionSync.clean(dir)
       cleaned = Date.now()
     }
-    if (!lease.claim()) return
+    owner = lease.claim()
+    if (!owner) return
     if (Date.now() - scanned > 15_000) {
       await SessionSync.scan(dir)
       scanned = Date.now()
     }
-    if (!lease.claim()) return
+    owner = lease.claim()
+    if (!owner) return
     const start = performance.now()
     const count = await SessionSync.drain(dir, () => lease.held())
     exported += count
@@ -55,14 +59,21 @@ export const rpc = {
     heartbeat = setInterval(() => {
       if (owner) owner = lease.claim()
     }, 10_000)
-    timer = setInterval(() => tick().catch((err) => Rpc.emit("failure", String(err))), 30_000)
-    setTimeout(() => tick().catch((err) => Rpc.emit("failure", String(err))), 0)
+    next = Date.now()
+    const run = () => {
+      next = Date.now() + 30_000
+      timer = setTimeout(run, 30_000)
+      void tick().catch((err) => Rpc.emit("failure", String(err)))
+    }
+    initial = setTimeout(run, 0)
   },
   status() {
-    return { owner, exported, running: Boolean(job) }
+    return { owner: lease?.held() ?? false, exported, running: Boolean(job), next, timestamp: Date.now() }
   },
   async stop() {
-    clearInterval(timer)
+    clearTimeout(initial)
+    clearTimeout(timer)
+    next = null
     clearInterval(heartbeat)
     await job?.catch(() => {})
     lease?.close()

@@ -46,6 +46,8 @@ import type {
   GlobalDisposeResponses,
   GlobalEventResponses,
   GlobalHealthResponses,
+  GlobalSessionSyncResponses,
+  GlobalSyncthingResponses,
   InstanceDisposeResponses,
   LspStatusResponses,
   McpAddErrors,
@@ -284,6 +286,26 @@ export class Config extends HeyApiClient {
 }
 
 export class Global extends HeyApiClient {
+  /**
+   * Get background session sync scheduler status
+   */
+  public sessionSync<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GlobalSessionSyncResponses, unknown, ThrowOnError>({
+      url: "/global/session-sync",
+      ...options,
+    })
+  }
+
+  /**
+   * Get session synchronization status
+   */
+  public syncthing<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GlobalSyncthingResponses, unknown, ThrowOnError>({
+      url: "/global/syncthing",
+      ...options,
+    })
+  }
+
   /**
    * Get health
    *

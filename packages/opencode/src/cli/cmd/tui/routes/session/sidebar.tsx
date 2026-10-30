@@ -1,9 +1,9 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, For, Show, Switch, Match } from "solid-js"
+import { createMemo, createSignal, onMount, onCleanup, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, SyncthingStatus } from "@opencode-ai/sdk/v2"
 import { Installation } from "@/installation"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
@@ -12,9 +12,27 @@ import { useRoute } from "../../context/route"
 import { Editor } from "../../util/editor"
 import "opentui-spinner/solid"
 import { parse } from "./worker"
+import { useSDK } from "@tui/context/sdk"
+import { poll } from "./syncthing"
+import { describe, watch } from "./scheduler"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
+  const sdk = useSDK()
+  const [syncthing, setSyncthing] = createSignal<SyncthingStatus>()
+  const [scheduler, setScheduler] = createSignal(describe(undefined))
+  onMount(() => {
+    const unwatch = watch(async (signal) => {
+      const response = await sdk.client.global.sessionSync({ signal, throwOnError: true })
+      return response.data
+    }, setScheduler)
+    onCleanup(unwatch)
+    const stop = poll(async (signal) => {
+      const response = await sdk.client.global.syncthing({ signal, throwOnError: true })
+      return response.data
+    }, setSyncthing)
+    onCleanup(stop)
+  })
   const { navigate } = useRoute()
   const { theme } = useTheme()
   const session = createMemo(() => sync.session.get(props.sessionID))
@@ -190,6 +208,39 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </>
             )}
           </Show>
+
+          <box>
+            <text fg={theme.text}>
+              <b>Session sync</b>
+            </text>
+            <text fg={theme.textMuted}>{scheduler().master}</text>
+            <text fg={theme.textMuted}>{scheduler().timing}</text>
+            <text
+              fg={
+                syncthing()?.state === "error"
+                  ? theme.error
+                  : syncthing()?.state === "enabled"
+                    ? theme.success
+                    : syncthing()?.state === "syncing"
+                      ? theme.info
+                      : theme.textMuted
+              }
+            >
+              {syncthing()
+                ? {
+                    disabled: "Syncthing disabled",
+                    enabled: "Syncthing enabled",
+                    syncing: "Syncthing syncing...",
+                    error: "Syncthing error",
+                    unavailable: "Syncthing unavailable",
+                  }[syncthing()!.state]
+                : "Syncthing checking..."}
+            </text>
+            <Show when={syncthing()?.detail}>{(detail) => <text fg={theme.textMuted}>{detail()}</text>}</Show>
+            <For each={syncthing()?.disconnected}>
+              {(peer) => <text fg={theme.warning}>{peer.name}: disconnected</text>}
+            </For>
+          </box>
 
           <Show when={memory().length > 0}>
             <box>

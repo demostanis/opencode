@@ -4,6 +4,36 @@ export type ClientOptions = {
   baseUrl: `${string}://${string}` | (string & {})
 }
 
+export type SessionSyncStatus = {
+  state: "enabled" | "disabled" | "unavailable"
+  /**
+   * Whether this server's worker holds the sync lease; null when unknown or disabled
+   */
+  owner: boolean | null
+  /**
+   * Whether this worker is executing a scheduler tick
+   */
+  running: boolean
+  /**
+   * Next local timer deadline in epoch milliseconds: session sync for owners, lease check for followers, not Syncthing transfers
+   */
+  next: number | null
+  /**
+   * Worker observation time in epoch milliseconds, for clock-skew-independent countdowns
+   */
+  timestamp: number
+  exported: number
+}
+
+export type SyncthingStatus = {
+  state: "disabled" | "enabled" | "syncing" | "error" | "unavailable"
+  detail?: string
+  disconnected: Array<{
+    id: string
+    name: string
+  }>
+}
+
 export type EventInstallationUpdated = {
   type: "installation.updated"
   properties: {
@@ -2006,6 +2036,38 @@ export type FormatterStatus = {
   extensions: Array<string>
   enabled: boolean
 }
+
+export type GlobalSessionSyncData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/session-sync"
+}
+
+export type GlobalSessionSyncResponses = {
+  /**
+   * Local worker lease ownership and next session sync/check deadline, not Syncthing transfer timing
+   */
+  200: SessionSyncStatus
+}
+
+export type GlobalSessionSyncResponse = GlobalSessionSyncResponses[keyof GlobalSessionSyncResponses]
+
+export type GlobalSyncthingData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/syncthing"
+}
+
+export type GlobalSyncthingResponses = {
+  /**
+   * Syncthing status for the session export folder on this server
+   */
+  200: SyncthingStatus
+}
+
+export type GlobalSyncthingResponse = GlobalSyncthingResponses[keyof GlobalSyncthingResponses]
 
 export type GlobalHealthData = {
   body?: never

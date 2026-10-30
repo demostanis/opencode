@@ -8,7 +8,8 @@ import { AsyncQueue } from "@/util/queue"
 import { Instance } from "../../project/instance"
 import { Installation } from "@/installation"
 import { Log } from "../../util/log"
-import { lazy } from "../../util/lazy"
+import { Syncthing } from "@/session/syncthing"
+import { SessionSync } from "@/session/sync"
 import { Config } from "../../config/config"
 import { errors } from "../error"
 
@@ -16,8 +17,38 @@ const log = Log.create({ service: "server" })
 
 export const GlobalDisposedEvent = BusEvent.define("global.disposed", z.object({}))
 
-export const GlobalRoutes = lazy(() =>
-  new Hono()
+export const GlobalRoutes = (opts: { sync?: boolean } = {}) => {
+  const status = Syncthing.reader({ enabled: opts.sync !== false })
+  return new Hono()
+    .get(
+      "/session-sync",
+      describeRoute({
+        summary: "Get background session sync scheduler status",
+        operationId: "global.sessionSync",
+        responses: {
+          200: {
+            description:
+              "Local worker lease ownership and next session sync/check deadline, not Syncthing transfer timing",
+            content: { "application/json": { schema: resolver(SessionSync.Status) } },
+          },
+        },
+      }),
+      async (c) => c.json(await SessionSync.status(opts.sync !== false)),
+    )
+    .get(
+      "/syncthing",
+      describeRoute({
+        summary: "Get session synchronization status",
+        operationId: "global.syncthing",
+        responses: {
+          200: {
+            description: "Syncthing status for the session export folder on this server",
+            content: { "application/json": { schema: resolver(Syncthing.Status) } },
+          },
+        },
+      }),
+      async (c) => c.json(await status()),
+    )
     .get(
       "/health",
       describeRoute({
@@ -195,5 +226,5 @@ export const GlobalRoutes = lazy(() =>
         })
         return c.json(true)
       },
-    ),
-)
+    )
+}

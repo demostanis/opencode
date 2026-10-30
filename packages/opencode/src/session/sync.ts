@@ -17,12 +17,12 @@ import { Rpc } from "@/util/rpc"
 import type { rpc } from "./sync-worker"
 import { Teammate } from "@/teammate/teammate"
 import { SyncLease } from "./sync-lease"
+import { root } from "./sync-path"
 
 declare const OPENCODE_SYNC_WORKER_PATH: string | undefined
 
 export namespace SessionSync {
   const log = Log.create({ service: "session-sync" })
-  const root = path.join(Global.Path.home, ".local/share/opencode-sync")
   const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
   const location = (machine: string, id: string, dir = root) => path.join(dir, "sessions", machine, id)
   const archive = /^\d+-[a-f0-9]{64}\.json$/
@@ -512,6 +512,51 @@ export namespace SessionSync {
   }
 
   let worker: Worker | undefined
+  let client: ReturnType<typeof Rpc.client<typeof rpc>> | undefined
+  let ready: Promise<void> | undefined
+  let pending: Promise<Awaited<ReturnType<typeof rpc.status>>> | undefined
+  export const Status = z
+    .object({
+      state: z.enum(["enabled", "disabled", "unavailable"]),
+      owner: z
+        .boolean()
+        .nullable()
+        .describe("Whether this server's worker holds the sync lease; null when unknown or disabled"),
+      running: z.boolean().describe("Whether this worker is executing a scheduler tick"),
+      next: z
+        .number()
+        .nullable()
+        .describe(
+          "Next local timer deadline in epoch milliseconds: session sync for owners, lease check for followers, not Syncthing transfers",
+        ),
+      timestamp: z
+        .number()
+        .describe("Worker observation time in epoch milliseconds, for clock-skew-independent countdowns"),
+      exported: z.number(),
+    })
+    .meta({ ref: "SessionSyncStatus" })
+
+  export async function status(enabled = true): Promise<z.infer<typeof Status>> {
+    const empty = { owner: null, running: false, next: null, timestamp: Date.now(), exported: 0 }
+    if (!enabled) return { ...empty, state: "disabled" }
+    if (!client || !ready) return { ...empty, state: "unavailable" }
+    const current = client
+    const request = (pending ??= ready
+      .then(() => current.call("status", undefined))
+      .finally(() => {
+        if (pending === request) pending = undefined
+      }))
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const result = await Promise.race([
+      request.catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), 2_000)
+      }),
+    ]).finally(() => clearTimeout(timeout))
+    if (!result || client !== current) return { ...empty, state: "unavailable", timestamp: Date.now() }
+    return { ...result, state: "enabled" }
+  }
+
   export function start() {
     if (worker) return
     Database.Client()
@@ -528,19 +573,21 @@ export namespace SessionSync {
       },
     )
     if ("unref" in worker && typeof worker.unref === "function") worker.unref()
-    const client = Rpc.client<typeof rpc>(worker)
+    client = Rpc.client<typeof rpc>(worker)
     const off = client.on<Parameters<typeof GlobalBus.emit<"event">>[1]>("event", (event) => {
       GlobalBus.emit("event", event)
     })
     client.on<string>("failure", (error) => log.warn("sync failed", { error }))
-    client
-      .call("init", { source: Database.Path, owner })
-      .catch((err) => log.warn("sync worker failed", { error: String(err) }))
+    ready = client.call("init", { source: Database.Path, owner })
+    ready.catch((err) => log.warn("sync worker failed", { error: String(err) }))
     Database.onclose(() => {
       off()
       worker?.terminate()
       lease.close()
       worker = undefined
+      client = undefined
+      ready = undefined
+      pending = undefined
     })
   }
 }

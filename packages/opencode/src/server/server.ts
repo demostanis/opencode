@@ -140,7 +140,7 @@ export namespace Server {
           },
         }),
       )
-      .route("/global", GlobalRoutes())
+      .route("/global", GlobalRoutes(opts))
       .put(
         "/auth/:providerID",
         describeRoute({
