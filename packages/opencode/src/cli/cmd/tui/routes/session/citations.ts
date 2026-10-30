@@ -187,6 +187,7 @@ export function citations(content: string, links: ReadonlyMap<string, string>, s
     if (!streaming || !/(?:<(?:c(?:i(?:t(?:e)?)?)?)?|\ue200(?:c(?:i(?:t(?:e)?)?)?)?)$/.test(content)) return content
   }
   const mask = literals(content)
+  const numbers = new Map<string, number>()
   function replace(value: string, tail = false) {
     const text =
       streaming && tail
@@ -202,7 +203,9 @@ export function citations(content: string, links: ReadonlyMap<string, string>, s
         .map((id) => {
           const href = url(links.get(id))
           if (!href) return `(${id})`
-          return `[${id}](${href.replace(/[()<>\\\[\]|`]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)})`
+          const number = numbers.get(href) ?? numbers.size + 1
+          numbers.set(href, number)
+          return `[${number}](${href.replace(/[()<>\\\[\]|`]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)})`
         })
         .join(" ")
     })

@@ -60,7 +60,7 @@ import type { TaskTool } from "@/tool/task"
 import type { Collaboration } from "@/tool/collaboration"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
-import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { extend, useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import type { DialogContext } from "@tui/ui/dialog"
@@ -98,12 +98,13 @@ import { writable } from "./worker"
 import { order } from "./messages"
 import { websearch } from "./websearch"
 import { citations, references } from "./citations"
-import { hyperlinks, linked } from "../../util/links"
+import { hyperlinks, Markdown } from "../../util/links"
 import { image } from "./image"
 import { patchFileID } from "./patch"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
+extend({ linked: Markdown })
 
 class CustomSpeedScroll implements ScrollAcceleration {
   constructor(private speed: number) {}
@@ -1711,13 +1712,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
         <Switch>
           <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-            <markdown
-              syntaxStyle={syntax()}
-              streaming={true}
-              content={content()}
-              renderNode={linked}
-              conceal={ctx.conceal()}
-            />
+            <linked syntaxStyle={syntax()} streaming={true} content={content()} conceal={ctx.conceal()} />
           </Match>
           <Match when={!Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
             <code

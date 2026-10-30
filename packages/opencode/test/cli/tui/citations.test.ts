@@ -156,7 +156,7 @@ describe("citation Markdown", () => {
   const links = references([tool(native)])
   test("renders ASCII and conventional markers as standard Markdown hyperlinks", () => {
     for (const value of ["<cite|turn0search0>", "<cite|turn0search0|>", "\ue200cite\ue202turn0search0\ue201"]) {
-      expect(citations(`IANA ${value}.`, links)).toBe(`IANA [turn0search0](${first}).`)
+      expect(citations(`IANA ${value}.`, links)).toBe(`IANA [1](${first}).`)
     }
   })
 
@@ -165,18 +165,36 @@ describe("citation Markdown", () => {
       "<cite|turn0search0|turn0search1|turn9search3>",
       "\ue200cite\ue202turn0search0\ue202turn0search1\ue202turn9search3\ue201",
     ]) {
-      expect(citations(value, links)).toBe(`[turn0search0](${first}) [turn0search1](${second}) (turn9search3)`)
+      expect(citations(value, links)).toBe(`[1](${first}) [2](${second}) (turn9search3)`)
     }
-    expect(citations("<cite|turn0search0><cite|turn0search0>", links)).toBe(
-      `[turn0search0](${first})[turn0search0](${first})`,
-    )
+    expect(citations("<cite|turn0search0><cite|turn0search0>", links)).toBe(`[1](${first})[1](${first})`)
     expect(citations("<cite|not-a-ref>", links)).toBe("<cite|not-a-ref>")
+  })
+
+  test("numbers by first visible appearance, reuses exact URLs, and resets per answer", () => {
+    const refs = new Map([...links, ["turn1view0", first]])
+    const text = "`<cite|turn0search0>` <cite|turn9search3|turn0search1|turn1view0|turn0search0>"
+    expect(citations(text, refs)).toBe(
+      `\`<cite|turn0search0>\` (turn9search3) [1](${second}) [2](${first}) [2](${first})`,
+    )
+    expect(citations("<cite|turn0search0>", refs)).toBe(`[1](${first})`)
+  })
+
+  test("appended streaming markers keep earlier numbers across every partial suffix", () => {
+    const head = "<cite|turn0search1> then <cite|turn0search0> "
+    const expected = `[1](${second}) then [2](${first}) `
+    for (const token of ["<cite|turn0search1|turn0search0>", "\ue200cite\ue202turn0search1\ue202turn0search0\ue201"]) {
+      for (let i = 0; i < token.length; i++) {
+        expect(citations(head + token.slice(0, i), links, true)).toBe(expected)
+      }
+      expect(citations(head + token, links, true)).toBe(`${expected}[1](${second}) [2](${first})`)
+    }
   })
 
   test("buffers every incomplete streaming suffix without swallowing surrounding text", () => {
     for (const value of ["<cite|turn0search0>", "\ue200cite\ue202turn0search0\ue201"]) {
       for (let i = 1; i < value.length; i++) expect(citations(`Text ${value.slice(0, i)}`, links, true)).toBe("Text ")
-      expect(citations(value, links, true)).toBe(`[turn0search0](${first})`)
+      expect(citations(value, links, true)).toBe(`[1](${first})`)
     }
     expect(citations("Text <cite|turn0search0", links)).toBe("Text <cite|turn0search0")
   })
@@ -204,25 +222,25 @@ describe("citation Markdown", () => {
     ]) {
       expect(citations(value, links, true)).toBe(value)
     }
-    expect(citations("**Bold** <cite|turn0search0>\n- item", links)).toBe(`**Bold** [turn0search0](${first})\n- item`)
+    expect(citations("**Bold** <cite|turn0search0>\n- item", links)).toBe(`**Bold** [1](${first})\n- item`)
   })
 
   test("longer closing fences end code and shorter fences do not", () => {
     for (const char of ["`", "~"]) {
       for (const prefix of ["", "> ", "> > "]) {
         const code = `${prefix}${char.repeat(4)}\n${prefix}${char.repeat(3)}\n${prefix}<cite|turn0search0>\n${prefix}${char.repeat(5)}\n`
-        expect(citations(`${code}<cite|turn0search0>`, links, true)).toBe(`${code}[turn0search0](${first})`)
+        expect(citations(`${code}<cite|turn0search0>`, links, true)).toBe(`${code}[1](${first})`)
       }
     }
     const code = "> ~~~\n> <cite|turn0search0>\n"
-    expect(citations(`${code}<cite|turn0search0>`, links)).toBe(`${code}[turn0search0](${first})`)
+    expect(citations(`${code}<cite|turn0search0>`, links)).toBe(`${code}[1](${first})`)
   })
 
   test("backticks use matching run lengths and backslashes inside code are literal", () => {
     const code = "`code\\`"
-    expect(citations(`${code} <cite|turn0search0>`, links)).toBe(`${code} [turn0search0](${first})`)
+    expect(citations(`${code} <cite|turn0search0>`, links)).toBe(`${code} [1](${first})`)
     expect(citations("``<cite|turn0search0>` `` <cite|turn0search0>", links)).toBe(
-      `\`\`<cite|turn0search0>\` \`\` [turn0search0](${first})`,
+      `\`\`<cite|turn0search0>\` \`\` [1](${first})`,
     )
   })
 
@@ -250,9 +268,7 @@ describe("citation Markdown", () => {
           for (const info of ["", "txt"]) {
             const code = `${marker}${char.repeat(3)}${info}\n${prefix}${token}\n${prefix}${char.repeat(3)}\n\n`
             for (const streaming of [false, true]) {
-              expect(citations(`${code}Outside ${token}`, links, streaming)).toBe(
-                `${code}Outside [turn0search0](${first})`,
-              )
+              expect(citations(`${code}Outside ${token}`, links, streaming)).toBe(`${code}Outside [1](${first})`)
             }
           }
         }
@@ -270,7 +286,7 @@ describe("citation Markdown", () => {
       ]) {
         const code = `${head}${prefix}${char.repeat(4)}\n${prefix.trimEnd()}\n${prefix}${char.repeat(3)}\n${prefix}<cite|turn0search0>\n${prefix}${char.repeat(5)}\n`
         expect(citations(`${code}${prefix}<cite|turn0search0>\nOutside <cite|turn0search0>`, links)).toBe(
-          `${code}${prefix}[turn0search0](${first})\nOutside [turn0search0](${first})`,
+          `${code}${prefix}[1](${first})\nOutside [1](${first})`,
         )
       }
     }
@@ -280,10 +296,10 @@ describe("citation Markdown", () => {
     for (const char of ["`", "~"]) {
       for (const tail of ["Outside ", "- sibling ", "1. sibling "]) {
         const code = `- ${char.repeat(3)}\n  - ${char.repeat(3)}\n  > literal quote\n  <cite|turn0search0>\n`
-        expect(citations(`${code}${tail}<cite|turn0search0>`, links)).toBe(`${code}${tail}[turn0search0](${first})`)
+        expect(citations(`${code}${tail}<cite|turn0search0>`, links)).toBe(`${code}${tail}[1](${first})`)
       }
       const code = `- outer\n  - ${char.repeat(3)}\n    <cite|turn0search0>\n`
-      expect(citations(`${code}  Parent <cite|turn0search0>`, links)).toBe(`${code}  Parent [turn0search0](${first})`)
+      expect(citations(`${code}  Parent <cite|turn0search0>`, links)).toBe(`${code}  Parent [1](${first})`)
       expect(citations(`- ${char.repeat(3)}\n  <cite|turn0search0>\n\n  <cit`, links, true)).toBe(
         `- ${char.repeat(3)}\n  <cite|turn0search0>\n\n  <cit`,
       )
@@ -303,7 +319,7 @@ describe("citation Markdown", () => {
       for (let i = 0; i < 8; i++) {
         expect(citations(text, links, true)).toBe(text)
         expect(citations(`${text}<cit`, links, true)).toBe(text)
-        expect(citations(`${text}<cite|turn0search0>`, links, true)).toBe(`${text}[turn0search0](${first})`)
+        expect(citations(`${text}<cite|turn0search0>`, links, true)).toBe(`${text}[1](${first})`)
       }
     }
     expect(performance.now() - start).toBeLessThan(2000)
@@ -311,7 +327,7 @@ describe("citation Markdown", () => {
 
   test("escapes Markdown destination delimiters from stored URLs", () => {
     expect(citations("<cite|turn0search0>", new Map([["turn0search0", "https://example.com/a(b)?q=[x]|y"]]))).toBe(
-      "[turn0search0](https://example.com/a%28b%29?q=%5Bx%5D%7Cy)",
+      "[1](https://example.com/a%28b%29?q=%5Bx%5D%7Cy)",
     )
   })
 })
