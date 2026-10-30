@@ -97,6 +97,8 @@ import { useTuiConfig } from "../../context/tui-config"
 import { writable } from "./worker"
 import { order } from "./messages"
 import { websearch } from "./websearch"
+import { citations, references } from "./citations"
+import { hyperlinks, linked } from "../../util/links"
 import { image } from "./image"
 import { patchFileID } from "./patch"
 import { useExit } from "../../context/exit"
@@ -1687,7 +1689,23 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
 
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
+  const sync = useSync()
   const { theme, syntax } = useTheme()
+  const links = createMemo(() => {
+    const messages = sync.data.message[props.message.sessionID] ?? []
+    const index = messages.findIndex((message) => message.id === props.message.id)
+    return references(
+      messages.slice(0, index + 1).flatMap((message) => {
+        // Ref counters can restart on later user turns; do not borrow an unrelated turn's URLs.
+        if (message.role !== "assistant" || message.parentID !== props.message.parentID) return []
+        const parts = sync.data.part[message.id] ?? []
+        if (message.id !== props.message.id) return parts
+        const index = parts.findIndex((part) => part.id === props.part.id)
+        return index < 0 ? [] : parts.slice(0, index)
+      }),
+    )
+  })
+  const content = createMemo(() => citations(props.part.text.trim(), links(), !props.message.time.completed))
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
@@ -1696,7 +1714,8 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
             <markdown
               syntaxStyle={syntax()}
               streaming={true}
-              content={props.part.text.trim()}
+              content={content()}
+              renderNode={linked}
               conceal={ctx.conceal()}
             />
           </Match>
@@ -1706,7 +1725,8 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={syntax()}
-              content={props.part.text.trim()}
+              content={content()}
+              onChunks={hyperlinks}
               conceal={ctx.conceal()}
               fg={theme.text}
             />
