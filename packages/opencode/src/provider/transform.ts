@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai"
-import { mergeDeep, unique } from "remeda"
+import { isDeepEqual, mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type { JSONSchema } from "zod/v4/core"
 import type { Provider } from "./provider"
@@ -283,6 +283,40 @@ export namespace ProviderTransform {
           providerOptions: remap(msg.providerOptions),
           content: msg.content.map((part) => ({ ...part, providerOptions: remap(part.providerOptions) })),
         } as typeof msg
+      })
+    }
+
+    if (model.api.npm === "@openrouter/ai-sdk-provider") {
+      // Streaming metadata can repeat the same signed details on reasoning and every parallel tool call.
+      msgs = msgs.map((msg) => {
+        if (msg.role !== "assistant") return msg
+        const seen: unknown[] = []
+        const dedupe = (opts: typeof msg.providerOptions) => {
+          const details = opts?.openrouter?.reasoning_details
+          if (!Array.isArray(details)) return opts
+          const filtered = details.filter((detail) => {
+            if (!detail || typeof detail !== "object" || Array.isArray(detail)) return true
+            if (seen.some((item) => isDeepEqual(item, detail))) return false
+            seen.push(detail)
+            return true
+          })
+          if (filtered.length === details.length) return opts
+          return { ...opts, openrouter: { ...opts?.openrouter, reasoning_details: filtered } }
+        }
+
+        // The SDK prefers nonempty message metadata; otherwise it concatenates reasoning and tool-call metadata.
+        const details = msg.providerOptions?.openrouter?.reasoning_details
+        if (Array.isArray(details) && details.length > 0) {
+          const opts = dedupe(msg.providerOptions)
+          return opts === msg.providerOptions ? msg : { ...msg, providerOptions: opts }
+        }
+        if (!Array.isArray(msg.content)) return msg
+        const content = msg.content.map((part) => {
+          if (part.type !== "reasoning" && part.type !== "tool-call") return part
+          const opts = dedupe(part.providerOptions)
+          return opts === part.providerOptions ? part : { ...part, providerOptions: opts }
+        })
+        return content.every((part, i) => part === msg.content[i]) ? msg : { ...msg, content }
       })
     }
 

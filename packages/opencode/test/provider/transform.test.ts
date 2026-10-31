@@ -1,8 +1,260 @@
 import { describe, expect, test } from "bun:test"
 import { ProviderTransform } from "../../src/provider/transform"
 import { ModelID, ProviderID } from "../../src/provider/schema"
+import { generateText, type ModelMessage } from "ai"
+import { createOpenRouter } from "@openrouter/ai-sdk-provider"
+import type { Provider } from "../../src/provider/provider"
 
 const OUTPUT_TOKEN_MAX = 32000
+
+describe("ProviderTransform.message - OpenRouter reasoning replay", () => {
+  const model: Provider.Model = {
+    id: ModelID.make("anthropic/claude-sonnet-4"),
+    providerID: ProviderID.make("openrouter"),
+    api: {
+      id: "anthropic/claude-sonnet-4",
+      url: "https://openrouter.ai/api/v1",
+      npm: "@openrouter/ai-sdk-provider",
+    },
+    name: "Claude Sonnet 4",
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: false,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: { field: "reasoning_details" },
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 200000, output: 8192 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2025-05-22",
+  }
+  const detail = {
+    type: "reasoning.text",
+    index: 0,
+    text: "Plan three independent tool calls.",
+    signature: "opaque-signed-thinking",
+    format: "anthropic-claude-v1",
+  }
+  const encrypted = { type: "reasoning.encrypted", index: 1, data: "opaque-encrypted-data" }
+
+  function message(details = [detail], reasoning = true): Extract<ModelMessage, { role: "assistant" }> {
+    return {
+      role: "assistant",
+      content: [
+        ...(reasoning
+          ? [
+              {
+                type: "reasoning" as const,
+                text: detail.text,
+                providerOptions: { openrouter: { reasoning_details: details } },
+              },
+            ]
+          : []),
+        ...["one", "two", "three"].map((id) => ({
+          type: "tool-call" as const,
+          toolCallId: id,
+          toolName: "lookup",
+          input: { id },
+          providerOptions: { openrouter: { reasoning_details: structuredClone(details), retained: id } },
+        })),
+      ],
+    }
+  }
+
+  function details(msg: ModelMessage) {
+    if (!Array.isArray(msg.content)) return []
+    return msg.content.flatMap((part) => part.providerOptions?.openrouter?.reasoning_details ?? [])
+  }
+
+  async function serialize(messages: ModelMessage[]) {
+    const bodies: { messages: { role: string; reasoning_details?: unknown[]; tool_calls?: unknown[] }[] }[] = []
+    const router = createOpenRouter({
+      apiKey: "test",
+      fetch: Object.assign(
+        async (_url: URL | RequestInfo, init?: RequestInit) => {
+          bodies.push(JSON.parse(String(init?.body)))
+          return Response.json({
+            id: "test",
+            model: model.api.id,
+            choices: [{ index: 0, message: { role: "assistant", content: "Done" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    await generateText({ model: router(model.api.id), messages, maxRetries: 0 })
+    expect(bodies).toHaveLength(1)
+    return bodies[0].messages.find((msg) => msg.role === "assistant")!
+  }
+
+  test("serializes signed thinking once with three parallel tool calls", async () => {
+    const raw = await serialize([message()])
+    expect(raw.reasoning_details).toEqual([detail, detail, detail, detail])
+    const result = await serialize(ProviderTransform.message([message()], model, {}))
+    expect(result.reasoning_details).toEqual([detail])
+    expect(result.tool_calls).toEqual(raw.tool_calls)
+    expect(result.tool_calls).toHaveLength(3)
+  })
+
+  test("deduplicates repeated arrays without a reasoning part", async () => {
+    const result = ProviderTransform.message([message([detail], false)], model, {})
+    expect(details(result[0])).toEqual([detail])
+    expect((await serialize(result)).reasoning_details).toEqual([detail])
+  })
+
+  test("replays opaque encrypted tool-only details unchanged", async () => {
+    const msg = message([detail], false)
+    if (!Array.isArray(msg.content)) throw new Error("Expected parts")
+    msg.content = msg.content.map((part) => ({
+      ...part,
+      providerOptions: { openrouter: { reasoning_details: [encrypted, structuredClone(encrypted)] } },
+    }))
+    const result = ProviderTransform.message([msg], model, {})
+    expect(details(result[0])).toEqual([encrypted])
+    expect((await serialize(result)).reasoning_details).toEqual([encrypted])
+  })
+
+  test("keeps an empty reasoning part with its exact signed detail", async () => {
+    const msg = message()
+    if (!Array.isArray(msg.content) || msg.content[0].type !== "reasoning") throw new Error("Expected reasoning")
+    msg.content[0].text = ""
+    const result = ProviderTransform.message([msg], model, {})
+    expect(details(result[0])).toEqual([detail])
+    expect((await serialize(result)).reasoning_details).toEqual([detail])
+  })
+
+  test("does not use ignored text metadata to suppress replayed reasoning", async () => {
+    const msg = message()
+    if (!Array.isArray(msg.content)) throw new Error("Expected parts")
+    msg.content.unshift({
+      type: "text",
+      text: "Checking",
+      providerOptions: { openrouter: { reasoning_details: [detail] } },
+    })
+    const result = ProviderTransform.message([msg], model, {})
+    expect((await serialize(result)).reasoning_details).toEqual([detail])
+    expect(details(result[0])).toEqual([detail, detail])
+  })
+
+  test("preserves distinct blocks, signatures, indexes, encrypted data and order", async () => {
+    const blocks = [
+      detail,
+      { ...detail, index: 1 },
+      { ...detail, signature: "another-signature" },
+      { ...detail, text: "another thought" },
+      { ...detail, format: "another-format" },
+      encrypted,
+      { ...encrypted, data: "another-encrypted-block" },
+    ]
+    const msg = message()
+    if (!Array.isArray(msg.content)) throw new Error("Expected parts")
+    msg.content[0].providerOptions = { openrouter: { reasoning_details: blocks.slice(0, 3) } }
+    msg.content[1].providerOptions = { openrouter: { reasoning_details: blocks.slice(2) } }
+    msg.content[2].providerOptions = { openrouter: { reasoning_details: structuredClone(blocks) } }
+    const result = ProviderTransform.message([msg], model, {})
+    expect(details(result[0])).toEqual(blocks)
+    expect((await serialize(result)).reasoning_details).toEqual(blocks)
+  })
+
+  test("uses structural equality independent of object key order", () => {
+    const msg = message()
+    if (!Array.isArray(msg.content)) throw new Error("Expected parts")
+    msg.content[1].providerOptions = {
+      openrouter: { reasoning_details: [Object.fromEntries(Object.entries(detail).reverse())] },
+    }
+    expect(details(ProviderTransform.message([msg], model, {})[0])).toEqual([detail])
+  })
+
+  test("resets deduplication for each assistant message", () => {
+    const result = ProviderTransform.message([message(), message()], model, {})
+    expect(result.map(details)).toEqual([[detail], [detail]])
+  })
+
+  test("honors nonempty message metadata precedence without discarding unique part data", async () => {
+    const msg = message()
+    msg.providerOptions = { openrouter: { reasoning_details: [encrypted, encrypted], retained: true } }
+    const result = ProviderTransform.message([msg], model, {})
+    expect(result[0].providerOptions?.openrouter).toEqual({ reasoning_details: [encrypted], retained: true })
+    expect(details(result[0])).toEqual([detail, detail, detail, detail])
+    expect((await serialize(result)).reasoning_details).toEqual([encrypted])
+  })
+
+  test("falls back to parts when message metadata is empty", async () => {
+    const msg = message()
+    msg.providerOptions = { openrouter: { reasoning_details: [] } }
+    const result = ProviderTransform.message([msg], model, {})
+    expect((await serialize(result)).reasoning_details).toEqual([detail])
+  })
+
+  test("normalizes remapped custom provider metadata", () => {
+    const msg = message()
+    if (!Array.isArray(msg.content)) throw new Error("Expected parts")
+    msg.content = msg.content.map((part) => ({
+      ...part,
+      providerOptions: { custom: part.providerOptions!.openrouter },
+    }))
+    const result = ProviderTransform.message([msg], { ...model, providerID: ProviderID.make("custom") }, {})
+    expect(details(result[0])).toEqual([detail])
+  })
+
+  test("does not mutate inputs or clone unchanged parts during normalization", () => {
+    const plain = {
+      ...model,
+      id: ModelID.make("test"),
+      api: { ...model.api, id: "test" },
+      capabilities: { ...model.capabilities, interleaved: false as const },
+    }
+    const msg = message()
+    const before = structuredClone(msg)
+    const result = ProviderTransform.message([msg], plain, {})
+    expect(msg).toEqual(before)
+    expect(result[0]).not.toBe(msg)
+    if (!Array.isArray(msg.content) || !Array.isArray(result[0].content)) throw new Error("Expected parts")
+    expect(result[0].content[0]).toBe(msg.content[0])
+    expect(result[0].content[1].providerOptions?.openrouter?.retained).toBe("one")
+    expect(ProviderTransform.message(result, plain, {})[0]).toBe(result[0])
+  })
+
+  test("leaves other SDKs unchanged even with the openrouter provider ID", () => {
+    const msg = message()
+    const result = ProviderTransform.message(
+      [msg],
+      { ...model, api: { ...model.api, npm: "@ai-sdk/openai-compatible" } },
+      {},
+    )
+    expect(details(result[0])).toEqual([detail, detail, detail, detail])
+  })
+
+  test("leaves non-assistant messages unchanged", () => {
+    const msg: ModelMessage = {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "one",
+          toolName: "lookup",
+          output: { type: "text", value: "Found" },
+          providerOptions: { openrouter: { reasoning_details: [detail, detail] } },
+        },
+      ],
+      providerOptions: { openrouter: { reasoning_details: [detail, detail] } },
+    }
+    const before = structuredClone(msg)
+    const result = ProviderTransform.message(
+      [msg],
+      { ...model, id: ModelID.make("test"), api: { ...model.api, id: "test" } },
+      {},
+    )
+    expect(result[0]).toBe(msg)
+    expect(result[0]).toEqual(before)
+  })
+})
 
 describe("ProviderTransform.options - setCacheKey", () => {
   const sessionID = "test-session-123"
