@@ -62,7 +62,7 @@ index 0c926100cef4bfc551c0656416278cbc5a1213b3..dbb2363192633046d1ef301cfd583f05
      return {
        type,
 diff --git a/index.js b/index.js
-index 1970eef38804d12c705d463189081497e0c02a18..447e6c7623e1df503a4046580ad80f708e498f49 100644
+index 1970eef38804d12c705d463189081497e0c02a18..fa4ef5634d2f6357de583188e165e6ae96f14498 100644
 --- a/index.js
 +++ b/index.js
 @@ -4414,6 +4414,7 @@ class DiffRenderable extends Renderable {
@@ -101,7 +101,53 @@ index 1970eef38804d12c705d463189081497e0c02a18..447e6c7623e1df503a4046580ad80f70
        if (side === "left") {
          this.leftCodeRenderable = newRenderable;
        } else {
-@@ -9817,19 +9832,19 @@ class SliderRenderable extends Renderable {
+@@ -8943,6 +8958,7 @@ class MarkdownRenderable extends Renderable {
+   _treeSitterClient;
+   _tableOptions;
+   _renderNode;
++  _onChunks;
+   _parseState = null;
+   _streaming = false;
+   _blockStates = [];
+@@ -8970,6 +8986,7 @@ class MarkdownRenderable extends Renderable {
+     this._treeSitterClient = options.treeSitterClient;
+     this._tableOptions = options.tableOptions;
+     this._renderNode = options.renderNode;
++    this._onChunks = options.onChunks;
+     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming;
+     this.updateBlocks();
+   }
+@@ -9030,6 +9047,20 @@ class MarkdownRenderable extends Renderable {
+     this._tableOptions = value;
+     this.applyTableOptionsToBlocks();
+   }
++  get onChunks() {
++    return this._onChunks;
++  }
++  set onChunks(value) {
++    if (this._onChunks === value)
++      return;
++    this._onChunks = value;
++    for (const state of this._blockStates) {
++      if (state.token.type !== "code" && state.renderable instanceof CodeRenderable) {
++        state.renderable.onChunks = value ?? this._linkifyMarkdownChunks;
++      }
++    }
++    this.requestRender();
++  }
+   getStyle(group) {
+     if (!this._syntaxStyle)
+       return;
+@@ -9191,7 +9222,7 @@ class MarkdownRenderable extends Renderable {
+       conceal: this._conceal,
+       drawUnstyledText: false,
+       streaming: true,
+-      onChunks: this._linkifyMarkdownChunks,
++      onChunks: this._onChunks ?? this._linkifyMarkdownChunks,
+       treeSitterClient: this._treeSitterClient,
+       width: "100%",
+       marginBottom
+@@ -9817,19 +9848,19 @@ class SliderRenderable extends Renderable {
    }
    setupMouseHandling() {
      let isDragging = false;
@@ -124,7 +170,7 @@ index 1970eef38804d12c705d463189081497e0c02a18..447e6c7623e1df503a4046580ad80f70
        }
      };
      this.onMouseDrag = (event) => {
-@@ -9839,10 +9854,13 @@ class SliderRenderable extends Renderable {
+@@ -9839,10 +9870,13 @@ class SliderRenderable extends Renderable {
        this.updateValueFromMouseWithOffset(event, dragOffsetVirtual);
      };
      this.onMouseUp = (event) => {
@@ -139,3 +185,41 @@ index 1970eef38804d12c705d463189081497e0c02a18..447e6c7623e1df503a4046580ad80f70
      };
    }
    updateValueFromMouseDirect(event) {
+diff --git a/renderables/Markdown.d.ts b/renderables/Markdown.d.ts
+index 2e8ddf4f3b80400d0dfb705b1fa28f24af597a49..b97324df1f2c188d2b6f6ccabc27fff656d49e28 100644
+--- a/renderables/Markdown.d.ts
++++ b/renderables/Markdown.d.ts
+@@ -8,6 +8,7 @@ import { type TextTableColumnFitter, type TextTableColumnWidthMode, type TextTab
+ import type { TreeSitterClient } from "../lib/tree-sitter";
+ import { type ParseState } from "./markdown-parser";
+ import type { OptimizedBuffer } from "../buffer";
++import type { CodeOptions } from "./Code";
+ export interface MarkdownTableOptions {
+     /**
+      * Strategy for sizing table columns.
+@@ -74,6 +75,8 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
+      * Options for internally rendered markdown tables.
+      */
+     tableOptions?: MarkdownTableOptions;
++    /** Transform prose chunks without changing markdown block grouping. Does not affect fenced code or table cells. */
++    onChunks?: CodeOptions["onChunks"];
+     /**
+      * Custom node renderer. Return a Renderable to override default rendering,
+      * or undefined/null to use default rendering.
+@@ -107,6 +110,7 @@ export declare class MarkdownRenderable extends Renderable {
+     private _treeSitterClient?;
+     private _tableOptions?;
+     private _renderNode?;
++    private _onChunks?;
+     _parseState: ParseState | null;
+     private _streaming;
+     _blockStates: BlockState[];
+@@ -131,6 +135,8 @@ export declare class MarkdownRenderable extends Renderable {
+     set streaming(value: boolean);
+     get tableOptions(): MarkdownTableOptions | undefined;
+     set tableOptions(value: MarkdownTableOptions | undefined);
++    get onChunks(): CodeOptions["onChunks"];
++    set onChunks(value: CodeOptions["onChunks"]);
+     private getStyle;
+     private createChunk;
+     private createDefaultChunk;

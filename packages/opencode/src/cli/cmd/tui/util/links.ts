@@ -1,5 +1,4 @@
 import {
-  CodeRenderable,
   MarkdownRenderable,
   detectLinks,
   type ChunkRenderContext,
@@ -30,16 +29,9 @@ export function hyperlinks(chunks: TextChunk[], context: ChunkRenderContext) {
   })
 }
 
-export const linked: NonNullable<MarkdownOptions["renderNode"]> = (_, context) => {
-  const node = context.defaultRender()
-  if (node instanceof CodeRenderable && node.onChunks) node.onChunks = hyperlinks
-  return node
-}
-
 export class Markdown extends MarkdownRenderable {
   constructor(ctx: RenderContext, opts: MarkdownOptions) {
-    // Solid assigns props after construction; OpenTUI has no renderNode setter.
-    super(ctx, { ...opts, renderNode: linked })
+    super(ctx, { ...opts, onChunks: hyperlinks })
   }
 }
 
