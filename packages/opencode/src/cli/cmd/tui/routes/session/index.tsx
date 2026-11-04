@@ -101,6 +101,7 @@ import { citations, references } from "./citations"
 import { hyperlinks, Markdown } from "../../util/links"
 import { image } from "./image"
 import { patchFileID } from "./patch"
+import { padding } from "./panel"
 import { useExit } from "../../context/exit"
 
 addDefaultParsers(parsers.parsers)
@@ -1181,7 +1182,7 @@ export function Session() {
               scrollAcceleration={scrollAcceleration()}
             >
               <Show when={session()?.title.endsWith(" (from another host)")}>
-                <box paddingLeft={2} paddingTop={1} paddingBottom={1} backgroundColor={theme.backgroundPanel}>
+                <box {...padding} backgroundColor={theme.backgroundPanel}>
                   <text fg={theme.textMuted}>
                     Conversation transferred from another host. Files, snapshots and worktree may be missing on this
                     host.
@@ -1220,9 +1221,7 @@ export function Session() {
                             borderColor={theme.backgroundPanel}
                           >
                             <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
+                              {...padding}
                               backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
                             >
                               <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
@@ -1398,9 +1397,7 @@ function UserMessage(props: {
               setHover(false)
             }}
             onMouseUp={props.onMouseUp}
-            paddingTop={1}
-            paddingBottom={1}
-            paddingLeft={2}
+            {...padding}
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
@@ -1608,9 +1605,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
         <box
           border={["left"]}
-          paddingTop={1}
-          paddingBottom={1}
-          paddingLeft={2}
+          {...padding}
           marginTop={1}
           backgroundColor={theme.backgroundPanel}
           customBorderChars={SplitBorder.customBorderChars}
@@ -2011,9 +2006,7 @@ function BlockTool(props: {
     <box
       id={props.id ?? (props.part ? "tool-" + props.part.id : undefined)}
       border={["left"]}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
+      {...padding}
       marginTop={1}
       gap={1}
       backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
