@@ -1038,6 +1038,7 @@ export namespace MessageV2 {
         "ECONNABORTED",
         "ETIMEDOUT",
         "EPIPE",
+        "EPROTO",
         "UND_ERR_CONNECT_TIMEOUT",
         "UND_ERR_HEADERS_TIMEOUT",
         "UND_ERR_BODY_TIMEOUT",
