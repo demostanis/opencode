@@ -4,6 +4,7 @@ import fs from "node:fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { SessionSync } from "../../src/session/sync"
 import { Active } from "../../src/session/active"
 import { Rpc } from "../../src/util/rpc"
 import { Database } from "../../src/storage/db"
@@ -16,8 +17,9 @@ test("independent workers elect one owner and batch changed conversations", asyn
     directory: tmp.path,
     fn: async () => {
       Database.close()
-      const session = await Session.create({ title: "Background export" })
       const dir = path.join(tmp.path, "sync")
+      await SessionSync.drain(dir)
+      const session = await Session.create({ title: "Background export" })
       const env = Object.fromEntries(
         Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
       )

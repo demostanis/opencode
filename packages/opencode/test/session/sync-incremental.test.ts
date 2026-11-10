@@ -58,7 +58,7 @@ test("only changed conversations are exported, including writes from another con
   })
 })
 
-test("subagents and current or legacy teammates are excluded and old archives are removed", async () => {
+test("subagents are bundled while current and legacy teammates remain excluded", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
@@ -71,28 +71,16 @@ test("subagents and current or legacy teammates are excluded and old archives ar
         title: "Legacy teammate",
         permission: [{ ...Teammate.ROLE, permission: "multiagent" }],
       })
-      const copy = await Session.create({ title: "Old imported subagent (from another host)" })
-      Database.use((db) =>
-        db
-          .insert(SyncTable)
-          .values({
-            machine: "old-host",
-            source_id: child.id,
-            local_id: copy.id,
-            revision: `1-${"b".repeat(64)}.json`,
-            baseline: "old-baseline",
-          })
-          .run(),
-      )
       const root = path.join(base, "sessions", await Active.machine)
       await fs.mkdir(path.join(root, child.id), { recursive: true })
       await fs.writeFile(path.join(root, child.id, `1-${"a".repeat(64)}.json`), "{}")
       await SessionSync.clean(base)
       await SessionSync.drain(base)
-      expect(await fs.readdir(root)).toEqual([parent.id])
+      expect((await fs.readdir(root)).sort()).toEqual([parent.id, child.id].sort())
+      const folder = path.join(root, parent.id)
+      const bundle = await Bun.file(path.join(folder, (await fs.readdir(folder)).sort().at(-1)!)).json()
+      expect(bundle.children.map((node: { session: Session.Info }) => node.session.id)).toEqual([child.id])
       await Promise.all([Session.remove(parent.id), Session.remove(teammate.id), Session.remove(legacy.id)])
-      await Session.remove(copy.id)
-      Database.use((db) => db.delete(SyncTable).where(eq(SyncTable.local_id, copy.id)).run())
     },
   })
 })
