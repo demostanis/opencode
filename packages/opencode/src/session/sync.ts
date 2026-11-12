@@ -86,7 +86,6 @@ export namespace SessionSync {
         seen.add(row.id)
         if (!row.parent_id) return row.id
         const parent = db.select(fields).from(SessionTable).where(eq(SessionTable.id, row.parent_id)).get()
-        if (parent?.project_id !== row.project_id) return
         row = parent
       }
     })
@@ -114,7 +113,7 @@ export namespace SessionSync {
           break
         }
         const parent = map.get(cursor.parent_id)
-        if (!parent || parent.project_id !== cursor.project_id) {
+        if (!parent) {
           result.set(cursor.id, undefined)
           break
         }
@@ -332,7 +331,7 @@ export namespace SessionSync {
     }
   }
 
-  async function write(file: string, text: string) {
+  async function write(file: string, text: string | Uint8Array) {
     const temp = `${file}.${randomUUID()}.tmp`
     await fs
       .writeFile(temp, text, { mode: 0o600 })
@@ -469,6 +468,8 @@ export namespace SessionSync {
       if (!project) return
       const history = (row: typeof SessionTable.$inferSelect) => {
         const id = row.id
+        const project = db.select().from(ProjectTable).where(eq(ProjectTable.id, row.project_id)).get()
+        if (!project) throw new Error(`Session ${id} has missing project ${row.project_id}`)
         const messages = db
           .select()
           .from(MessageTable)
@@ -482,6 +483,7 @@ export namespace SessionSync {
         const grouped = Map.groupBy(parts, (part) => part.message_id)
         return {
           session: Session.fromRow(row),
+          project: { id: project.id, worktree: project.worktree, name: project.name },
           messages: messages.map((msg) => ({
             info: { ...msg.data, id: msg.id, sessionID: id },
             parts: (grouped.get(msg.id) ?? []).map(
@@ -510,8 +512,7 @@ export namespace SessionSync {
           .all()
         for (const child of rows.reverse()) {
           if (Teammate.session(undefined, child.permission ?? undefined)) continue
-          if (seen.has(child.id) || child.project_id !== row.project_id)
-            throw new Error(`Invalid subagent tree for ${id}`)
+          if (seen.has(child.id)) throw new Error(`Invalid cyclic subagent tree for ${id}`)
           seen.add(child.id)
           stack.push(child)
         }
@@ -528,19 +529,40 @@ export namespace SessionSync {
     })
   }
 
-  function fingerprint(data: NonNullable<ReturnType<typeof snapshot>>) {
+  function serialize<T extends { session: Session.Info }>(node: T) {
+    try {
+      return JSON.stringify(node)
+    } catch (cause) {
+      throw new Error(
+        `Cannot serialize sync node ${node.session.id}: JavaScript string limit or invalid payload: ${String(cause)}`,
+        { cause },
+      )
+    }
+  }
+
+  function fingerprint(data: NonNullable<ReturnType<typeof snapshot>>, legacy = false) {
     // Match the logical v2 snapshot hash without allocating a tree-sized string.
-    const { children, ...head } = data
-    const hash = createHash("sha256").update(JSON.stringify(head).slice(0, -1)).update(',"children":[')
+    const { children, project, ...head } = data
+    // history() adds project before messages; retain the original root key order for legacy baselines.
+    const hash = createHash("sha256")
+      .update(serialize({ ...head, project }).slice(0, -1))
+      .update(',"children":[')
     for (const [index, child] of children.entries()) {
       if (index) hash.update(",")
-      hash.update(JSON.stringify(child))
+      const { project, ...history } = child
+      hash.update(serialize(legacy ? history : child))
     }
-    return hash.update("]}").digest("hex")
+    return `${legacy ? "" : "v4:"}${hash.update("]}").digest("hex")}`
   }
 
   function matches(data: NonNullable<ReturnType<typeof snapshot>>, baseline: string) {
     if (fingerprint(data) === baseline) return true
+    if (baseline.startsWith("v4:")) return false
+    if (
+      data.children.every((child) => child.session.projectID === data.session.projectID) &&
+      fingerprint(data, true) === baseline
+    )
+      return true
     if (data.children.length) return false
     return (
       digest({
@@ -562,7 +584,7 @@ export namespace SessionSync {
     initialize()
     const parent = ancestor(id)
     if (parent === null) return
-    if (!parent) throw new Error(`Cannot export sync session ${id}: missing, cyclic or cross-project parent`)
+    if (!parent) throw new Error(`Cannot export sync session ${id}: missing or cyclic parent`)
     id = parent
     if (seen.has(id)) return
     seen.add(id)
@@ -619,25 +641,47 @@ export namespace SessionSync {
       ),
     }
     const folder = location(machine, id, dir)
-    const nodes = [{ session: bundle.session, messages: bundle.messages }, ...bundle.children]
-    const texts = nodes.map((node) => JSON.stringify(node))
+    const foreign = bundle.children.some((node) => node.session.projectID !== bundle.session.projectID)
+    const nodes = [
+      {
+        session: bundle.session,
+        messages: bundle.messages,
+        project: { id: bundle.session.projectID, ...bundle.project },
+      },
+      ...bundle.children,
+    ]
+    const texts = nodes.map(serialize)
     const sizes = texts.map((text) => Buffer.byteLength(text))
-    const oversized = sizes.findIndex((size) => size > 50_000_000)
-    if (oversized >= 0)
-      throw new Error(
-        `Sync node ${nodes[oversized].session.id} in tree ${id} is ${sizes[oversized]} bytes; limit is 50000000 bytes`,
-      )
+    const version = foreign || sizes.some((size) => size > 50_000_000) ? 4 : 3
     // Keep small trees as v2; v3 commits its manifest only after every bounded node is written.
     const total = sizes.reduce((sum, size) => sum + size, 0)
-    const packed = total <= 50_000_000 ? JSON.stringify(bundle) : undefined
+    const packed = version !== 4 && total <= 50_000_000 ? JSON.stringify(bundle) : undefined
     const sharded = !packed || Buffer.byteLength(packed) > 50_000_000
-    const refs = texts.map((text, index) => ({
-      sha: createHash("sha256").update(text).digest("hex"),
-      size: sizes[index],
-    }))
+    await fs.mkdir(folder, { recursive: true })
+    const refs: { sha: string; size: number; chunks?: { sha: string; size: number }[] }[] = []
+    if (sharded) {
+      await fs.mkdir(path.join(folder, "nodes"), { recursive: true })
+      for (const text of texts) {
+        const bytes = Buffer.from(text)
+        const chunks: { sha: string; size: number }[] = []
+        for (let offset = 0; offset < bytes.length; offset += 50_000_000) {
+          const chunk = bytes.subarray(offset, offset + 50_000_000)
+          const sha = createHash("sha256").update(chunk).digest("hex")
+          const file = path.join(folder, "nodes", `${sha}.${version === 4 ? "bin" : "json"}`)
+          const current = await read(file, chunk.length)
+          if (!current || createHash("sha256").update(current).digest("hex") !== sha) await write(file, chunk)
+          chunks.push({ sha, size: chunk.length })
+        }
+        refs.push({
+          sha: createHash("sha256").update(bytes).digest("hex"),
+          size: bytes.length,
+          ...(version === 4 ? { chunks } : {}),
+        })
+      }
+    }
     const text = sharded
       ? JSON.stringify({
-          version: 3,
+          version,
           machine,
           notice: bundle.notice,
           project: bundle.project,
@@ -646,17 +690,7 @@ export namespace SessionSync {
         })
       : packed!
     if (Buffer.byteLength(text) > 50_000_000) throw new Error(`Sync manifest for ${id} exceeds the 50MB manifest limit`)
-    await fs.mkdir(folder, { recursive: true })
-    if (sharded) {
-      await fs.mkdir(path.join(folder, "nodes"), { recursive: true })
-      for (const [index, ref] of refs.entries()) {
-        const file = path.join(folder, "nodes", `${ref.sha}.json`)
-        const bytes = await read(file, ref.size)
-        if (bytes && createHash("sha256").update(bytes).digest("hex") === ref.sha) continue
-        await write(file, texts[index])
-      }
-      // Nodes are immutable recovery data. Garbage collection is deliberately deferred, including nodes of old manifests.
-    }
+    // Immutable nodes/chunks remain recovery data even after their manifests are pruned.
     const hash = createHash("sha256").update(text).digest("hex")
     const latest = (await fs.readdir(folder))
       .filter((name) => archive.test(name))
@@ -681,15 +715,21 @@ export namespace SessionSync {
         .get(),
     )
     if (prev && order(prev.revision, revision) >= 0) return true
+    const Project = z.object({
+      id: z.string().optional(),
+      worktree: z.string(),
+      name: z.string().nullable(),
+    })
     const History = z.object({
       session: Session.Info,
       messages: z.array(z.object({ info: MessageV2.Info, parts: z.array(MessageV2.Part) })),
+      project: Project.optional(),
     })
     const Bundle = History.extend({
-      version: z.union([z.literal(1), z.literal(2)]),
+      version: z.union([z.literal(1), z.literal(2), z.literal(4)]),
       machine: z.string().min(1),
       notice: z.string(),
-      project: z.object({ worktree: z.string(), name: z.string().nullable() }),
+      project: Project,
       children: z.array(History).optional(),
     })
     const match = /^(\d+)-([a-f0-9]{64})\.json$/.exec(revision)
@@ -702,48 +742,96 @@ export namespace SessionSync {
       log.warn("sync archive checksum mismatch", { file })
       return false
     }
+    const Ref = z.object({
+      sha: z.string().regex(/^[a-f0-9]{64}$/),
+      size: z.number().int().min(1).max(50_000_000),
+    })
     const Manifest = z.object({
-      version: z.literal(3),
+      version: z.union([z.literal(3), z.literal(4)]),
       machine: z.string(),
       source: SessionID.zod,
       notice: z.string(),
       project: z.object({ worktree: z.string(), name: z.string().nullable() }),
       nodes: z
         .array(
-          z.object({
-            sha: z.string().regex(/^[a-f0-9]{64}$/),
-            size: z.number().int().min(1).max(50_000_000),
+          Ref.extend({
+            size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+            chunks: z.array(Ref).min(1).optional(),
           }),
         )
         .min(1),
     })
-    if (typeof json === "object" && json !== null && "version" in json && json.version === 3) {
+    if (typeof json === "object" && json !== null && "version" in json && (json.version === 3 || json.version === 4)) {
       const manifest = Manifest.safeParse(json)
       if (!manifest.success || manifest.data.machine !== machine || manifest.data.source !== source) return false
       const histories: z.infer<typeof History>[] = []
       for (const ref of manifest.data.nodes) {
-        const node = path.join(path.dirname(file), "nodes", `${ref.sha}.json`)
-        const bytes = await read(node, ref.size)
-        if (!bytes) return false
+        const chunks = manifest.data.version === 4 ? ref.chunks : [ref]
+        if (
+          !chunks ||
+          (manifest.data.version === 3 && ref.size > 50_000_000) ||
+          chunks.reduce((sum, chunk) => sum + chunk.size, 0) !== ref.size
+        ) {
+          log.warn("invalid sync node chunk sizes", { file, node: ref.sha, size: ref.size })
+          return false
+        }
+        const pieces: Buffer[] = []
+        for (const chunk of chunks) {
+          const node = path.join(
+            path.dirname(file),
+            "nodes",
+            `${chunk.sha}.${manifest.data.version === 4 ? "bin" : "json"}`,
+          )
+          const bytes = await read(node, chunk.size)
+          if (!bytes) return false
+          const hash = createHash("sha256").update(bytes).digest("hex")
+          if (hash !== chunk.sha) {
+            log.warn("sync chunk checksum mismatch", {
+              file: node,
+              expected: chunk.sha,
+              actual: hash,
+            })
+            return false
+          }
+          pieces.push(bytes)
+        }
+        const bytes = (() => {
+          try {
+            return Buffer.concat(pieces, ref.size)
+          } catch (cause) {
+            throw new Error(`Cannot assemble sync node ${ref.sha} (${ref.size} bytes) from ${file}: ${String(cause)}`, {
+              cause,
+            })
+          }
+        })()
         const hash = createHash("sha256").update(bytes).digest("hex")
         if (bytes.length !== ref.size || hash !== ref.sha) {
           log.warn("sync node checksum mismatch", {
-            file: node,
+            file,
             expected: ref.sha,
             actual: hash,
             size: bytes.length,
           })
           return false
         }
-        const history = History.safeParse(JSON.parse(bytes.toString("utf8")))
+        const history = (() => {
+          try {
+            return History.safeParse(JSON.parse(bytes.toString("utf8")))
+          } catch (cause) {
+            throw new Error(
+              `Cannot decode sync node ${ref.sha} (${ref.size} bytes) from ${file}: invalid JSON or JavaScript string limit: ${String(cause)}`,
+              { cause },
+            )
+          }
+        })()
         if (!history.success) {
-          log.warn("invalid sync node", { file: node, error: history.error.message })
+          log.warn("invalid sync node", { file, node: ref.sha, error: history.error.message })
           return false
         }
         histories.push(history.data)
       }
       json = {
-        version: 2,
+        version: manifest.data.version === 4 ? 4 : 2,
         machine,
         notice: manifest.data.notice,
         project: manifest.data.project,
@@ -771,9 +859,20 @@ export namespace SessionSync {
     if (queue.length !== nodes.length) return false
     const mids = new Set<string>()
     const pids = new Set<string>()
+    const projects = new Map<string, string>()
     for (const node of nodes) {
-      if (node.session.projectID !== data.session.projectID || Teammate.session(undefined, node.session.permission))
+      if (
+        (data.version !== 4 && node.session.projectID !== data.session.projectID) ||
+        Teammate.session(undefined, node.session.permission)
+      )
         return false
+      if (data.version === 4) {
+        if (!node.project || node.project.id !== node.session.projectID) return false
+        const signature = digest(node.project)
+        const previous = projects.get(node.project.id)
+        if (previous && previous !== signature) return false
+        projects.set(node.project.id, signature)
+      }
       if (
         node.messages.some(
           (msg) =>
@@ -858,35 +957,47 @@ export namespace SessionSync {
         }),
       )
       const root = links.get(data.session.id)!
-      const project = db.select().from(ProjectTable).where(eq(ProjectTable.id, data.session.projectID)).get()
-      if (!project)
-        db.insert(ProjectTable)
-          .values({
-            id: data.session.projectID,
-            worktree: data.project.worktree,
-            name: data.project.name,
-            sandboxes: [],
-            time_created: Date.now(),
-            time_updated: Date.now(),
-          })
-          .run()
-      const translate = (value: string) => {
-        if (!project) return value
-        const relative = path.relative(data.project.worktree, value)
-        if (
-          !path.isAbsolute(data.project.worktree) ||
-          !path.isAbsolute(value) ||
-          path.isAbsolute(relative) ||
-          relative === ".." ||
-          relative.startsWith(`..${path.sep}`)
-        )
-          return project.worktree
-        return path.join(project.worktree, relative)
-      }
+      const receivers = new Map(
+        [...new Set(nodes.map((node) => node.session.projectID))].map((id) => [
+          id,
+          db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get(),
+        ]),
+      )
+      const inserted = new Set<string>()
       for (const node of nodes) {
         const id = links.get(node.session.id)!
         const existing = owned.has(id)
-        const data = { ...node, project: parsed.data.project }
+        const data = {
+          ...node,
+          project: parsed.data.version === 4 ? node.project! : parsed.data.project,
+        }
+        const project = receivers.get(data.session.projectID)
+        if (!project && !inserted.has(data.session.projectID)) {
+          db.insert(ProjectTable)
+            .values({
+              id: data.session.projectID,
+              worktree: data.project.worktree,
+              name: data.project.name,
+              sandboxes: [],
+              time_created: Date.now(),
+              time_updated: Date.now(),
+            })
+            .run()
+          inserted.add(data.session.projectID)
+        }
+        const translate = (value: string) => {
+          if (!project || project.worktree === data.project.worktree) return value
+          const relative = path.relative(data.project.worktree, value)
+          if (
+            !path.isAbsolute(data.project.worktree) ||
+            !path.isAbsolute(value) ||
+            path.isAbsolute(relative) ||
+            relative === ".." ||
+            relative.startsWith(`..${path.sep}`)
+          )
+            return project.worktree
+          return path.join(project.worktree, relative)
+        }
         const dir = translate(data.session.directory)
         const row = Session.toRow({
           ...data.session,

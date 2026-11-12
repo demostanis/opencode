@@ -9,21 +9,441 @@ import { Session } from "../../src/session"
 import { SessionSync } from "../../src/session/sync"
 import { Active } from "../../src/session/active"
 import { Database, eq, and, sql } from "../../src/storage/db"
-import { SessionTable, PartTable, SyncTable, SyncStateTable } from "../../src/session/session.sql"
+import { SessionTable, MessageTable, PartTable, SyncTable, SyncStateTable } from "../../src/session/session.sql"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Teammate } from "../../src/teammate/teammate"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { GlobalBus } from "../../src/bus/global"
+import { ProjectTable } from "../../src/project/project.sql"
 
 type Content<T> = T extends unknown ? Omit<T, "id" | "sessionID" | "messageID"> : never
 
 type Bundle = {
   version: number
   machine: string
+  notice?: string
+  project: { id?: string; worktree: string; name: string | null }
   session: Session.Info
   messages: MessageV2.WithParts[]
-  children?: { session: Session.Info; messages: MessageV2.WithParts[] }[]
+  children?: {
+    session: Session.Info
+    messages: MessageV2.WithParts[]
+    project?: Bundle["project"]
+  }[]
+}
+
+type Manifest = {
+  version: number
+  machine: string
+  source: SessionID
+  nodes: { sha: string; size: number; chunks: { sha: string; size: number }[] }[]
+}
+
+function baseline(id: SessionID, version: number) {
+  return Database.use((db) => {
+    const row = db.select().from(SessionTable).where(eq(SessionTable.id, id)).get()!
+    const project = db.select().from(ProjectTable).where(eq(ProjectTable.id, row.project_id)).get()!
+    const history = (row: typeof SessionTable.$inferSelect) => ({
+      session: Session.fromRow(row),
+      messages: db
+        .select()
+        .from(MessageTable)
+        .where(eq(MessageTable.session_id, row.id))
+        .orderBy(MessageTable.time_created, MessageTable.id)
+        .all()
+        .map((msg) => ({
+          info: { ...msg.data, id: msg.id, sessionID: row.id },
+          parts: db
+            .select()
+            .from(PartTable)
+            .where(eq(PartTable.message_id, msg.id))
+            .orderBy(PartTable.id)
+            .all()
+            .map((part) => ({ ...part.data, id: part.id, messageID: msg.id, sessionID: row.id })),
+        })),
+    })
+    const node = history(row)
+    const head = {
+      version: version === 1 ? 1 : 2,
+      machine: "",
+      notice: "Conversation transferred from another host. Files, snapshots and worktree may be missing on this host.",
+      session: node.session,
+    }
+    const metadata = { worktree: project.worktree, name: project.name }
+    const data =
+      version === 1
+        ? { ...head, project: metadata, messages: node.messages }
+        : {
+            ...head,
+            messages: node.messages,
+            project: metadata,
+            children: db
+              .select()
+              .from(SessionTable)
+              .where(eq(SessionTable.parent_id, id))
+              .orderBy(SessionTable.id)
+              .all()
+              .map(history),
+          }
+    const hash = createHash("sha256").update(JSON.stringify(data)).digest("hex")
+    for (const node of [row, ...db.select().from(SessionTable).where(eq(SessionTable.parent_id, id)).all()])
+      db.update(SyncTable).set({ baseline: hash }).where(eq(SyncTable.local_id, node.id)).run()
+  })
+}
+
+test("legacy v1/v2/v3 logical baselines keep owned IDs on upgrade without swallowing local child changes", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const base = path.join(tmp.path, "sync")
+      for (const version of [1, 2, 3]) {
+        const root = await Session.create({ title: `Legacy v${version}` })
+        const child = version === 1 ? undefined : await Session.create({ title: "Legacy child", parentID: root.id })
+        await history(root, child)
+        if (child) await history(child)
+        await SessionSync.exportSession(root.id, base)
+        const bundle = await latest(base, root.id)
+        bundle.version = version === 1 ? 1 : 2
+        if (version === 1) delete bundle.children
+        await remote(base, bundle, 1)
+        const imported = SessionID.make(mapping(root.id).local_id)
+        const descendant = child && SessionID.make(mapping(child.id).local_id)
+        baseline(imported, version)
+        await SessionSync.exportSession(imported, base)
+        expect(
+          await fs.stat(path.join(base, "sessions", await Active.machine, imported)).catch(() => undefined),
+        ).toBeUndefined()
+        bundle.session.title = "Remote upgrade"
+        if (version !== 3) await remote(base, bundle, 2)
+        if (version === 3) {
+          const folder = path.join(base, "sessions", "tree-host", root.id)
+          await fs.mkdir(path.join(folder, "nodes"))
+          const refs = []
+          for (const node of [{ session: bundle.session, messages: bundle.messages }, ...bundle.children!]) {
+            const text = JSON.stringify(node)
+            const sha = createHash("sha256").update(text).digest("hex")
+            await fs.writeFile(path.join(folder, "nodes", `${sha}.json`), text)
+            refs.push({ sha, size: Buffer.byteLength(text) })
+          }
+          const text = JSON.stringify({
+            version: 3,
+            machine: "tree-host",
+            source: root.id,
+            notice: bundle.notice,
+            project: bundle.project,
+            nodes: refs,
+          })
+          await fs.writeFile(path.join(folder, `2-${createHash("sha256").update(text).digest("hex")}.json`), text)
+          await SessionSync.scan(base)
+        }
+        expect(mapping(root.id).local_id).toBe(imported)
+        if (child) expect(mapping(child.id).local_id).toBe(descendant!)
+        baseline(imported, version)
+        await Session.setTitle({ sessionID: descendant ?? imported, title: "Local changes" })
+        await remote(base, bundle, 3)
+        expect(mapping(root.id).local_id).not.toBe(imported)
+        expect((await Session.get(descendant ?? imported)).title).toBe("Local changes")
+        for (const id of [root.id, imported, SessionID.make(mapping(root.id).local_id)]) await Session.remove(id)
+      }
+    },
+  })
+})
+
+test("v4 cross-project descendants retain projects, translate per-node paths and never steal foreign children", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await using elsewhere = await tmpdir({ git: true })
+  await using third = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const base = path.join(tmp.path, "sync")
+      const root = await Session.create({ title: "Cross-project root" })
+      const child = await Instance.provide({
+        directory: elsewhere.path,
+        fn: () => Session.create({ title: "Foreign child", parentID: root.id }),
+      })
+      const grand = await Instance.provide({
+        directory: third.path,
+        fn: () => Session.create({ title: "Foreign grandchild", parentID: child.id }),
+      })
+      expect(new Set([root, child, grand].map((node) => node.projectID)).size).toBe(3)
+      child.directory = path.join(elsewhere.path, "nested")
+      Database.use((db) => {
+        db.update(SessionTable).set({ directory: child.directory }).where(eq(SessionTable.id, child.id)).run()
+        for (const [index, node] of [root, child, grand].entries())
+          db.update(ProjectTable)
+            .set({ name: `Project ${index}` })
+            .where(eq(ProjectTable.id, node.projectID))
+            .run()
+      })
+      await history(root, child)
+      await history(child, grand)
+      await history(grand)
+      // Exporting a foreign child must find its actual root across project boundaries.
+      await SessionSync.exportSession(grand.id, base)
+      const first = await manifest(base, root.id)
+      expect(first.data.version).toBe(4)
+      Database.use((db) => {
+        db.update(ProjectTable).set({ worktree: "/receiver/child" }).where(eq(ProjectTable.id, child.projectID)).run()
+        // Remove only this test's source grandchild/project to exercise project creation on receipt.
+        db.delete(ProjectTable).where(eq(ProjectTable.id, grand.projectID)).run()
+      })
+      await deliver(base, first.data, 1, first.folder)
+      const ids = [root, child, grand].map((node) => SessionID.make(mapping(node.id).local_id))
+      const imported = await Promise.all(ids.map((id) => Session.get(id)))
+      expect(imported.map((node) => node.projectID)).toEqual([root.projectID, child.projectID, grand.projectID])
+      expect(imported.map((node) => node.directory)).toEqual([tmp.path, "/receiver/child/nested", third.path])
+      expect(imported[1].parentID).toBe(ids[0])
+      expect(imported[2].parentID).toBe(ids[1])
+      expect(
+        Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, grand.projectID)).get())
+          ?.worktree,
+      ).toBe(third.path)
+      expect(
+        Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, grand.projectID)).get())?.name,
+      ).toBe("Project 2")
+      for (const [index, id] of ids.entries()) {
+        const messages = await Session.messages({ sessionID: id })
+        const assistant = messages.find((msg) => msg.info.role === "assistant")!.info
+        expect(assistant.role === "assistant" && assistant.path.cwd).toBe(imported[index].directory)
+        expect(assistant.role === "assistant" && assistant.path.root).toBe(imported[index].directory)
+        if (index === 2) continue
+        const task = parts(id).find((part) => part.type === "tool")!
+        expect(task.type === "tool" && task.state.input.task_id).toBe(ids[index + 1])
+      }
+      await deliver(base, first.data, 2)
+      expect([root, child, grand].map((node) => mapping(node.id).local_id)).toEqual(ids)
+      // Reparenting a mapped child into another source tree must still be rejected, even in v4.
+      const other = SessionID.descending()
+      const histories = await Promise.all(
+        first.data.nodes.map(
+          async (ref) =>
+            JSON.parse(
+              (await fs.readFile(path.join(first.folder, "nodes", `${ref.chunks[0].sha}.bin`))).toString(),
+            ) as Pick<Bundle, "session" | "messages" | "project">,
+        ),
+      )
+      histories[0].session.id = other
+      histories[0].messages = []
+      histories[1].session.parentID = other
+      const refs = await Promise.all(
+        histories.map(async (node) => {
+          const text = JSON.stringify(node)
+          const sha = createHash("sha256").update(text).digest("hex")
+          await fs.writeFile(path.join(first.folder, "nodes", `${sha}.bin`), text)
+          return {
+            sha,
+            size: Buffer.byteLength(text),
+            chunks: [{ sha, size: Buffer.byteLength(text) }],
+          }
+        }),
+      )
+      await deliver(base, { ...first.data, source: other, nodes: refs }, 3, first.folder)
+      expect(mapping(other)).toBeUndefined()
+      expect(mapping(child.id).local_id).toBe(ids[1])
+      await Session.setTitle({ sessionID: ids[2], title: "Local edit" })
+      await deliver(base, first.data, 4)
+      expect(mapping(root.id).local_id).not.toBe(ids[0])
+      expect((await Session.get(ids[2])).title).toBe("Local edit")
+      for (const id of [root.id, ids[0], SessionID.make(mapping(root.id).local_id)]) await Session.remove(id)
+    },
+  })
+})
+
+test("v4 absent receiver projects preserve sibling worktree paths across same-project and foreign descendants", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await using elsewhere = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const base = path.join(tmp.path, "sync")
+      const root = await Session.create({ title: "Absent project root" })
+      const child = await Session.create({ title: "First worktree", parentID: root.id })
+      const sibling = await Session.create({ title: "Second worktree", parentID: root.id })
+      const foreign = await Instance.provide({
+        directory: elsewhere.path,
+        fn: () => Session.create({ title: "Foreign worktree", parentID: child.id }),
+      })
+      const grand = await Instance.provide({
+        directory: elsewhere.path,
+        fn: () => Session.create({ title: "Foreign sibling worktree", parentID: foreign.id }),
+      })
+      const nodes = [root, child, sibling, foreign, grand]
+      expect(child.projectID).toBe(root.projectID)
+      expect(sibling.projectID).toBe(root.projectID)
+      expect(foreign.projectID).not.toBe(root.projectID)
+      expect(grand.projectID).toBe(foreign.projectID)
+      for (const [index, node] of nodes.entries()) {
+        if (index) node.directory = `${node.directory}-worktree-${index}`
+        Database.use((db) =>
+          db.update(SessionTable).set({ directory: node.directory }).where(eq(SessionTable.id, node.id)).run(),
+        )
+        await history(node)
+      }
+      await SessionSync.exportSession(root.id, base)
+      const source = await manifest(base, root.id)
+      expect(source.data.version).toBe(4)
+      Database.use((db) => {
+        for (const id of [root.projectID, foreign.projectID])
+          db.delete(ProjectTable).where(eq(ProjectTable.id, id)).run()
+      })
+      await deliver(base, source.data, 1, source.folder)
+      const ids = nodes.map((node) => SessionID.make(mapping(node.id).local_id))
+      for (const revision of [1, 2]) {
+        if (revision === 2) await deliver(base, source.data, revision)
+        expect(nodes.map((node) => mapping(node.id).local_id)).toEqual(ids)
+        expect(nodes.every((node) => mapping(node.id).revision.startsWith(`${revision}-`))).toBe(true)
+        const imported = await Promise.all(ids.map((id) => Session.get(id)))
+        expect(imported.map((node) => node.projectID)).toEqual(nodes.map((node) => node.projectID))
+        expect(imported.map((node) => node.directory)).toEqual(nodes.map((node) => node.directory))
+        expect(imported.map((node) => node.parentID)).toEqual([undefined, ids[0], ids[0], ids[1], ids[3]])
+        for (const [index, id] of ids.entries()) {
+          const messages = await Session.messages({ sessionID: id })
+          const assistant = messages.find((msg) => msg.info.role === "assistant")!.info
+          expect(assistant.role === "assistant" && assistant.path).toEqual({
+            cwd: nodes[index].directory,
+            root: nodes[index].directory,
+          })
+        }
+        for (const [id, worktree] of [
+          [root.projectID, tmp.path],
+          [foreign.projectID, elsewhere.path],
+        ] as const) {
+          const rows = Database.use((db) => db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).all())
+          expect(rows).toHaveLength(1)
+          expect(rows[0].worktree).toBe(worktree)
+        }
+      }
+      await Session.remove(ids[0])
+    },
+  })
+})
+
+test("v4 shards oversized individual root and child tool afterimages with byte-exact Unicode and atomic retries", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const base = path.join(tmp.path, "sync")
+      const root = await Session.create({ title: "Oversized root" })
+      const child = await Session.create({ title: "Oversized child", parentID: root.id })
+      const nodes = [root, child]
+      const edits = await Promise.all(nodes.map((node) => history(node)))
+      for (const edit of edits) {
+        if (edit.state.status !== "completed") throw new Error("Expected completed edit")
+        await Session.updatePart({
+          ...edit,
+          state: { ...edit.state, metadata: { files: [{ after: "BOUNDARY" }] } },
+        })
+      }
+      await SessionSync.exportSession(root.id, base)
+      const small = await latest(base, root.id)
+      await remote(base, small, 1)
+      const ids = nodes.map((node) => SessionID.make(mapping(node.id).local_id))
+      const previous = mapping(root.id).revision
+      const histories = [
+        {
+          session: small.session,
+          messages: small.messages,
+          project: { id: small.session.projectID, ...small.project },
+        },
+        ...small.children!,
+      ]
+      const values = histories.map((node) => {
+        const text = JSON.stringify(node)
+        const offset = Buffer.byteLength(text.slice(0, text.indexOf("BOUNDARY")))
+        return "x".repeat(50_000_000 - offset - 1) + "\u{1f680}exact\u0000tail"
+      })
+      for (const [index, edit] of edits.entries()) {
+        if (edit.state.status !== "completed") throw new Error("Expected completed edit")
+        await Session.updatePart({
+          ...edit,
+          state: { ...edit.state, metadata: { files: [{ after: values[index] }] } },
+        })
+      }
+      await SessionSync.exportSession(root.id, base)
+      const large = await manifest(base, root.id)
+      expect(large.data.version).toBe(4)
+      expect(large.data.nodes.every((node) => node.size > 50_000_000 && node.chunks.length === 2)).toBe(true)
+      for (const node of large.data.nodes) {
+        for (const chunk of node.chunks) {
+          expect(chunk.size).toBeLessThanOrEqual(50_000_000)
+          const bytes = await fs.readFile(path.join(large.folder, "nodes", `${chunk.sha}.bin`))
+          expect(bytes.length).toBe(chunk.size)
+          expect(createHash("sha256").update(bytes).digest("hex")).toBe(chunk.sha)
+        }
+        const first = await fs.readFile(path.join(large.folder, "nodes", `${node.chunks[0].sha}.bin`))
+        expect(first.at(-1)).toBe(0xf0)
+      }
+      const folder = await deliver(base, large.data, 2)
+      expect(mapping(root.id).revision).toBe(previous)
+      await fs.cp(path.join(large.folder, "nodes"), path.join(folder, "nodes"), {
+        recursive: true,
+      })
+      const last = large.data.nodes[1].chunks[1]
+      const file = path.join(folder, "nodes", `${last.sha}.bin`)
+      await fs.rm(file)
+      await SessionSync.scan(base)
+      expect(mapping(root.id).revision).toBe(previous)
+      const bytes = await fs.readFile(path.join(large.folder, "nodes", `${last.sha}.bin`))
+      bytes[0] ^= 1
+      await fs.writeFile(file, bytes)
+      await SessionSync.scan(base)
+      expect(mapping(root.id).revision).toBe(previous)
+      expect(nodes.map((node) => mapping(node.id).local_id)).toEqual(ids)
+      expect(parts(ids[1]).find((part) => part.type === "tool")?.state).toEqual(
+        small.children![0].messages.flatMap((msg) => msg.parts).find((part) => part.type === "tool")!.state,
+      )
+      await fs.copyFile(path.join(large.folder, "nodes", `${last.sha}.bin`), file)
+      await SessionSync.scan(base)
+      expect(mapping(root.id).revision).not.toBe(previous)
+      expect(nodes.map((node) => mapping(node.id).local_id)).toEqual(ids)
+      for (const [index, id] of ids.entries()) {
+        const part = parts(id).find((part) => part.type === "tool")!
+        expect(part.type === "tool" && part.state.status === "completed" && part.state.metadata.files).toEqual([
+          { after: values[index] },
+        ])
+      }
+      // Whole-node digest and size remain mandatory even when all chunk digests are valid.
+      const bad = structuredClone(large.data)
+      bad.nodes[1].sha = "0".repeat(64)
+      const revision = mapping(root.id).revision
+      await deliver(base, bad, 3)
+      expect(mapping(root.id).revision).toBe(revision)
+      bad.nodes[1].size++
+      await deliver(base, bad, 4)
+      expect(mapping(root.id).revision).toBe(revision)
+      await deliver(base, large.data, 5)
+      expect(nodes.map((node) => mapping(node.id).local_id)).toEqual(ids)
+      await SessionSync.exportSession(ids[0], base)
+      expect(
+        await fs.stat(path.join(base, "sessions", await Active.machine, ids[0])).catch(() => undefined),
+      ).toBeUndefined()
+      await Session.remove(root.id)
+      await Session.remove(ids[0])
+    },
+  })
+}, 60_000)
+
+async function manifest(base: string, id: SessionID) {
+  const folder = path.join(base, "sessions", await Active.machine, id)
+  const file = (await fs.readdir(folder))
+    .filter((name) => /^\d+-/.test(name))
+    .sort()
+    .at(-1)!
+  return { folder, data: (await Bun.file(path.join(folder, file)).json()) as Manifest }
+}
+
+async function deliver(base: string, data: Manifest, revision: number, folder?: string) {
+  const dir = path.join(base, "sessions", "tree-host", data.source)
+  await fs.mkdir(dir, { recursive: true })
+  if (folder) await fs.cp(path.join(folder, "nodes"), path.join(dir, "nodes"), { recursive: true })
+  const text = JSON.stringify({ ...data, machine: "tree-host" })
+  await fs.writeFile(path.join(dir, `${revision}-${createHash("sha256").update(text).digest("hex")}.json`), text)
+  await SessionSync.scan(base)
+  return dir
 }
 
 async function history(session: Session.Info, child?: Session.Info) {
@@ -355,7 +775,7 @@ test("active children fork whole trees and identical source IDs on different hos
   })
 })
 
-test("orphan histories and oversized trees remain pending instead of being acknowledged or cleaned away", async () => {
+test("orphan histories remain pending and oversized child histories export without losing legacy recovery copies", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
@@ -396,14 +816,12 @@ test("orphan histories and oversized trees remain pending instead of being ackno
         type: "text",
         text: "x".repeat(50_000_000),
       })
-      expect(await SessionSync.drain(base)).toBe(0)
+      expect(await SessionSync.drain(base)).toBe(1)
       const pending = Database.use(
         (db) => db.select().from(SyncStateTable).where(eq(SyncStateTable.session_id, nested.id)).get()!,
       )
-      expect(pending.version).toBeGreaterThan(pending.exported)
-      expect(
-        await fs.stat(path.join(base, "sessions", await Active.machine, large.id)).catch(() => undefined),
-      ).toBeUndefined()
+      expect(pending.version).toBe(pending.exported)
+      expect((await manifest(base, large.id)).data.version).toBe(4)
       const legacy = path.join(base, "sessions", await Active.machine, nested.id)
       await fs.mkdir(legacy, { recursive: true })
       for (const time of [1, 2, 3])

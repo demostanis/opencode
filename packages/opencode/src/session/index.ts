@@ -650,19 +650,12 @@ export namespace Session {
   }
 
   export const children = fn(SessionID.zod, async (parentID) => {
-    const project = Instance.project
-    const rows = Database.use((db) =>
-      db
-        .select()
-        .from(SessionTable)
-        .where(and(eq(SessionTable.project_id, project.id), eq(SessionTable.parent_id, parentID)))
-        .all(),
-    )
+    // Parent links can cross projects, including trees imported from another host.
+    const rows = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.parent_id, parentID)).all())
     return rows.map(fromRow)
   })
 
   export const remove = fn(SessionID.zod, async (sessionID) => {
-    const project = Instance.project
     try {
       const session = await get(sessionID)
       for (const child of await children(sessionID)) {
