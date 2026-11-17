@@ -82,7 +82,11 @@ test("includes abliteration without a remote catalog", async () => {
     ],
     {
       cwd: new URL("../..", import.meta.url).pathname,
-      env: { ...process.env, OPENCODE_MODELS_PATH: `${tmp.path}/models.json`, OPENCODE_DISABLE_MODELS_FETCH: "1" },
+      env: {
+        ...process.env,
+        OPENCODE_MODELS_PATH: `${tmp.path}/models.json`,
+        OPENCODE_DISABLE_MODELS_FETCH: "1",
+      },
       stdout: "pipe",
       stderr: "pipe",
     },
@@ -94,6 +98,8 @@ test("includes abliteration without a remote catalog", async () => {
 })
 
 test.each([
+  { id: "gpt-6.2-astra", input: 8, output: 40, read: 0.4, write: 10 },
+  { id: "gpt-6.2-sol", input: 2, output: 10, read: 0.1, write: 2.5 },
   { id: "gpt-6-sol", input: 2, output: 10, read: 0.2, write: 2.5 },
   { id: "gpt-6.1-sol", input: 2, output: 10, read: 0.2, write: 2.5 },
   { id: "gpt-6-luna", input: 0.1, output: 0.5, read: 0.01, write: 0.125 },
@@ -103,7 +109,12 @@ test.each([
   expect(model).toMatchObject({
     id: entry.id,
     limit: { context: 1_050_000, input: 922_000, output: 128_000 },
-    cost: { input: entry.input, output: entry.output, cache_read: entry.read, cache_write: entry.write },
+    cost: {
+      input: entry.input,
+      output: entry.output,
+      cache_read: entry.read,
+      cache_write: entry.write,
+    },
     modalities: { input: ["text", "image"], output: ["text"] },
     reasoning: true,
     tool_call: true,

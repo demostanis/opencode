@@ -47,7 +47,7 @@ describe("plugin.codex", () => {
     expect(CODEX_MODELS.has("gpt-6-astra")).toBe(true)
   })
 
-  test.each(["gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"])(
+  test.each(["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6-luna"])(
     "adds %s when the model catalog is stale",
     async (id) => {
       expect(CODEX_MODELS.has(id)).toBe(true)
@@ -55,11 +55,16 @@ describe("plugin.codex", () => {
       const loader = hooks.auth!.loader!
       const provider = { models: {} } as Parameters<typeof loader>[1]
       await loader(
-        async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
         provider,
       )
 
-      const effort = id === "gpt-6.1-sol" ? "high" : "medium"
+      const effort = ["gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].includes(id) ? "high" : "medium"
       expect(provider.models[id]).toMatchObject({
         id,
         limit: { context: 1_050_000, input: 922_000, output: 128_000 },
@@ -70,7 +75,7 @@ describe("plugin.codex", () => {
           ultra: { reasoningEffort: "max" },
         },
       })
-      if (id === "gpt-6.1-sol") expect(provider.models[id]).not.toHaveProperty("variants.medium")
+      if (effort === "high") expect(provider.models[id]).not.toHaveProperty("variants.medium")
     },
   )
 
@@ -80,7 +85,12 @@ describe("plugin.codex", () => {
     expect(loader).toBeDefined()
     const provider = { models: {} } as Parameters<NonNullable<typeof loader>>[1]
     await loader!(
-      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+      async () => ({
+        type: "oauth",
+        refresh: "refresh",
+        access: "access",
+        expires: Date.now() + 60_000,
+      }),
       provider,
     )
 
@@ -97,6 +107,10 @@ describe("plugin.codex", () => {
   })
 
   test.each([
+    ["gpt-6.2-astra", "fast"],
+    ["gpt-6.2-astra", "ultrafast"],
+    ["gpt-6.2-sol", "fast"],
+    ["gpt-6.2-sol", "ultrafast"],
     ["gpt-6-astra", "fast"],
     ["gpt-6-astra", "ultrafast"],
     ["gpt-6-sol", "fast"],
@@ -109,7 +123,12 @@ describe("plugin.codex", () => {
     const loader = hooks.auth!.loader!
     const provider = { models: {} } as Parameters<typeof loader>[1]
     const options = await loader(
-      async () => ({ type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }),
+      async () => ({
+        type: "oauth",
+        refresh: "refresh",
+        access: "access",
+        expires: Date.now() + 60_000,
+      }),
       provider,
     )
     const key = `${id}-${tier}`

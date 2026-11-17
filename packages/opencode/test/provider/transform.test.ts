@@ -60,7 +60,9 @@ describe("ProviderTransform.message - OpenRouter reasoning replay", () => {
           toolCallId: id,
           toolName: "lookup",
           input: { id },
-          providerOptions: { openrouter: { reasoning_details: structuredClone(details), retained: id } },
+          providerOptions: {
+            openrouter: { reasoning_details: structuredClone(details), retained: id },
+          },
         })),
       ],
     }
@@ -113,7 +115,9 @@ describe("ProviderTransform.message - OpenRouter reasoning replay", () => {
     if (!Array.isArray(msg.content)) throw new Error("Expected parts")
     msg.content = msg.content.map((part) => ({
       ...part,
-      providerOptions: { openrouter: { reasoning_details: [encrypted, structuredClone(encrypted)] } },
+      providerOptions: {
+        openrouter: { reasoning_details: [encrypted, structuredClone(encrypted)] },
+      },
     }))
     const result = ProviderTransform.message([msg], model, {})
     expect(details(result[0])).toEqual([encrypted])
@@ -178,9 +182,14 @@ describe("ProviderTransform.message - OpenRouter reasoning replay", () => {
 
   test("honors nonempty message metadata precedence without discarding unique part data", async () => {
     const msg = message()
-    msg.providerOptions = { openrouter: { reasoning_details: [encrypted, encrypted], retained: true } }
+    msg.providerOptions = {
+      openrouter: { reasoning_details: [encrypted, encrypted], retained: true },
+    }
     const result = ProviderTransform.message([msg], model, {})
-    expect(result[0].providerOptions?.openrouter).toEqual({ reasoning_details: [encrypted], retained: true })
+    expect(result[0].providerOptions?.openrouter).toEqual({
+      reasoning_details: [encrypted],
+      retained: true,
+    })
     expect(details(result[0])).toEqual([detail, detail, detail, detail])
     expect((await serialize(result)).reasoning_details).toEqual([encrypted])
   })
@@ -333,7 +342,11 @@ describe("ProviderTransform.options - setCacheKey", () => {
         npm: "@ai-sdk/openai",
       },
     }
-    const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
+    const result = ProviderTransform.options({
+      model: openaiModel,
+      sessionID,
+      providerOptions: {},
+    })
     expect(result.promptCacheKey).toBe(sessionID)
   })
 
@@ -537,7 +550,11 @@ describe("ProviderTransform.providerOptions", () => {
       },
     })
 
-    expect(ProviderTransform.providerOptions(model, { thinking: { type: "enabled", budgetTokens: 12_000 } })).toEqual({
+    expect(
+      ProviderTransform.providerOptions(model, {
+        thinking: { type: "enabled", budgetTokens: 12_000 },
+      }),
+    ).toEqual({
       anthropic: { thinking: { type: "enabled", budgetTokens: 12_000 } },
     })
   })
@@ -553,7 +570,11 @@ describe("ProviderTransform.providerOptions", () => {
       },
     })
 
-    expect(ProviderTransform.providerOptions(model, { thinking: { type: "enabled", budgetTokens: 12_000 } })).toEqual({
+    expect(
+      ProviderTransform.providerOptions(model, {
+        thinking: { type: "enabled", budgetTokens: 12_000 },
+      }),
+    ).toEqual({
       gateway: { thinking: { type: "enabled", budgetTokens: 12_000 } },
     })
   })
@@ -1194,7 +1215,10 @@ describe("ProviderTransform.message - empty image handling", () => {
     expect(result).toHaveLength(1)
     expect(result[0].content).toHaveLength(2)
     expect(result[0].content[0]).toEqual({ type: "text", text: "What is in this image?" })
-    expect(result[0].content[1]).toEqual({ type: "image", image: `data:image/png;base64,${validBase64}` })
+    expect(result[0].content[1]).toEqual({
+      type: "image",
+      image: `data:image/png;base64,${validBase64}`,
+    })
   })
 
   test("should handle mixed valid and empty images", () => {
@@ -1216,7 +1240,10 @@ describe("ProviderTransform.message - empty image handling", () => {
     expect(result).toHaveLength(1)
     expect(result[0].content).toHaveLength(3)
     expect(result[0].content[0]).toEqual({ type: "text", text: "Compare these images" })
-    expect(result[0].content[1]).toEqual({ type: "image", image: `data:image/png;base64,${validBase64}` })
+    expect(result[0].content[1]).toEqual({
+      type: "image",
+      image: `data:image/png;base64,${validBase64}`,
+    })
     expect(result[0].content[2]).toEqual({
       type: "text",
       text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
@@ -2641,32 +2668,35 @@ describe("ProviderTransform.variants", () => {
       expect(Object.keys(variants[1])).toEqual(["medium", "max", "ultra"])
     })
 
-    test.each(["gpt-6-astra", "gpt-6.1-sol"])("%s exposes high and max efforts with Ultra mode", (id) => {
-      const model = createMockModel({
-        id,
-        providerID: "openai",
-        api: {
+    test.each(["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"])(
+      "%s exposes high and max efforts with Ultra mode",
+      (id) => {
+        const model = createMockModel({
           id,
-          url: "https://api.openai.com",
-          npm: "@ai-sdk/openai",
-        },
-      })
+          providerID: "openai",
+          api: {
+            id,
+            url: "https://api.openai.com",
+            npm: "@ai-sdk/openai",
+          },
+        })
 
-      const result = ProviderTransform.variants(model)
-      expect(Object.keys(result)).toEqual(["high", "max", "ultra"])
-      expect(result.high).toEqual({
-        reasoningEffort: "high",
-        reasoningSummary: "auto",
-        include: ["reasoning.encrypted_content"],
-      })
-      expect(result.max).toEqual({
-        reasoningEffort: "max",
-        reasoningSummary: "auto",
-        include: ["reasoning.encrypted_content"],
-      })
-      expect(result.ultra).toEqual(result.max)
-      expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
-    })
+        const result = ProviderTransform.variants(model)
+        expect(Object.keys(result)).toEqual(["high", "max", "ultra"])
+        expect(result.high).toEqual({
+          reasoningEffort: "high",
+          reasoningSummary: "auto",
+          include: ["reasoning.encrypted_content"],
+        })
+        expect(result.max).toEqual({
+          reasoningEffort: "max",
+          reasoningSummary: "auto",
+          include: ["reasoning.encrypted_content"],
+        })
+        expect(result.ultra).toEqual(result.max)
+        expect(ProviderTransform.ultra(model, "ultra")).toBe(true)
+      },
+    )
   })
 
   test.each(["gpt-6.1-terra", "gpt-6.1-terra-fast"])("%s exposes all reasoning efforts", (id) => {

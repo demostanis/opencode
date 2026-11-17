@@ -281,7 +281,10 @@ export namespace ProviderTransform {
         return {
           ...msg,
           providerOptions: remap(msg.providerOptions),
-          content: msg.content.map((part) => ({ ...part, providerOptions: remap(part.providerOptions) })),
+          content: msg.content.map((part) => ({
+            ...part,
+            providerOptions: remap(part.providerOptions),
+          })),
         } as typeof msg
       })
     }
@@ -368,9 +371,16 @@ export namespace ProviderTransform {
     const supported =
       Object.hasOwn(model.variants ?? {}, "ultra") ||
       [model.id, model.api.id].some((id) =>
-        ["gpt-5.6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"].some((name) =>
-          id.toLowerCase().includes(name),
-        ),
+        [
+          "gpt-5.6",
+          "gpt-6-astra",
+          "gpt-6-sol",
+          "gpt-6.1-sol",
+          "gpt-6.2-astra",
+          "gpt-6.2-sol",
+          "gpt-6.1-terra",
+          "gpt-6-luna",
+        ].some((name) => id.toLowerCase().includes(name)),
       )
     return variant === undefined ? supported : supported && variant === "ultra"
   }
@@ -393,7 +403,7 @@ export namespace ProviderTransform {
       return ["none", "low", "medium", "high", "xhigh", "max"]
     if (
       [model.id, model.api.id].some((id) =>
-        ["gpt-6-astra", "gpt-6.1-sol"].some((name) => id.toLowerCase().includes(name)),
+        ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].some((name) => id.toLowerCase().includes(name)),
       )
     )
       return ["high", "max"]

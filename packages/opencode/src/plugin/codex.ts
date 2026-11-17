@@ -29,6 +29,8 @@ export const CODEX_MODELS = new Set<string>([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-6-astra",
+  "gpt-6.2-astra",
+  "gpt-6.2-sol",
   "gpt-6-sol",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
@@ -438,7 +440,11 @@ export function codexWebsocket(
       })
       ws.on("message", (data) => {
         const text = data.toString()
-        const event = JSON.parse(text) as { type?: string; error?: { message?: string }; message?: string }
+        const event = JSON.parse(text) as {
+          type?: string
+          error?: { message?: string }
+          message?: string
+        }
         state.events++
         if (["response.failed", "error"].includes(event.type ?? "")) {
           if (state.done) return
@@ -529,9 +535,46 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         if (auth.type !== "oauth") return {}
 
         for (const entry of [
-          { id: "gpt-6-astra", name: "GPT-6 Astra", input: 10, output: 50, date: "2026-09-04", family: "gpt-astra" },
-          { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
-          { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", input: 2, output: 10, date: "2026-09-29", family: "gpt-sol" },
+          {
+            id: "gpt-6.2-astra",
+            name: "GPT-6.2 Astra",
+            input: 8,
+            output: 40,
+            date: "2026-11-17",
+            family: "gpt-astra",
+          },
+          {
+            id: "gpt-6.2-sol",
+            name: "GPT-6.2 Sol",
+            input: 2,
+            output: 10,
+            date: "2026-11-17",
+            family: "gpt-sol",
+          },
+          {
+            id: "gpt-6-astra",
+            name: "GPT-6 Astra",
+            input: 10,
+            output: 50,
+            date: "2026-09-04",
+            family: "gpt-astra",
+          },
+          {
+            id: "gpt-6-sol",
+            name: "GPT-6 Sol",
+            input: 2,
+            output: 10,
+            date: "2026-09-22",
+            family: "gpt-sol",
+          },
+          {
+            id: "gpt-6.1-sol",
+            name: "GPT-6.1 Sol",
+            input: 2,
+            output: 10,
+            date: "2026-09-29",
+            family: "gpt-sol",
+          },
           {
             id: "gpt-6.1-terra",
             name: "GPT-6.1 Terra",
@@ -540,7 +583,14 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
             date: "2026-10-27",
             family: "gpt-terra",
           },
-          { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, date: "2026-09-22", family: "gpt-luna" },
+          {
+            id: "gpt-6-luna",
+            name: "GPT-6 Luna",
+            input: 0.1,
+            output: 0.5,
+            date: "2026-09-22",
+            family: "gpt-luna",
+          },
         ]) {
           if (provider.models[entry.id]) continue
           const model = {
@@ -644,11 +694,20 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           }
         }
 
-        for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"]) {
+        for (const id of [
+          "gpt-6-astra",
+          "gpt-6-sol",
+          "gpt-6.1-sol",
+          "gpt-6.2-astra",
+          "gpt-6.2-sol",
+          "gpt-6.1-terra",
+          "gpt-6-luna",
+        ]) {
           const model = provider.models[id]
           if (!model) continue
           for (const tier of ["fast", "ultrafast"]) {
-            if (tier === "ultrafast" && id !== "gpt-6-astra" && id !== "gpt-6.1-sol") continue
+            if (tier === "ultrafast" && !["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].includes(id))
+              continue
             const key = `${id}-${tier}`
             if (provider.models[key]) continue
             provider.models[key] = {
@@ -739,7 +798,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
             const body = init?.body ? ((await new Response(init.body).json()) as Record<string, unknown>) : undefined
             const speed =
               typeof body?.model === "string"
-                ? /^(gpt-6(?:\.1)?-(?:astra|sol|luna|terra))-(fast|ultrafast)$/.exec(body.model)
+                ? /^(gpt-6(?:\.[12])?-(?:astra|sol|luna|terra))-(fast|ultrafast)$/.exec(body.model)
                 : null
             if (body && speed) {
               body.model = speed[1]

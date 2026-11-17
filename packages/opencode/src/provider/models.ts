@@ -160,9 +160,48 @@ export namespace ModelsDev {
     }
     if (result.openai) {
       for (const entry of [
-        { id: "gpt-6-sol", name: "GPT-6 Sol", input: 2, output: 10, date: "2026-09-22", family: "gpt-sol" },
-        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", input: 2, output: 10, date: "2026-09-29", family: "gpt-sol" },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", input: 0.1, output: 0.5, date: "2026-09-22", family: "gpt-luna" },
+        {
+          id: "gpt-6.2-astra",
+          name: "GPT-6.2 Astra",
+          input: 8,
+          output: 40,
+          read: 0.4,
+          date: "2026-11-17",
+          family: "gpt-astra",
+        },
+        {
+          id: "gpt-6.2-sol",
+          name: "GPT-6.2 Sol",
+          input: 2,
+          output: 10,
+          read: 0.1,
+          date: "2026-11-17",
+          family: "gpt-sol",
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          input: 2,
+          output: 10,
+          date: "2026-09-22",
+          family: "gpt-sol",
+        },
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          input: 2,
+          output: 10,
+          date: "2026-09-29",
+          family: "gpt-sol",
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          input: 0.1,
+          output: 0.5,
+          date: "2026-09-22",
+          family: "gpt-luna",
+        },
       ]) {
         result.openai.models[entry.id] ??= {
           id: entry.id,
@@ -178,7 +217,7 @@ export namespace ModelsDev {
           cost: {
             input: entry.input,
             output: entry.output,
-            cache_read: entry.input / 10,
+            cache_read: entry.read ?? entry.input / 10,
             cache_write: entry.input * 1.25,
           },
           options: {},
